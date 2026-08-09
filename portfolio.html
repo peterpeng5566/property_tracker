@@ -960,7 +960,7 @@
 
   function defaultPortfolio() {
     return {
-      version: '1.0',
+      version: '1.1',
       meta: {
         device_id: DEVICE_ID,
         last_synced_at: null,
@@ -1358,6 +1358,15 @@
             this.data.categories.forEach(c => {
               if (!c.applies_to) c.applies_to = ['holdings'];
             });
+            // v1.0 → v1.1 migration (non-destructive): add 52W + prev_close fields.
+            // Each holding gets null for missing new fields; the next refresh will populate.
+            // Bump version on load, before any save. See ADR 0009 §6.
+            this.data.holdings.forEach(h => {
+              if (h.high_52w === undefined) h.high_52w = null;
+              if (h.low_52w === undefined) h.low_52w = null;
+              if (h.prev_close === undefined) h.prev_close = null;
+            });
+            this.data.version = '1.1';
           } catch (e) {
             console.error('Failed to load portfolio', e);
           }
@@ -1438,6 +1447,10 @@
           id, ticker: this.form.ticker.toUpperCase().trim(),
           shares: this.form.shares, cost: this.form.cost,
           currency: this.form.currency, current_price: this.form.current_price,
+          // v1.1: 52W high/low + previous close. Null until refreshed.
+          high_52w: this.editing?.high_52w ?? null,
+          low_52w: this.editing?.low_52w ?? null,
+          prev_close: this.editing?.prev_close ?? null,
           attributes, updated_at: now, device_id: DEVICE_ID,
           inactive: this.editing ? this.editing.inactive : false,
         };
