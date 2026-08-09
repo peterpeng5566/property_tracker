@@ -25,7 +25,9 @@ Runs automated tests for `lib/format.js` (the compact suffix display rules: W/K/
 
 ## Yahoo CORS proxy setup
 
-Yahoo's `query1.finance.yahoo.com` does not send CORS-permitting headers, so the browser blocks the refresh button. v1.1 routes Yahoo requests through a tiny Cloudflare Worker. **One-time setup, ~5 minutes, free tier (100k req/day — you use ~10/day).**
+Yahoo's `query1.finance.yahoo.com` does not send CORS-permitting headers, so the browser blocks the refresh button. v1.1 routes Yahoo requests through a tiny Cloudflare Worker. **One-time setup, ~5 minutes, free tier (100k req/day — you use ~10-50/day).**
+
+The Worker uses Yahoo's `/v8/finance/chart/<SYMBOL>` endpoint (not the now-locked `/v7/finance/quote` batch endpoint) and makes one parallel request per holding. See [`docs/research/05-chart-endpoint.md`](docs/research/05-chart-endpoint.md) for endpoint rationale.
 
 1. **Sign up** at [dash.cloudflare.com](https://dash.cloudflare.com) (no credit card, email + password only).
 2. **Create Worker**: left sidebar → **Workers & Pages** → **Create** → **Create Worker** → name it `yahoo-proxy` (or anything) → **Deploy**.
@@ -42,7 +44,7 @@ Yahoo's `query1.finance.yahoo.com` does not send CORS-permitting headers, so the
 
 Smoke test from terminal:
 ```bash
-curl 'https://yahoo-proxy.YOURACCOUNT.workers.dev/?url=https%3A%2F%2Fquery1.finance.yahoo.com%2Fv7%2Ffinance%2Fquote%3Fsymbols%3DAAPL'
+curl 'https://yahoo-proxy.YOURACCOUNT.workers.dev/?url=https%3A%2F%2Fquery1.finance.yahoo.com%2Fv8%2Ffinance%2Fchart%2FAAPL%3Finterval%3D1d%26range%3D1d'
 ```
 Should return Yahoo's JSON with CORS headers.
 

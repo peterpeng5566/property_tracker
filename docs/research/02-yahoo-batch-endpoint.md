@@ -117,3 +117,12 @@ Both endpoints return `currency` per symbol. Don't infer from ticker suffix — 
 
 - Verify `2330.TW` returns `marketState: "CLOSED"` on a TW market holiday (e.g. Dragon Boat Festival, National Day) before shipping
 - Verify crumb refresh cadence — does Yahoo expire the crumb mid-session, or only on cookie clear?
+---
+
+## ⚠️ DEPRECATED (2025)
+
+This endpoint is no longer accessible from Cloudflare Workers. Yahoo locked
+`/v7/finance/quote` (and its sibling crumb endpoint `/v1/test/getcrumb`)
+behind browser-session-derived crumb auth in 2025. See
+[research/05-chart-endpoint.md](05-chart-endpoint.md) for the replacement
+(`/v8/finance/chart/<SYMBOL>`).
