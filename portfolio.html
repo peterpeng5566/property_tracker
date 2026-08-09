@@ -1,0 +1,1742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Property Tracker</title>
+
+  <!-- Tailwind via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Geist font (per frontend-dev skill, NEVER use Inter) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Alpine.js -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
+
+  <!-- Google Identity Services (ADR 0008) -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <style>
+    body {
+      font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      letter-spacing: -0.011em;
+    }
+    .tabular { font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+
+<div x-data="portfolio()" x-init="init()">
+
+  <!-- Header -->
+  <header class="bg-white border-b border-slate-200">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div>
+        <h1 class="text-xl font-semibold tracking-tight" x-text="t('app.title')"></h1>
+        <p class="text-xs text-slate-500 mt-0.5" x-text="summary"></p>
+      </div>
+      <div class="flex items-center gap-3 flex-wrap">
+        <!-- Language toggle -->
+        <div class="inline-flex rounded-md border border-slate-200 p-0.5 text-sm">
+          <button @click="setLanguage('en')"
+            :class="language==='en' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'"
+            class="px-3 py-1 rounded transition-colors">EN</button>
+          <button @click="setLanguage('zh')"
+            :class="language==='zh' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'"
+            class="px-3 py-1 rounded transition-colors">中</button>
+        </div>
+        <!-- Currency toggle -->
+        <div class="inline-flex rounded-md border border-slate-200 p-0.5 text-sm">
+          <button @click="setCurrency('TWD')"
+            :class="displayCurrency==='TWD' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'"
+            class="px-3 py-1 rounded transition-colors">TWD</button>
+          <button @click="setCurrency('USD')"
+            :class="displayCurrency==='USD' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'"
+            class="px-3 py-1 rounded transition-colors">USD</button>
+        </div>
+        <!-- FX rate (editable) -->
+        <div class="flex items-center gap-1 text-xs border border-slate-200 rounded-md px-2 py-1">
+          <span class="text-slate-500">1 USD =</span>
+          <input type="number" x-model.number="data.settings.fx_rate"
+                 @change="data.settings.fx_updated_at = new Date().toISOString()"
+                 step="0.01" min="0"
+                 class="w-16 text-right text-slate-900 text-sm font-medium tabular focus:outline-none">
+          <span class="text-slate-500">TWD</span>
+        </div>
+        <!-- Sync -->
+        <button @click="openSyncModal()"
+                :class="{
+                  'border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-slate-900': syncStatus === 'disconnected',
+                  'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100': syncStatus === 'error',
+                  'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100': syncStatus === 'connected',
+                  'border-sky-200 bg-sky-50 text-sky-700': syncStatus === 'connecting' || syncStatus === 'syncing',
+                }"
+                class="text-sm px-3 py-1.5 border rounded-md transition-colors"
+                x-text="syncStatusLabel"></button>
+
+        <!-- Import (hidden file input, triggered by button) -->
+        <input type="file" id="import-file-input" accept=".json,application/json" class="hidden" @change="handleImportFile($event)">
+
+        <!-- Export -->
+        <button @click="downloadJSON()" class="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5 border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+                x-text="t('header.export')"></button>
+
+        <!-- Import -->
+        <button @click="document.getElementById('import-file-input').click()"
+                class="text-sm text-slate-600 hover:text-slate-900 px-3 py-1.5 border border-slate-200 rounded-md hover:bg-slate-50 transition-colors"
+                x-text="t('header.import')"></button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Tab bar -->
+  <nav class="bg-white border-b border-slate-200">
+    <div class="max-w-7xl mx-auto px-6 flex gap-1">
+      <button @click="currentPage = 'home'"
+              :class="currentPage === 'home' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
+              class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
+              x-text="t('nav.home')"></button>
+      <button @click="currentPage = 'holdings'"
+              :class="currentPage === 'holdings' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
+              class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
+              x-text="t('nav.holdings')"></button>
+      <button @click="currentPage = 'cash_debt'"
+              :class="currentPage === 'cash_debt' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
+              class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
+              x-text="t('nav.cashDebt')"></button>
+      <button @click="currentPage = 'categories'"
+              :class="currentPage === 'categories' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
+              class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
+              x-text="t('nav.categories')"></button>
+    </div>
+  </nav>
+
+  <!-- Main -->
+  <main class="max-w-7xl mx-auto px-6 py-8">
+
+    <!-- Home page -->
+    <div x-show="currentPage === 'home'">
+
+    <!-- Summary: 4 cards -->
+    <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <!-- Net Worth -->
+      <div class="bg-white p-6 rounded-2xl border border-slate-200">
+        <p class="text-xs text-slate-500 uppercase tracking-wider font-medium" x-text="t('summary.netWorth')"></p>
+        <p class="text-3xl font-semibold tabular mt-2" x-text="formatTotal(netWorth())"></p>
+        <p class="text-xs text-slate-500 mt-2"
+           x-text="t('summary.netWorthSub', { a: activeHoldingsCount(), c: activeCashCount(), d: activeDebtsCount() })"></p>
+      </div>
+      <!-- Holdings Value -->
+      <div class="bg-white p-6 rounded-2xl border border-slate-200">
+        <p class="text-xs text-slate-500 uppercase tracking-wider font-medium" x-text="t('summary.holdingsValue')"></p>
+        <p class="text-3xl font-semibold tabular mt-2" x-text="formatTotal(holdingsValue())"></p>
+        <p class="text-xs mt-2"
+           :class="holdingsGainLoss() >= 0 ? 'text-emerald-600' : 'text-rose-600'">
+          <span x-text="(holdingsGainLoss() >= 0 ? '+' : '') + formatTotal(holdingsGainLoss())"></span>
+          <span x-text="' (' + (holdingsGainLossPct() >= 0 ? '+' : '') + holdingsGainLossPct().toFixed(2) + '%)'"></span>
+        </p>
+      </div>
+      <!-- Cash -->
+      <div class="bg-white p-6 rounded-2xl border border-slate-200">
+        <p class="text-xs text-slate-500 uppercase tracking-wider font-medium" x-text="t('summary.cash')"></p>
+        <p class="text-3xl font-semibold tabular mt-2" x-text="formatTotal(totalCash())"></p>
+        <p class="text-xs text-slate-500 mt-2"
+           x-text="activeCashCount() + ' ' + t('summary.accounts')"></p>
+      </div>
+      <!-- Debts -->
+      <div class="bg-white p-6 rounded-2xl border border-slate-200">
+        <p class="text-xs text-slate-500 uppercase tracking-wider font-medium" x-text="t('summary.debts')"></p>
+        <p class="text-3xl font-semibold tabular mt-2 text-rose-600" x-text="formatTotal(totalDebts())"></p>
+        <p class="text-xs text-slate-500 mt-2"
+           x-text="activeDebtsCount() + ' ' + t('summary.debtItems')"></p>
+      </div>
+    </section>
+
+    <!-- Group by -->
+    <section class="mb-8" x-show="groupByCategories.length > 0">
+      <h2 class="text-lg font-semibold mb-4" x-text="t('groupBy.title')"></h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <template x-for="cat in groupByCategories" :key="cat.id">
+          <div class="bg-white p-4 rounded-2xl border border-slate-200">
+            <h3 class="text-sm font-medium text-slate-700 mb-3" x-text="cat.name + ' (' + (cat.values || []).length + ')'"></h3>
+
+            <!-- Holdings sub-section -->
+            <div class="mb-3" x-show="holdings.length > 0 && cat.applies_to?.includes('holdings')">
+              <p class="text-xs text-slate-500 mb-1 font-medium" x-text="t('groupBy.holdingsSub')"></p>
+              <table class="w-full text-xs">
+                <tbody>
+                  <template x-for="group in holdingsGroupedBy(cat.id)" :key="group.value_id">
+                    <tr x-show="group.count > 0 || group.value_id === '_unassigned'">
+                      <td class="py-1" x-text="group.value_name"></td>
+                      <td class="py-1 text-right text-slate-500 tabular" x-text="group.count + ' ' + t('groupBy.holdings')"></td>
+                      <td class="py-1 text-right tabular font-medium" x-text="formatWan(group.total)"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Cash sub-section -->
+            <div class="mb-3" x-show="cashAccounts.length > 0 && cat.applies_to?.includes('cash')">
+              <p class="text-xs text-slate-500 mb-1 font-medium" x-text="t('groupBy.cashSub')"></p>
+              <table class="w-full text-xs">
+                <tbody>
+                  <template x-for="group in cashGroupedBy(cat.id)" :key="group.value_id">
+                    <tr x-show="group.count > 0 || group.value_id === '_unassigned'">
+                      <td class="py-1" x-text="group.value_name"></td>
+                      <td class="py-1 text-right text-slate-500 tabular" x-text="group.count + ' ' + t('groupBy.accounts')"></td>
+                      <td class="py-1 text-right tabular font-medium" x-text="formatWan(group.total)"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Debts sub-section -->
+            <div x-show="debts.length > 0 && cat.applies_to?.includes('debt')">
+              <p class="text-xs text-slate-500 mb-1 font-medium" x-text="t('groupBy.debtsSub')"></p>
+              <table class="w-full text-xs">
+                <tbody>
+                  <template x-for="group in debtsGroupedBy(cat.id)" :key="group.value_id">
+                    <tr x-show="group.count > 0 || group.value_id === '_unassigned'">
+                      <td class="py-1" x-text="group.value_name"></td>
+                      <td class="py-1 text-right text-slate-500 tabular" x-text="group.count + ' ' + t('groupBy.debtItems')"></td>
+                      <td class="py-1 text-right tabular font-medium text-rose-600" x-text="formatWan(group.total)"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </template>
+      </div>
+    </section>
+
+    <!-- Debug -->
+    <section class="mt-8">
+      <details class="bg-white rounded-2xl border border-slate-200 p-4">
+        <summary class="text-sm font-medium text-slate-600 cursor-pointer">📦 Internal data (debug)</summary>
+        <pre class="mt-3 text-xs text-slate-600 overflow-auto bg-slate-50 p-3 rounded" x-text="JSON.stringify(data, null, 2)"></pre>
+      </details>
+    </section>
+
+    </div>
+
+    <!-- Holdings page -->
+    <div x-show="currentPage === 'holdings'">
+    <section class="mb-8">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold" x-text="t('holdings.title')"></h2>
+        <button @click="openAdd()" class="bg-slate-900 text-white text-sm px-4 py-2 rounded-md hover:bg-slate-800 transition-colors"
+                x-text="t('holdings.add')"></button>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 border-b border-slate-200">
+            <tr>
+              <th class="text-left px-4 py-3 font-medium text-slate-600" x-text="t('holdings.col.ticker')"></th>
+              <th class="text-right px-4 py-3 font-medium text-slate-600" x-text="t('holdings.col.shares')"></th>
+              <th class="text-right px-4 py-3 font-medium text-slate-600" x-text="t('holdings.col.costPerShare')"></th>
+              <th class="text-right px-4 py-3 font-medium text-slate-600" x-text="t('holdings.col.price')"></th>
+              <th class="text-right px-4 py-3 font-medium text-slate-600" x-text="t('holdings.col.value')"></th>
+              <th class="text-right px-4 py-3 font-medium text-slate-600" x-text="t('holdings.col.gainLoss')"></th>
+              <th class="text-right px-4 py-3 font-medium text-slate-600 w-32"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="h in holdings" :key="h.id">
+              <tr class="border-b border-slate-100 last:border-0 hover:bg-slate-50"
+                  :class="h.inactive ? 'opacity-50' : ''">
+                <td class="px-4 py-3">
+                  <div class="font-medium" x-text="h.ticker"></div>
+                  <div class="flex flex-wrap gap-1 mt-1" x-show="h.attributes && Object.keys(h.attributes).length > 0">
+                    <template x-for="(valId, catId) in (h.attributes || {})" :key="catId + '-' + valId">
+                      <span class="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded"
+                            x-text="getCategoryValueName(catId, valId)"></span>
+                    </template>
+                  </div>
+                </td>
+                <td class="px-4 py-3 text-right tabular" x-text="h.shares.toLocaleString()"></td>
+                <td class="px-4 py-3 text-right tabular text-slate-600" x-text="formatMoney(h.cost, h.currency)"></td>
+                <td class="px-4 py-3 text-right tabular" x-text="formatMoney(h.current_price, h.currency)"></td>
+                <td class="px-4 py-3 text-right tabular font-medium" x-text="formatWan(toTWD(h.shares * h.current_price, h.currency))"></td>
+                <td class="px-4 py-3 text-right tabular"
+                    :class="gainLoss(h) >= 0 ? 'text-emerald-600' : 'text-rose-600'">
+                  <span x-text="(gainLoss(h) >= 0 ? '+' : '') + formatWan(toTWD(gainLoss(h), h.currency))"></span>
+                </td>
+                <td class="px-4 py-3 text-right">
+                  <button @click="toggleInactive(h.id)"
+                          :class="h.inactive ? 'text-slate-400' : 'text-emerald-600'"
+                          class="px-1 text-xs hover:underline"
+                          x-text="h.inactive ? t('holdings.inactive') : t('holdings.active')"></button>
+                  <button @click="openEdit(h)" class="text-slate-400 hover:text-slate-900 px-1 text-xs" x-text="t('holdings.edit')"></button>
+                  <button @click="removeHolding(h.id)" class="text-slate-400 hover:text-rose-600 px-1 text-xs" x-text="t('holdings.delete')"></button>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="holdings.length === 0">
+              <td colspan="7" class="px-4 py-12 text-center text-slate-400" x-text="t('holdings.empty')"></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+    </div>
+
+    <!-- Cash & Debts page -->
+    <div x-show="currentPage === 'cash_debt'">
+    <section class="mb-8">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold" x-text="t('cash.title')"></h2>
+        <button @click="openAddCash()" class="bg-slate-900 text-white text-sm px-4 py-2 rounded-md hover:bg-slate-800 transition-colors"
+                x-text="t('cash.add')"></button>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 border-b border-slate-200">
+            <tr>
+              <th class="text-left px-4 py-3 font-medium text-slate-600" x-text="t('cash.col.name')"></th>
+              <th class="text-right px-4 py-3 font-medium text-slate-600" x-text="t('cash.col.balance')"></th>
+              <th class="text-left px-4 py-3 font-medium text-slate-600" x-text="t('cash.col.currency')"></th>
+              <th class="text-right px-4 py-3 font-medium text-slate-600 w-32"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="c in cashAccounts" :key="c.id">
+              <tr class="border-b border-slate-100 last:border-0 hover:bg-slate-50"
+                  :class="c.inactive ? 'opacity-50' : ''">
+                <td class="px-4 py-3">
+                  <div class="font-medium" x-text="c.name"></div>
+                  <div class="flex flex-wrap gap-1 mt-1" x-show="c.attributes && Object.keys(c.attributes).length > 0">
+                    <template x-for="(valId, catId) in (c.attributes || {})" :key="catId + '-' + valId">
+                      <span class="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded"
+                            x-text="getCategoryValueName(catId, valId)"></span>
+                    </template>
+                  </div>
+                </td>
+                <td class="px-4 py-3 text-right tabular font-medium" x-text="formatWan(toTWD(c.balance, c.currency))"></td>
+                <td class="px-4 py-3" x-text="c.currency"></td>
+                <td class="px-4 py-3 text-right">
+                  <button @click="toggleCashInactive(c.id)"
+                          :class="c.inactive ? 'text-slate-400' : 'text-emerald-600'"
+                          class="px-1 text-xs hover:underline"
+                          x-text="c.inactive ? t('cash.inactive') : t('cash.active')"></button>
+                  <button @click="openEditCash(c)" class="text-slate-400 hover:text-slate-900 px-1 text-xs" x-text="t('cash.edit')"></button>
+                  <button @click="removeCash(c.id)" class="text-slate-400 hover:text-rose-600 px-1 text-xs" x-text="t('cash.delete')"></button>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="cashAccounts.length === 0">
+              <td colspan="4" class="px-4 py-12 text-center text-slate-400" x-text="t('cash.empty')"></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Debts -->
+    <section class="mb-8">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold" x-text="t('debts.title')"></h2>
+        <button @click="openAddDebt()" class="bg-slate-900 text-white text-sm px-4 py-2 rounded-md hover:bg-slate-800 transition-colors"
+                x-text="t('debts.add')"></button>
+      </div>
+
+      <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 border-b border-slate-200">
+            <tr>
+              <th class="text-left px-4 py-3 font-medium text-slate-600" x-text="t('debts.col.name')"></th>
+              <th class="text-right px-4 py-3 font-medium text-slate-600" x-text="t('debts.col.balance')"></th>
+              <th class="text-left px-4 py-3 font-medium text-slate-600" x-text="t('debts.col.currency')"></th>
+              <th class="text-right px-4 py-3 font-medium text-slate-600 w-32"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="d in debts" :key="d.id">
+              <tr class="border-b border-slate-100 last:border-0 hover:bg-slate-50"
+                  :class="d.inactive ? 'opacity-50' : ''">
+                <td class="px-4 py-3">
+                  <div class="font-medium" x-text="d.name"></div>
+                  <div class="flex flex-wrap gap-1 mt-1" x-show="d.attributes && Object.keys(d.attributes).length > 0">
+                    <template x-for="(valId, catId) in (d.attributes || {})" :key="catId + '-' + valId">
+                      <span class="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded"
+                            x-text="getCategoryValueName(catId, valId)"></span>
+                    </template>
+                  </div>
+                </td>
+                <td class="px-4 py-3 text-right tabular font-medium text-rose-600"
+                    x-text="'-' + formatWan(toTWD(d.balance, d.currency))"></td>
+                <td class="px-4 py-3" x-text="d.currency"></td>
+                <td class="px-4 py-3 text-right">
+                  <button @click="toggleDebtInactive(d.id)"
+                          :class="d.inactive ? 'text-slate-400' : 'text-emerald-600'"
+                          class="px-1 text-xs hover:underline"
+                          x-text="d.inactive ? t('debts.inactive') : t('debts.active')"></button>
+                  <button @click="openEditDebt(d)" class="text-slate-400 hover:text-slate-900 px-1 text-xs" x-text="t('debts.edit')"></button>
+                  <button @click="removeDebt(d.id)" class="text-slate-400 hover:text-rose-600 px-1 text-xs" x-text="t('debts.delete')"></button>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="debts.length === 0">
+              <td colspan="4" class="px-4 py-12 text-center text-slate-400" x-text="t('debts.empty')"></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+    </div>
+
+    <!-- Categories page -->
+    <div x-show="currentPage === 'categories'">
+    <section class="mb-8">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold" x-text="t('categories.title')"></h2>
+        <button @click="addCategory()" class="text-sm bg-slate-900 text-white px-4 py-2 rounded-md hover:bg-slate-800 transition-colors"
+                x-text="t('categories.add')"></button>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <template x-for="cat in categories" :key="cat.id">
+          <div class="bg-white p-4 rounded-2xl border border-slate-200">
+            <div class="flex items-center justify-between mb-3">
+              <input type="text" x-model="cat.name"
+                     class="font-medium text-sm flex-1 border border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none px-2 py-1 rounded">
+              <button @click="deleteCategory(cat.id)" class="text-xs text-slate-400 hover:text-rose-600 px-2" title="Delete category">×</button>
+            </div>
+            <!-- Applies to -->
+            <div class="flex items-center gap-1.5 mb-2">
+              <span class="text-xs text-slate-500 mr-1" x-text="t('categories.appliesTo')"></span>
+              <button @click="toggleCategoryAppliesTo(cat.id, 'holdings')"
+                      :class="cat.applies_to?.includes('holdings') ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-400'"
+                      class="text-xs px-2 py-1 rounded transition-colors"
+                      x-text="t('categories.appliesToHoldings')"></button>
+              <button @click="toggleCategoryAppliesTo(cat.id, 'cash')"
+                      :class="cat.applies_to?.includes('cash') ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-400'"
+                      class="text-xs px-2 py-1 rounded transition-colors"
+                      x-text="t('categories.appliesToCash')"></button>
+              <button @click="toggleCategoryAppliesTo(cat.id, 'debt')"
+                      :class="cat.applies_to?.includes('debt') ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-400'"
+                      class="text-xs px-2 py-1 rounded transition-colors"
+                      x-text="t('categories.appliesToDebt')"></button>
+            </div>
+            <p x-show="!cat.applies_to || cat.applies_to.length === 0" class="text-xs text-rose-600 mb-3" x-text="t('categories.appliesToEmpty')"></p>
+            <ul class="space-y-1 mb-3">
+              <template x-for="val in cat.values" :key="val.id">
+                <li class="flex items-center gap-1">
+                  <input type="text" x-model="val.name"
+                         class="text-sm flex-1 border border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none px-2 py-1 rounded">
+                  <button @click="deleteValue(cat.id, val.id)" class="text-xs text-slate-400 hover:text-rose-600 px-1" title="Delete value">×</button>
+                </li>
+              </template>
+            </ul>
+            <button @click="addValue(cat)" class="text-xs text-slate-500 hover:text-slate-900" x-text="t('categories.addValue')"></button>
+          </div>
+        </template>
+      </div>
+
+      <div x-show="categories.length === 0" class="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-400"
+           x-text="t('categories.empty')"></div>
+    </section>
+    </div>
+
+  </main>
+
+  <!-- Holdings Modal -->
+  <div x-show="showModal" x-transition.opacity class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" @click.self="closeModal()" style="display:none;">
+    <div class="bg-white rounded-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" @click.stop>
+      <h2 class="text-lg font-semibold mb-4" x-text="editing ? t('modal.editTitle') : t('modal.addTitle')"></h2>
+      <form @submit.prevent="saveHolding()" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1" x-text="t('modal.ticker')"></label>
+          <input type="text" x-model="form.ticker" required placeholder="e.g., 2330.TW or AAPL"
+                 class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
+          <p class="text-xs text-slate-500 mt-1" x-text="t('modal.tickerHelp')"></p>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1" x-text="t('modal.shares')"></label>
+            <input type="number" x-model.number="form.shares" required min="0" step="0.0001"
+                   class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1" x-text="t('modal.currency')"></label>
+            <select x-model="form.currency" class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
+              <option value="TWD">TWD</option>
+              <option value="USD">USD</option>
+            </select>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1" x-text="t('modal.costPerShare')"></label>
+            <input type="number" x-model.number="form.cost" required min="0" step="0.01" placeholder="per share"
+                   class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1" x-text="t('modal.currentPrice')"></label>
+            <input type="number" x-model.number="form.current_price" min="0" step="0.01" placeholder="per share"
+                   class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
+            <p class="text-xs text-slate-500 mt-1" x-text="t('modal.currentPriceHelp')"></p>
+          </div>
+        </div>
+
+        <!-- Attributes -->
+        <div x-show="categoriesForHoldings.length > 0" class="border-t border-slate-100 pt-4">
+          <label class="block text-sm font-medium text-slate-700 mb-2" x-text="t('modal.attributes')"></label>
+          <div class="space-y-3">
+            <template x-for="cat in categoriesForHoldings" :key="cat.id">
+              <div>
+                <label class="block text-xs text-slate-500 mb-1" x-text="cat.name"></label>
+                <select @change="setFormAttribute(cat.id, $event.target.value)"
+                        class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
+                  <option value="" :selected="!form.attributes[cat.id]">—</option>
+                  <template x-for="val in cat.values" :key="val.id">
+                    <option :value="val.id" :selected="form.attributes[cat.id] === val.id" x-text="val.name"></option>
+                  </template>
+                </select>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" @click="closeModal()" class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 rounded-md transition-colors" x-text="t('modal.cancel')"></button>
+          <button type="submit" class="px-4 py-2 bg-slate-900 text-white text-sm rounded-md hover:bg-slate-800 transition-colors" x-text="t('modal.save')"></button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Cash Modal -->
+  <div x-show="showCashModal" x-transition.opacity class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" @click.self="closeCashModal()" style="display:none;">
+    <div class="bg-white rounded-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" @click.stop>
+      <h2 class="text-lg font-semibold mb-4" x-text="editingCash ? t('cash.editTitle') : t('cash.addTitle')"></h2>
+      <form @submit.prevent="saveCash()" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1" x-text="t('cash.name')"></label>
+          <input type="text" x-model="cashForm.name" required
+                 class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
+                 placeholder="e.g., 台新銀行活存">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1" x-text="t('cash.balance')"></label>
+            <input type="number" x-model.number="cashForm.balance" required min="0" step="0.01"
+                   class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1" x-text="t('modal.currency')"></label>
+            <select x-model="cashForm.currency" class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
+              <option value="TWD">TWD</option>
+              <option value="USD">USD</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Attributes -->
+        <div x-show="categoriesForCash.length > 0" class="border-t border-slate-100 pt-4">
+          <label class="block text-sm font-medium text-slate-700 mb-2" x-text="t('modal.attributes')"></label>
+          <div class="space-y-3">
+            <template x-for="cat in categoriesForCash" :key="cat.id">
+              <div>
+                <label class="block text-xs text-slate-500 mb-1" x-text="cat.name"></label>
+                <select @change="setCashFormAttribute(cat.id, $event.target.value)"
+                        class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
+                  <option value="" :selected="!cashForm.attributes[cat.id]">—</option>
+                  <template x-for="val in cat.values" :key="val.id">
+                    <option :value="val.id" :selected="cashForm.attributes[cat.id] === val.id" x-text="val.name"></option>
+                  </template>
+                </select>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" @click="closeCashModal()" class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 rounded-md transition-colors" x-text="t('modal.cancel')"></button>
+          <button type="submit" class="px-4 py-2 bg-slate-900 text-white text-sm rounded-md hover:bg-slate-800 transition-colors" x-text="t('modal.save')"></button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Debt Modal -->
+  <div x-show="showDebtModal" x-transition.opacity class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" @click.self="closeDebtModal()" style="display:none;">
+    <div class="bg-white rounded-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" @click.stop>
+      <h2 class="text-lg font-semibold mb-4" x-text="editingDebt ? t('debts.editTitle') : t('debts.addTitle')"></h2>
+      <form @submit.prevent="saveDebt()" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1" x-text="t('debts.name')"></label>
+          <input type="text" x-model="debtForm.name" required
+                 class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
+                 placeholder="e.g., 房貸、學貸、信貸">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1" x-text="t('debts.balance')"></label>
+            <input type="number" x-model.number="debtForm.balance" required min="0" step="0.01"
+                   class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1" x-text="t('modal.currency')"></label>
+            <select x-model="debtForm.currency" class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
+              <option value="TWD">TWD</option>
+              <option value="USD">USD</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Attributes -->
+        <div x-show="categoriesForDebts.length > 0" class="border-t border-slate-100 pt-4">
+          <label class="block text-sm font-medium text-slate-700 mb-2" x-text="t('modal.attributes')"></label>
+          <div class="space-y-3">
+            <template x-for="cat in categoriesForDebts" :key="cat.id">
+              <div>
+                <label class="block text-xs text-slate-500 mb-1" x-text="cat.name"></label>
+                <select @change="setDebtFormAttribute(cat.id, $event.target.value)"
+                        class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
+                  <option value="" :selected="!debtForm.attributes[cat.id]">—</option>
+                  <template x-for="val in cat.values" :key="val.id">
+                    <option :value="val.id" :selected="debtForm.attributes[cat.id] === val.id" x-text="val.name"></option>
+                  </template>
+                </select>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" @click="closeDebtModal()" class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 rounded-md transition-colors" x-text="t('modal.cancel')"></button>
+          <button type="submit" class="px-4 py-2 bg-slate-900 text-white text-sm rounded-md hover:bg-slate-800 transition-colors" x-text="t('modal.save')"></button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Sync Modal -->
+  <div x-show="showSyncModal" x-transition.opacity class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" @click.self="closeSyncModal()" style="display:none;">
+    <div class="bg-white rounded-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" @click.stop>
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold" x-text="t('sync.title')"></h2>
+        <button @click="closeSyncModal()" class="text-slate-400 hover:text-slate-900 text-xl leading-none">×</button>
+      </div>
+
+      <!-- Status -->
+      <div class="mb-4">
+        <span class="text-xs text-slate-500 uppercase tracking-wider font-medium" x-text="syncStatusLabel"></span>
+      </div>
+
+      <!-- Client ID input -->
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-slate-700 mb-1" x-text="t('sync.clientIdLabel')"></label>
+        <input type="text" x-model="syncClientIdDraft" :placeholder="t('sync.clientIdPlaceholder')"
+               class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 font-mono">
+        <p class="text-xs text-slate-500 mt-1" x-text="t('sync.clientIdHelp')"></p>
+        <p class="text-xs mt-1">
+          <a href="../docs/google-oauth-setup.md" target="_blank" class="text-slate-700 hover:text-slate-900 underline"
+             x-text="'📘 ' + t('sync.setupGuide')"></a>
+        </p>
+        <button @click="setSyncClientId()" class="mt-2 text-sm bg-slate-900 text-white px-3 py-1.5 rounded-md hover:bg-slate-800 transition-colors"
+                x-text="t('sync.saveClientId')"></button>
+      </div>
+
+      <div class="border-t border-slate-100 my-4"></div>
+
+      <!-- Connect / Disconnect -->
+      <div class="space-y-2">
+        <template x-if="!syncAccessToken">
+          <button @click="connectDrive()"
+                  :disabled="!syncClientId || !tokenClient || syncStatus === 'connecting'"
+                  :class="(syncClientId && tokenClient && syncStatus !== 'connecting') ? 'bg-slate-900 text-white hover:bg-slate-800' : 'bg-slate-200 text-slate-400 cursor-not-allowed'"
+                  class="w-full text-sm px-3 py-2 rounded-md transition-colors"
+                  x-text="!syncClientId ? t('sync.connectFirst') : (!tokenClient ? t('sync.status.connecting') : (syncStatus === 'connecting' ? t('sync.status.connecting') : t('sync.connect')))"></button>
+        </template>
+        <template x-if="syncAccessToken">
+          <button @click="disconnectDrive()" class="w-full text-sm px-3 py-2 rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
+                  x-text="t('sync.disconnect')"></button>
+        </template>
+      </div>
+
+      <!-- Sync now + last synced -->
+      <div x-show="syncAccessToken" class="mt-4 space-y-2">
+        <button @click="syncNow().catch(() => {})"
+                :disabled="syncStatus === 'syncing'"
+                :class="syncStatus === 'syncing' ? 'bg-slate-200 text-slate-400 cursor-not-allowed' : 'bg-slate-900 text-white hover:bg-slate-800'"
+                class="w-full text-sm px-3 py-2 rounded-md transition-colors"
+                x-text="syncStatus === 'syncing' ? t('sync.status.syncing') : t('sync.syncNow')"></button>
+        <p class="text-xs text-slate-500 text-center">
+          <span x-text="t('sync.lastSynced', { ago: relativeTime(data.meta?.last_synced_at) })"></span>
+        </p>
+      </div>
+
+      <!-- Auto-sync toggle -->
+      <label x-show="syncAccessToken" class="mt-4 flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" :checked="autoSyncEnabled" @change="toggleAutoSync()"
+               class="rounded border-slate-300 text-slate-900 focus:ring-slate-900">
+        <span class="text-sm text-slate-700" x-text="t('sync.autoSync')"></span>
+        <span class="text-xs text-slate-400" x-text="'— ' + t('sync.autoSyncHelp')"></span>
+      </label>
+
+      <!-- Last error -->
+      <div x-show="syncError" class="mt-4 p-3 bg-rose-50 border border-rose-200 rounded-md">
+        <p class="text-xs font-medium text-rose-700 mb-1" x-text="t('sync.lastError')"></p>
+        <p class="text-xs text-rose-600 font-mono break-all" x-text="syncError"></p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // ===== i18n =====
+  // Add a new language by adding a new key with all string keys.
+  // Missing keys fall back to English. {param} placeholders are substituted.
+  const STRINGS = {
+    en: {
+      'app.title': 'Property Tracker',
+      'nav.home': 'Home',
+      'nav.holdings': 'Holdings',
+      'nav.cashDebt': 'Cash & Debts',
+      'nav.categories': 'Categories',
+      'summary.netWorth': 'Total Net Worth',
+      'summary.netWorthSub': '{a} holdings + {c} cash − {d} debts',
+      'summary.holdingsValue': 'Holdings Value',
+      'summary.cash': 'Cash',
+      'summary.debts': 'Debts',
+      'summary.accounts': 'accounts',
+      'summary.debtItems': 'debts',
+      'header.export': 'Export JSON',
+      'header.import': 'Import JSON',
+      'holdings.title': 'Holdings',
+      'holdings.add': '+ New Holding',
+      'holdings.empty': 'No holdings yet. Click "+ New Holding" to start.',
+      'holdings.col.ticker': 'Ticker',
+      'holdings.col.shares': 'Shares',
+      'holdings.col.costPerShare': 'Cost / share',
+      'holdings.col.price': 'Price',
+      'holdings.col.value': 'Value',
+      'holdings.col.gainLoss': 'Gain / Loss',
+      'holdings.active': 'Active',
+      'holdings.inactive': 'Inactive',
+      'holdings.edit': 'Edit',
+      'holdings.delete': 'Delete',
+      'holdings.confirmDelete': 'Delete this holding?',
+      'cash.title': 'Cash',
+      'cash.add': '+ New Account',
+      'cash.empty': 'No cash accounts yet. Click "+ New Account" to start.',
+      'cash.col.name': 'Account Name',
+      'cash.col.balance': 'Balance',
+      'cash.col.currency': 'Currency',
+      'cash.name': 'Account Name',
+      'cash.balance': 'Balance',
+      'cash.addTitle': 'New Cash Account',
+      'cash.editTitle': 'Edit Cash Account',
+      'cash.active': 'Active',
+      'cash.inactive': 'Inactive',
+      'cash.edit': 'Edit',
+      'cash.delete': 'Delete',
+      'cash.confirmDelete': 'Delete this cash account?',
+      'debts.title': 'Debts',
+      'debts.add': '+ New Debt',
+      'debts.empty': 'No debts yet. Click "+ New Debt" to start.',
+      'debts.col.name': 'Debt Name',
+      'debts.col.balance': 'Balance Owed',
+      'debts.col.currency': 'Currency',
+      'debts.name': 'Debt Name',
+      'debts.balance': 'Balance Owed',
+      'debts.addTitle': 'New Debt',
+      'debts.editTitle': 'Edit Debt',
+      'debts.active': 'Active',
+      'debts.inactive': 'Inactive',
+      'debts.edit': 'Edit',
+      'debts.delete': 'Delete',
+      'debts.confirmDelete': 'Delete this debt?',
+      'modal.addTitle': 'New Holding',
+      'modal.editTitle': 'Edit Holding',
+      'modal.ticker': 'Ticker',
+      'modal.tickerHelp': 'TW stocks add .TW (e.g., 2330.TW), US stocks use ticker (e.g., AAPL)',
+      'modal.shares': 'Shares',
+      'modal.currency': 'Currency',
+      'modal.costPerShare': 'Cost / share',
+      'modal.currentPrice': 'Current Price / share',
+      'modal.currentPriceHelp': 'Manual for now; Yahoo Finance later',
+      'modal.attributes': 'Attributes',
+      'modal.cancel': 'Cancel',
+      'modal.save': 'Save',
+      'categories.title': 'Categories',
+      'categories.add': '+ Add Category',
+      'categories.addValue': '+ Add Value',
+      'categories.empty': 'No categories yet. e.g., Sector, Market, Region.',
+      'categories.appliesTo': 'Applies to',
+      'categories.appliesToHoldings': 'Holdings',
+      'categories.appliesToCash': 'Cash',
+      'categories.appliesToDebt': 'Debts',
+      'categories.appliesToEmpty': 'This category won\'t appear in any modal',
+      'groupBy.title': 'Group by Category',
+      'groupBy.holdingsSub': 'Holdings',
+      'groupBy.cashSub': 'Cash',
+      'groupBy.debtsSub': 'Debts',
+      'groupBy.holdings': 'holdings',
+      'groupBy.accounts': 'accounts',
+      'groupBy.debtItems': 'debts',
+      'groupBy.unassigned': '— Unassigned',
+      'sync.title': 'Google Drive Sync',
+      'sync.status.disconnected': '☁️ Not connected',
+      'sync.status.connecting': '☁️ Connecting…',
+      'sync.status.syncing': '☁️ Syncing…',
+      'sync.status.connected': '☁️ Connected',
+      'sync.status.error': '☁️ Error',
+      'sync.clientIdLabel': 'Google OAuth Client ID',
+      'sync.clientIdHelp': 'Create one in Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client IDs (Web application).',
+      'sync.setupGuide': 'Setup guide (5 steps, 10 min)',
+      'sync.clientIdPlaceholder': 'xxxxx.apps.googleusercontent.com',
+      'sync.saveClientId': 'Save client ID',
+      'sync.connect': 'Connect to Google Drive',
+      'sync.disconnect': 'Disconnect',
+      'sync.connectFirst': 'Save client ID first',
+      'sync.lastError': 'Last error',
+      'import.lastError': 'Import failed',
+      'import.confirmReplace': 'This will REPLACE your current data with the file. Continue?',
+      'import.invalid': 'Not a valid portfolio file (missing version field).',
+      'sync.syncNow': 'Sync now',
+      'sync.lastSynced': 'Last synced: {ago}',
+      'sync.neverSynced': 'never',
+      'sync.justNow': 'just now',
+      'sync.autoSync': 'Auto-sync on save',
+      'sync.autoSyncHelp': 'Push 5s after each change',
+    },
+    zh: {
+      'app.title': 'Property Tracker',
+      'nav.home': '首頁',
+      'nav.holdings': 'Holdings',
+      'nav.cashDebt': '現金與負債',
+      'nav.categories': 'Categories',
+      'summary.netWorth': '總資產 Net Worth',
+      'summary.netWorthSub': '{a} holdings + {c} 現金 − {d} 負債',
+      'summary.holdingsValue': 'Holdings 市值',
+      'summary.cash': '現金 Cash',
+      'summary.debts': '負債 Debts',
+      'summary.accounts': '個帳戶',
+      'summary.debtItems': '筆',
+      'header.export': 'Export JSON',
+      'header.import': '匯入 JSON',
+      'holdings.title': 'Holdings',
+      'holdings.add': '+ 新增 Holding',
+      'holdings.empty': '還沒有任何 holding。按右上「+ 新增 Holding」開始。',
+      'holdings.col.ticker': 'Ticker',
+      'holdings.col.shares': '股數',
+      'holdings.col.costPerShare': '每股成本',
+      'holdings.col.price': '現價',
+      'holdings.col.value': '市值',
+      'holdings.col.gainLoss': '損益',
+      'holdings.active': 'Active',
+      'holdings.inactive': 'Inactive',
+      'holdings.edit': '編輯',
+      'holdings.delete': '刪除',
+      'holdings.confirmDelete': '確定刪除？',
+      'cash.title': '現金 Cash',
+      'cash.add': '+ 新增帳戶',
+      'cash.empty': '還沒有任何現金帳戶。按右上「+ 新增帳戶」開始。',
+      'cash.col.name': '帳戶名稱',
+      'cash.col.balance': '餘額',
+      'cash.col.currency': '幣別',
+      'cash.name': '帳戶名稱',
+      'cash.balance': '餘額',
+      'cash.addTitle': '新增現金帳戶',
+      'cash.editTitle': '編輯現金帳戶',
+      'cash.active': 'Active',
+      'cash.inactive': 'Inactive',
+      'cash.edit': '編輯',
+      'cash.delete': '刪除',
+      'cash.confirmDelete': '確定刪除此現金帳戶？',
+      'debts.title': '負債 Debts',
+      'debts.add': '+ 新增負債',
+      'debts.empty': '還沒有任何負債。按右上「+ 新增負債」開始。',
+      'debts.col.name': '負債名稱',
+      'debts.col.balance': '欠款金額',
+      'debts.col.currency': '幣別',
+      'debts.name': '負債名稱',
+      'debts.balance': '欠款金額',
+      'debts.addTitle': '新增負債',
+      'debts.editTitle': '編輯負債',
+      'debts.active': 'Active',
+      'debts.inactive': 'Inactive',
+      'debts.edit': '編輯',
+      'debts.delete': '刪除',
+      'debts.confirmDelete': '確定刪除此負債？',
+      'modal.addTitle': '新增 Holding',
+      'modal.editTitle': '編輯 Holding',
+      'modal.ticker': 'Ticker',
+      'modal.tickerHelp': '台股加 .TW（例如 2330.TW），美股直接 ticker（AAPL）',
+      'modal.shares': '股數',
+      'modal.currency': '幣別',
+      'modal.costPerShare': '每股成本',
+      'modal.currentPrice': '每股現價',
+      'modal.currentPriceHelp': '暫時手動輸入；未來 Yahoo Finance 自動更新',
+      'modal.attributes': '屬性',
+      'modal.cancel': '取消',
+      'modal.save': '儲存',
+      'categories.title': 'Categories',
+      'categories.add': '+ 新增 Category',
+      'categories.addValue': '+ 新增值',
+      'categories.empty': '還沒有任何 category。Sector、Market、Region 等都可自訂。',
+      'categories.appliesTo': '適用範圍',
+      'categories.appliesToHoldings': 'Holdings',
+      'categories.appliesToCash': '現金',
+      'categories.appliesToDebt': '負債',
+      'categories.appliesToEmpty': '此 category 不會出現在任何 modal',
+      'groupBy.title': '依類別分組',
+      'groupBy.holdingsSub': 'Holdings',
+      'groupBy.cashSub': '現金',
+      'groupBy.debtsSub': '負債',
+      'groupBy.holdings': '筆',
+      'groupBy.accounts': '個',
+      'groupBy.debtItems': '筆',
+      'groupBy.unassigned': '— 未分類',
+      'sync.title': 'Google Drive 同步',
+      'sync.status.disconnected': '☁️ 未連線',
+      'sync.status.connecting': '☁️ 連線中…',
+      'sync.status.syncing': '☁️ 同步中…',
+      'sync.status.connected': '☁️ 已連線',
+      'sync.status.error': '☁️ 錯誤',
+      'sync.clientIdLabel': 'Google OAuth Client ID',
+      'sync.clientIdHelp': '到 Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client IDs（Web application）建立。',
+      'sync.setupGuide': '設定教學（5 步、10 分鐘）',
+      'sync.clientIdPlaceholder': 'xxxxx.apps.googleusercontent.com',
+      'sync.saveClientId': '儲存 Client ID',
+      'sync.connect': '連線 Google Drive',
+      'sync.disconnect': '中斷連線',
+      'sync.connectFirst': '請先儲存 Client ID',
+      'sync.lastError': '最近錯誤',
+      'import.lastError': '匯入失敗',
+      'import.confirmReplace': '這會以檔案內容覆蓋你現有的所有資料，繼續嗎？',
+      'import.invalid': '不是有效的 portfolio 檔案（缺少 version 欄位）。',
+      'sync.syncNow': '立即同步',
+      'sync.lastSynced': '上次同步：{ago}',
+      'sync.neverSynced': '從未',
+      'sync.justNow': '剛剛',
+      'sync.autoSync': '儲存時自動同步',
+      'sync.autoSyncHelp': '每次變更 5 秒後推送',
+    },
+  };
+
+  // ===== Constants =====
+  const STORAGE_KEY = 'property_tracker_portfolio_v1';
+  const SYNC_CLIENT_ID_KEY = 'property_tracker_sync_client_id_v1';
+  const DRIVE_FILENAME = 'property_tracker_portfolio_v1.json';
+  const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+
+  const DEVICE_ID = (() => {
+    const existing = localStorage.getItem('device_id');
+    if (existing) return existing;
+    const id = 'web-' + Math.random().toString(36).slice(2, 10);
+    localStorage.setItem('device_id', id);
+    return id;
+  })();
+
+  function genId(prefix) {
+    return prefix + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+  }
+
+  function defaultPortfolio() {
+    return {
+      version: '1.0',
+      meta: {
+        device_id: DEVICE_ID,
+        last_synced_at: null,
+        created_at: new Date().toISOString(),
+      },
+      settings: {
+        cost_format: 'per_share',
+        display_currency: 'TWD',
+        fx_source: 'manual',
+        fx_rate: 32.2,
+        fx_updated_at: new Date().toISOString(),
+        language: 'en',
+      },
+      categories: [],
+      holdings: [],
+      cash_accounts: [],
+      debts: [],
+      snapshots: [],
+    };
+  }
+
+  function defaultCategory() {
+    return { id: '', name: 'New Category', values: [], applies_to: ['holdings', 'cash', 'debt'] };
+  }
+
+  // ===== Main factory =====
+  function portfolio() {
+    return {
+      // ---- State ----
+      data: defaultPortfolio(),
+      displayCurrency: 'TWD',
+      language: 'en',
+      currentPage: 'home',
+
+      // Holdings modal state
+      showModal: false,
+      editing: null,
+      form: { ticker: '', shares: 0, cost: 0, currency: 'TWD', current_price: 0, attributes: {} },
+
+      // Cash modal state
+      showCashModal: false,
+      editingCash: null,
+      cashForm: { name: '', balance: 0, currency: 'TWD', attributes: {} },
+
+      // Debt modal state
+      showDebtModal: false,
+      editingDebt: null,
+      debtForm: { name: '', balance: 0, currency: 'TWD', attributes: {} },
+
+      // Sync state (ADR 0008 — GIS token model)
+      showSyncModal: false,
+      syncClientId: '',           // Google OAuth Client ID
+      syncClientIdDraft: '',      // input field, committed via setSyncClientId()
+      syncAccessToken: null,      // in-memory only (implicit flow, short-lived)
+      syncTokenExpiresAt: 0,      // ms timestamp
+      syncStatus: 'disconnected', // 'disconnected' | 'connecting' | 'syncing' | 'connected' | 'error'
+      syncError: null,            // last error message
+      tokenClient: null,          // GIS tokenClient (set by initSync)
+      gisReady: false,            // GIS script loaded
+      autoSyncEnabled: true,      // auto-push on save (default ON)
+      autoPushTimer: null,        // setTimeout handle for debounced auto-push
+      _lastSyncTimestamp: 0,      // ms; used to skip auto-push on our own writes
+
+      // ---- Init ----
+      init() {
+        this.load();
+        this.syncClientId = localStorage.getItem('property_tracker_sync_client_id') || '';
+        this.syncClientIdDraft = this.syncClientId;
+        this.autoSyncEnabled = localStorage.getItem('property_tracker_auto_sync') !== 'false';
+        this.$watch('data', () => {
+          this.save();
+          // Skip auto-push if the change came from our own sync (within 100ms).
+          if (Date.now() - (this._lastSyncTimestamp || 0) < 100) return;
+          if (this.autoSyncEnabled && this.syncAccessToken && this.syncStatus !== 'syncing') {
+            this.scheduleAutoPush();
+          }
+        }, { deep: true });
+        this.waitForGis();
+      },
+
+      // ---- Sync (ADR 0008 — GIS token model) ----
+      waitForGis() {
+        // GIS loads async via <script async>. Poll until ready, then init tokenClient.
+        if (window.google?.accounts?.oauth2) {
+          this.gisReady = true;
+          this.initSync();
+          return;
+        }
+        setTimeout(() => this.waitForGis(), 100);
+      },
+
+      initSync() {
+        if (!this.gisReady || !this.syncClientId) return;
+        try {
+          this.tokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: this.syncClientId,
+            scope: 'https://www.googleapis.com/auth/drive.file',
+            callback: (response) => {
+              if (response.access_token) {
+                this.syncAccessToken = response.access_token;
+                this.syncTokenExpiresAt = Date.now() + (response.expires_in || 3600) * 1000;
+                this.syncStatus = 'connected';
+                this.syncError = null;
+              } else if (response.error) {
+                this.syncStatus = 'error';
+                this.syncError = response.error;
+                this.syncAccessToken = null;
+              }
+            },
+            error_callback: (err) => {
+              this.syncStatus = 'error';
+              this.syncError = err.message || JSON.stringify(err);
+            },
+          });
+        } catch (e) {
+          this.syncStatus = 'error';
+          this.syncError = e.message || String(e);
+        }
+      },
+
+      setSyncClientId() {
+        const id = this.syncClientIdDraft.trim();
+        this.syncClientId = id;
+        if (id) {
+          localStorage.setItem('property_tracker_sync_client_id', id);
+          this.syncError = null;
+          this.initSync();
+        } else {
+          localStorage.removeItem('property_tracker_sync_client_id');
+          this.tokenClient = null;
+        }
+      },
+
+      openSyncModal() {
+        this.syncClientIdDraft = this.syncClientId;
+        this.showSyncModal = true;
+      },
+
+      closeSyncModal() {
+        this.showSyncModal = false;
+      },
+
+      connectDrive() {
+        if (!this.syncClientId) {
+          this.syncStatus = 'error';
+          this.syncError = 'No client_id configured';
+          return;
+        }
+        if (!this.tokenClient) {
+          this.syncStatus = 'error';
+          this.syncError = 'Google Identity Services not loaded yet — try again in a moment';
+          return;
+        }
+        this.syncStatus = 'connecting';
+        this.syncError = null;
+        // requestAccessToken requires user gesture; the button click is that gesture.
+        this.tokenClient.requestAccessToken({ prompt: this.syncAccessToken ? '' : 'consent' });
+      },
+
+      disconnectDrive() {
+        if (this.syncAccessToken) {
+          google.accounts.oauth2.revoke(this.syncAccessToken, () => {});
+        }
+        this.syncAccessToken = null;
+        this.syncTokenExpiresAt = 0;
+        this.syncStatus = 'disconnected';
+        this.syncError = null;
+      },
+
+      get syncStatusLabel() {
+        const key = `sync.status.${this.syncStatus}`;
+        return this.t(key);
+      },
+
+      // ---- Sync: Drive file ops (ADR 0008 + ADR 0002) ----
+      async driveFetch(url, opts = {}) {
+        if (!this.syncAccessToken) throw new Error('Not connected to Google Drive');
+        const headers = {
+          Authorization: `Bearer ${this.syncAccessToken}`,
+          ...opts.headers,
+        };
+        const r = await fetch(url, { ...opts, headers });
+        if (r.status === 401) {
+          this.disconnectDrive();
+          throw new Error('Access token expired — please reconnect');
+        }
+        if (!r.ok) {
+          const body = await r.text().catch(() => '');
+          throw new Error(`Drive API ${r.status}: ${body.slice(0, 200)}`);
+        }
+        return r;
+      },
+
+      async findPortfolioFile() {
+        const q = "name='property_tracker_portfolio_v1.json' and trashed=false";
+        const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,modifiedTime)`;
+        const r = await this.driveFetch(url);
+        const data = await r.json();
+        return data.files?.[0] || null;
+      },
+
+      async readPortfolioFile(fileId) {
+        const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+        const r = await this.driveFetch(url);
+        return await r.json();
+      },
+
+      async writePortfolioFile(fileId, data) {
+        const url = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`;
+        const r = await this.driveFetch(url, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        });
+        return await r.json();
+      },
+
+      async createPortfolioFile(data) {
+        const boundary = 'pt_boundary_' + Math.random().toString(36).slice(2);
+        const meta = { name: 'property_tracker_portfolio_v1.json', mimeType: 'application/json' };
+        const body =
+          `--${boundary}\r\n` +
+          `Content-Type: application/json; charset=UTF-8\r\n` +
+          `\r\n` +
+          `${JSON.stringify(meta)}\r\n` +
+          `--${boundary}\r\n` +
+          `Content-Type: application/json\r\n` +
+          `\r\n` +
+          `${JSON.stringify(data)}\r\n` +
+          `--${boundary}--\r\n`;
+        const url = `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
+        const r = await this.driveFetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': `multipart/related; boundary="${boundary}"` },
+          body,
+        });
+        return await r.json();
+      },
+
+      // ---- Sync: orchestration + merge (ADR 0002 + ADR 0004) ----
+      mergeById(localArr, remoteArr) {
+        // Per-record newer-wins by updated_at (ADR 0004). Records without
+        // updated_at (e.g., legacy v0.4 data) are treated as epoch 0.
+        const map = new Map();
+        for (const r of (localArr || [])) map.set(r.id, r);
+        for (const r of (remoteArr || [])) {
+          const l = map.get(r.id);
+          if (!l) {
+            map.set(r.id, r);
+          } else {
+            const lt = Date.parse(l.updated_at || 0) || 0;
+            const rt = Date.parse(r.updated_at || 0) || 0;
+            map.set(r.id, rt > lt ? r : l);
+          }
+        }
+        return Array.from(map.values());
+      },
+
+      mergePortfolios(local, remote) {
+        // Records: per-record newer wins (ADR 0004).
+        // categories + settings: replace from remote if present (v1 limitation —
+        // these lack updated_at; documented in ticket #05).
+        // meta: union (keep device_id from each side, take newer last_synced_at).
+        return {
+          version: remote.version || local.version,
+          meta: {
+            device_id: local.meta?.device_id || remote.meta?.device_id || DEVICE_ID,
+            last_synced_at: remote.meta?.last_synced_at || local.meta?.last_synced_at || null,
+            created_at: local.meta?.created_at || remote.meta?.created_at || new Date().toISOString(),
+          },
+          settings: remote.settings || local.settings,
+          categories: remote.categories || local.categories,
+          holdings: this.mergeById(local.holdings, remote.holdings),
+          cash_accounts: this.mergeById(local.cash_accounts, remote.cash_accounts),
+          debts: this.mergeById(local.debts, remote.debts),
+          snapshots: this.mergeById(local.snapshots, remote.snapshots),
+        };
+      },
+
+      async syncNow() {
+        if (!this.syncAccessToken) throw new Error('Not connected to Google Drive');
+        this.syncStatus = 'syncing';
+        this.syncError = null;
+        try {
+          const file = await this.findPortfolioFile();
+          if (file) {
+            const remote = await this.readPortfolioFile(file.id);
+            const merged = this.mergePortfolios(this.data, remote);
+            merged.meta.last_synced_at = new Date().toISOString();
+            merged.meta.device_id = DEVICE_ID;
+            this._lastSyncTimestamp = Date.now();
+            this.data = merged;
+            await this.writePortfolioFile(file.id, this.data);
+          } else {
+            this.data.meta = this.data.meta || {};
+            this.data.meta.last_synced_at = new Date().toISOString();
+            this.data.meta.device_id = DEVICE_ID;
+            this.data.meta.created_at = this.data.meta.created_at || new Date().toISOString();
+            this._lastSyncTimestamp = Date.now();
+            await this.createPortfolioFile(this.data);
+          }
+          this.syncStatus = 'connected';
+        } catch (e) {
+          this.syncStatus = 'error';
+          this.syncError = e.message || String(e);
+          throw e;
+        }
+      },
+
+      scheduleAutoPush() {
+        if (!this.autoSyncEnabled) return;
+        if (!this.syncAccessToken) return;
+        if (this.syncStatus === 'syncing') return;
+        clearTimeout(this.autoPushTimer);
+        this.autoPushTimer = setTimeout(() => {
+          if (this.autoSyncEnabled && this.syncAccessToken && this.syncStatus !== 'syncing') {
+            this.syncNow().catch(() => { /* error already in syncError */ });
+          }
+        }, 5000);
+      },
+
+      toggleAutoSync() {
+        this.autoSyncEnabled = !this.autoSyncEnabled;
+        localStorage.setItem('property_tracker_auto_sync', String(this.autoSyncEnabled));
+        if (!this.autoSyncEnabled) {
+          clearTimeout(this.autoPushTimer);
+          this.autoPushTimer = null;
+        }
+      },
+
+      relativeTime(isoString) {
+        if (!isoString) return this.t('sync.neverSynced');
+        const ms = Date.now() - Date.parse(isoString);
+        if (Number.isNaN(ms) || ms < 0) return this.t('sync.justNow');
+        if (ms < 60_000) return this.t('sync.justNow');
+        const min = Math.floor(ms / 60_000);
+        if (min < 60) return `${min}m`;
+        const hr = Math.floor(min / 60);
+        if (hr < 24) return `${hr}h`;
+        return `${Math.floor(hr / 24)}d`;
+      },
+
+      // ---- Persistence ----
+      load() {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            // Migrate v0.2 data: cost (total) → cost (per-share)
+            if (parsed.holdings && parsed.settings?.cost_format !== 'per_share') {
+              parsed.holdings.forEach(h => {
+                if (h.shares > 0 && h.cost) {
+                  h.cost = h.cost / h.shares;
+                }
+              });
+            }
+            this.data = { ...defaultPortfolio(), ...parsed };
+            this.data.settings = { ...defaultPortfolio().settings, ...this.data.settings };
+            this.data.settings.cost_format = 'per_share';
+            if (!this.data.cash_accounts) this.data.cash_accounts = [];
+            if (!this.data.debts) this.data.debts = [];
+            this.data.holdings.forEach(h => { if (!h.attributes) h.attributes = {}; });
+            this.data.cash_accounts.forEach(c => { if (!c.attributes) c.attributes = {}; });
+            this.data.debts.forEach(d => { if (!d.attributes) d.attributes = {}; });
+            // Migrate v0.4 categories: no applies_to → ['holdings'] (most common intent)
+            this.data.categories.forEach(c => {
+              if (!c.applies_to) c.applies_to = ['holdings'];
+            });
+          } catch (e) {
+            console.error('Failed to load portfolio', e);
+          }
+        }
+        this.displayCurrency = this.data.settings.display_currency || 'TWD';
+        this.language = this.data.settings.language || 'en';
+      },
+
+      save() {
+        this.data.settings.display_currency = this.displayCurrency;
+        this.data.settings.language = this.language;
+        this.data.settings.cost_format = 'per_share';
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.data, null, 2));
+      },
+
+      // ---- i18n ----
+      t(key, params) {
+        let s = STRINGS[this.language]?.[key] || STRINGS.en?.[key] || key;
+        if (params) {
+          Object.entries(params).forEach(([k, v]) => {
+            s = s.replace(`{${k}}`, v);
+          });
+        }
+        return s;
+      },
+
+      // ---- Getters ----
+      get holdings() { return this.data.holdings; },
+      get categories() { return this.data.categories; },
+      get cashAccounts() { return this.data.cash_accounts; },
+      get debts() { return this.data.debts; },
+      get categoriesForHoldings() {
+        return this.data.categories.filter(c => c.applies_to?.includes('holdings'));
+      },
+      get categoriesForCash() {
+        return this.data.categories.filter(c => c.applies_to?.includes('cash'));
+      },
+      get categoriesForDebts() {
+        return this.data.categories.filter(c => c.applies_to?.includes('debt'));
+      },
+      get groupByCategories() {
+        return this.data.categories.filter(c =>
+          c.applies_to?.some(t => ['holdings', 'cash', 'debt'].includes(t))
+        );
+      },
+
+      // ---- Holdings CRUD ----
+      openAdd() {
+        this.editing = null;
+        this.form = { ticker: '', shares: 0, cost: 0, currency: 'TWD', current_price: 0, attributes: {} };
+        this.showModal = true;
+      },
+      openEdit(h) {
+        this.editing = h;
+        this.form = {
+          ticker: h.ticker, shares: h.shares, cost: h.cost,
+          currency: h.currency, current_price: h.current_price,
+          attributes: { ...(h.attributes || {}) },
+        };
+        this.showModal = true;
+      },
+      closeModal() {
+        this.showModal = false;
+        this.editing = null;
+      },
+      setFormAttribute(catId, valId) {
+        if (valId) this.form.attributes[catId] = valId;
+        else delete this.form.attributes[catId];
+      },
+      saveHolding() {
+        const now = new Date().toISOString();
+        const id = this.editing ? this.editing.id : genId('h');
+        const attributes = {};
+        for (const [catId, valId] of Object.entries(this.form.attributes || {})) {
+          if (valId) attributes[catId] = valId;
+        }
+        const record = {
+          id, ticker: this.form.ticker.toUpperCase().trim(),
+          shares: this.form.shares, cost: this.form.cost,
+          currency: this.form.currency, current_price: this.form.current_price,
+          attributes, updated_at: now, device_id: DEVICE_ID,
+          inactive: this.editing ? this.editing.inactive : false,
+        };
+        if (this.editing) {
+          const idx = this.data.holdings.findIndex(h => h.id === this.editing.id);
+          if (idx >= 0) this.data.holdings[idx] = record;
+        } else {
+          this.data.holdings.push(record);
+        }
+        this.closeModal();
+      },
+      removeHolding(id) {
+        if (!confirm(this.t('holdings.confirmDelete'))) return;
+        this.data.holdings = this.data.holdings.filter(h => h.id !== id);
+      },
+      toggleInactive(id) {
+        const h = this.data.holdings.find(h => h.id === id);
+        if (h) h.inactive = !h.inactive;
+      },
+
+      // ---- Cash CRUD ----
+      openAddCash() {
+        this.editingCash = null;
+        this.cashForm = { name: '', balance: 0, currency: 'TWD', attributes: {} };
+        this.showCashModal = true;
+      },
+      openEditCash(c) {
+        this.editingCash = c;
+        this.cashForm = {
+          name: c.name, balance: c.balance, currency: c.currency,
+          attributes: { ...(c.attributes || {}) },
+        };
+        this.showCashModal = true;
+      },
+      closeCashModal() {
+        this.showCashModal = false;
+        this.editingCash = null;
+      },
+      setCashFormAttribute(catId, valId) {
+        if (valId) this.cashForm.attributes[catId] = valId;
+        else delete this.cashForm.attributes[catId];
+      },
+      saveCash() {
+        const now = new Date().toISOString();
+        const id = this.editingCash ? this.editingCash.id : genId('cash');
+        const attributes = {};
+        for (const [catId, valId] of Object.entries(this.cashForm.attributes || {})) {
+          if (valId) attributes[catId] = valId;
+        }
+        const record = {
+          id, name: this.cashForm.name.trim(),
+          balance: this.cashForm.balance, currency: this.cashForm.currency,
+          attributes, updated_at: now, device_id: DEVICE_ID,
+          inactive: this.editingCash ? this.editingCash.inactive : false,
+        };
+        if (this.editingCash) {
+          const idx = this.data.cash_accounts.findIndex(c => c.id === this.editingCash.id);
+          if (idx >= 0) this.data.cash_accounts[idx] = record;
+        } else {
+          this.data.cash_accounts.push(record);
+        }
+        this.closeCashModal();
+      },
+      removeCash(id) {
+        if (!confirm(this.t('cash.confirmDelete'))) return;
+        this.data.cash_accounts = this.data.cash_accounts.filter(c => c.id !== id);
+      },
+      toggleCashInactive(id) {
+        const c = this.data.cash_accounts.find(c => c.id === id);
+        if (c) c.inactive = !c.inactive;
+      },
+
+      // ---- Debt CRUD ----
+      openAddDebt() {
+        this.editingDebt = null;
+        this.debtForm = { name: '', balance: 0, currency: 'TWD', attributes: {} };
+        this.showDebtModal = true;
+      },
+      openEditDebt(d) {
+        this.editingDebt = d;
+        this.debtForm = {
+          name: d.name, balance: d.balance, currency: d.currency,
+          attributes: { ...(d.attributes || {}) },
+        };
+        this.showDebtModal = true;
+      },
+      closeDebtModal() {
+        this.showDebtModal = false;
+        this.editingDebt = null;
+      },
+      setDebtFormAttribute(catId, valId) {
+        if (valId) this.debtForm.attributes[catId] = valId;
+        else delete this.debtForm.attributes[catId];
+      },
+      saveDebt() {
+        const now = new Date().toISOString();
+        const id = this.editingDebt ? this.editingDebt.id : genId('debt');
+        const attributes = {};
+        for (const [catId, valId] of Object.entries(this.debtForm.attributes || {})) {
+          if (valId) attributes[catId] = valId;
+        }
+        const record = {
+          id, name: this.debtForm.name.trim(),
+          balance: this.debtForm.balance, currency: this.debtForm.currency,
+          attributes, updated_at: now, device_id: DEVICE_ID,
+          inactive: this.editingDebt ? this.editingDebt.inactive : false,
+        };
+        if (this.editingDebt) {
+          const idx = this.data.debts.findIndex(d => d.id === this.editingDebt.id);
+          if (idx >= 0) this.data.debts[idx] = record;
+        } else {
+          this.data.debts.push(record);
+        }
+        this.closeDebtModal();
+      },
+      removeDebt(id) {
+        if (!confirm(this.t('debts.confirmDelete'))) return;
+        this.data.debts = this.data.debts.filter(d => d.id !== id);
+      },
+      toggleDebtInactive(id) {
+        const d = this.data.debts.find(d => d.id === id);
+        if (d) d.inactive = !d.inactive;
+      },
+
+      // ---- Categories ----
+      addCategory() {
+        this.data.categories.push({ ...defaultCategory(), id: genId('cat') });
+      },
+      toggleCategoryAppliesTo(catId, type) {
+        const cat = this.data.categories.find(c => c.id === catId);
+        if (!cat) return;
+        if (!cat.applies_to) cat.applies_to = ['holdings']; // safety for unmigrated
+        const idx = cat.applies_to.indexOf(type);
+        if (idx >= 0) cat.applies_to.splice(idx, 1);
+        else cat.applies_to.push(type);
+      },
+      deleteCategory(catId) {
+        if (!confirm('Delete this category? Holdings/cash/debts will lose this attribute.')) return;
+        this.data.categories = this.data.categories.filter(c => c.id !== catId);
+        const clean = (items) => items.forEach(item => {
+          if (item.attributes && catId in item.attributes) delete item.attributes[catId];
+        });
+        clean(this.data.holdings);
+        clean(this.data.cash_accounts);
+        clean(this.data.debts);
+      },
+      addValue(cat) {
+        if (!cat.values) cat.values = [];
+        cat.values.push({ id: genId('val'), name: 'New Value' });
+      },
+      deleteValue(catId, valId) {
+        const cat = this.data.categories.find(c => c.id === catId);
+        if (!cat) return;
+        cat.values = cat.values.filter(v => v.id !== valId);
+        const clean = (items) => items.forEach(item => {
+          if (item.attributes && item.attributes[catId] === valId) delete item.attributes[catId];
+        });
+        clean(this.data.holdings);
+        clean(this.data.cash_accounts);
+        clean(this.data.debts);
+      },
+
+      // ---- Display helpers ----
+      getCategoryValueName(catId, valId) {
+        const cat = this.data.categories.find(c => c.id === catId);
+        if (!cat) return '?';
+        const val = cat.values?.find(v => v.id === valId);
+        if (!val) return '?';
+        return val.name;
+      },
+
+      // ---- Grouping (generic) ----
+      _groupBy(items, catId, totalFn) {
+        const cat = this.data.categories.find(c => c.id === catId);
+        if (!cat) return [];
+        const groups = {};
+        (cat.values || []).forEach(v => {
+          groups[v.id] = { value_id: v.id, value_name: v.name, total: 0, count: 0 };
+        });
+        groups['_unassigned'] = { value_id: '_unassigned', value_name: this.t('groupBy.unassigned'), total: 0, count: 0 };
+        items.filter(item => !item.inactive).forEach(item => {
+          const key = (item.attributes && item.attributes[catId]) || '_unassigned';
+          if (groups[key]) {
+            groups[key].total += this.toTWD(totalFn(item), item.currency);
+            groups[key].count += 1;
+          }
+        });
+        return Object.values(groups).sort((a, b) => {
+          if (a.value_id === '_unassigned') return 1;
+          if (b.value_id === '_unassigned') return -1;
+          return b.total - a.total;
+        });
+      },
+      holdingsGroupedBy(catId) {
+        return this._groupBy(this.data.holdings, catId, h => h.shares * h.current_price);
+      },
+      cashGroupedBy(catId) {
+        return this._groupBy(this.data.cash_accounts, catId, c => c.balance);
+      },
+      debtsGroupedBy(catId) {
+        return this._groupBy(this.data.debts, catId, d => d.balance);
+      },
+
+      // ---- Calculations ----
+      fxRate() { return this.data.settings.fx_rate || 32.2; },
+      toTWD(amount, currency) {
+        if (currency === 'TWD') return amount;
+        if (currency === 'USD') return amount * this.fxRate();
+        return amount;
+      },
+      fromTWD(amount, currency) {
+        if (currency === 'TWD') return amount;
+        if (currency === 'USD') return amount / this.fxRate();
+        return amount;
+      },
+      gainLoss(h) { return h.shares * (h.current_price - h.cost); },
+
+      // Internal TWD aggregations (always sum in TWD, convert at the end)
+      _holdingsValueTWD() {
+        return this.data.holdings.filter(h => !h.inactive)
+          .reduce((sum, h) => sum + this.toTWD(h.shares * h.current_price, h.currency), 0);
+      },
+      _holdingsCostTWD() {
+        return this.data.holdings.filter(h => !h.inactive)
+          .reduce((sum, h) => sum + this.toTWD(h.shares * h.cost, h.currency), 0);
+      },
+      _totalCashTWD() {
+        return this.data.cash_accounts.filter(c => !c.inactive)
+          .reduce((sum, c) => sum + this.toTWD(c.balance, c.currency), 0);
+      },
+      _totalDebtsTWD() {
+        return this.data.debts.filter(d => !d.inactive)
+          .reduce((sum, d) => sum + this.toTWD(d.balance, d.currency), 0);
+      },
+
+      // Display currency aggregations
+      totalAssets() {
+        return this.fromTWD(this._holdingsValueTWD() + this._totalCashTWD(), this.displayCurrency);
+      },
+      holdingsValue() {
+        return this.fromTWD(this._holdingsValueTWD(), this.displayCurrency);
+      },
+      holdingsCost() {
+        return this.fromTWD(this._holdingsCostTWD(), this.displayCurrency);
+      },
+      holdingsGainLoss() { return this.holdingsValue() - this.holdingsCost(); },
+      holdingsGainLossPct() {
+        if (this.holdingsCost() === 0) return 0;
+        return (this.holdingsGainLoss() / this.holdingsCost()) * 100;
+      },
+      totalCash() {
+        return this.fromTWD(this._totalCashTWD(), this.displayCurrency);
+      },
+      totalDebts() {
+        return this.fromTWD(this._totalDebtsTWD(), this.displayCurrency);
+      },
+      netWorth() {
+        return this.totalAssets() - this.totalDebts();
+      },
+
+      activeHoldingsCount() { return this.data.holdings.filter(h => !h.inactive).length; },
+      activeCashCount() { return this.data.cash_accounts.filter(c => !c.inactive).length; },
+      activeDebtsCount() { return this.data.debts.filter(d => !d.inactive).length; },
+
+      // ---- Formatting ----
+      formatMoney(amount, currency) {
+        if (currency === 'TWD') {
+          return 'NT$ ' + amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+        if (currency === 'USD') {
+          return '$' + amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+        return amount.toFixed(2);
+      },
+      formatWan(twdAmount) {
+        const wan = Math.abs(twdAmount / 10000);
+        const sign = twdAmount < 0 ? '-' : '';
+        return sign + 'NT(W)$ ' + wan.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      },
+      formatUSD(usdAmount) {
+        const sign = usdAmount < 0 ? '-' : '';
+        return sign + '$' + Math.abs(usdAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      },
+      formatTotal(amount) {
+        if (this.displayCurrency === 'TWD') return this.formatWan(amount);
+        if (this.displayCurrency === 'USD') return this.formatUSD(amount);
+        return amount.toFixed(2);
+      },
+
+      // ---- Actions ----
+      setCurrency(c) { this.displayCurrency = c; },
+      setLanguage(lang) { this.language = lang; },
+      downloadJSON() {
+        const blob = new Blob([JSON.stringify(this.data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = 'portfolio.json'; a.click();
+        URL.revokeObjectURL(url);
+      },
+
+      async handleImportFile(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        event.target.value = ''; // reset so same file can be re-imported
+        let parsed;
+        try {
+          const text = await file.text();
+          parsed = JSON.parse(text);
+        } catch (e) {
+          alert(this.t('import.lastError') + ': ' + e.message);
+          return;
+        }
+        if (!parsed.version || typeof parsed.version !== 'string') {
+          alert(this.t('import.invalid'));
+          return;
+        }
+        if (!confirm(this.t('import.confirmReplace'))) return;
+        // Migrate-merge like load() does, so missing fields get defaults
+        this.data = { ...defaultPortfolio(), ...parsed };
+        this.data.settings = { ...defaultPortfolio().settings, ...this.data.settings };
+        this.data.settings.cost_format = 'per_share';
+        if (!this.data.cash_accounts) this.data.cash_accounts = [];
+        if (!this.data.debts) this.data.debts = [];
+        this.data.holdings.forEach(h => { if (!h.attributes) h.attributes = {}; });
+        this.data.cash_accounts.forEach(c => { if (!c.attributes) c.attributes = {}; });
+        // $watch('data', ...) will trigger save() + auto-push
+      },
+
+      // ---- Summary ----
+      get summary() {
+        const h = this.activeHoldingsCount();
+        const c = this.activeCashCount();
+        const d = this.activeDebtsCount();
+        const cat = this.data.categories.length;
+        const s = this.data.snapshots.length;
+        return `${h} holdings · ${c} cash · ${d} debts · ${cat} categories · ${s} snapshots · device ${DEVICE_ID}`;
+      },
+    };
+  }
+</script>
+
+</body>
+</html>
