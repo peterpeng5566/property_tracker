@@ -32,6 +32,60 @@
        that flash their initial state before Alpine evaluates x-show. */
     [x-cloak] { display: none !important; }
 
+    /* 52-week range bar (v1.1 — spec §4.3, ADR 0009 §9).
+       Horizontal track with a dot marker showing where current price sits
+       in [low_52w, high_52w]. Marker clamps to [0, 1] for out-of-range. */
+    .week52-bar {
+      display: inline-flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 120px;
+    }
+    .week52-track {
+      position: relative;
+      width: 120px;
+      height: 4px;
+      background: #e2e8f0;  /* slate-200 */
+      border-radius: 2px;
+    }
+    .week52-marker {
+      position: absolute;
+      top: 50%;
+      width: 10px;
+      height: 10px;
+      background: #2563eb;  /* blue-600 */
+      border: 2px solid white;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+    }
+    .week52-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.7rem;
+      color: #64748b;  /* slate-500 */
+      font-variant-numeric: tabular-nums;
+    }
+    .week52-placeholder {
+      display: inline-block;
+      min-width: 120px;
+      color: #94a3b8;  /* slate-400 */
+      font-size: 0.875rem;
+    }
+    @media (max-width: 600px) {
+      .week52-bar, .week52-track, .week52-placeholder { min-width: 80px; width: 80px; }
+    }
+
+    /* Refresh-failed row indicator (v1.1 — ADR 0009 §4).
+       The _refresh_failed flag is in-memory only; clears on next refresh. */
+    tr.refresh-failed {
+      background-color: #fff1f2;  /* rose-50 */
+      box-shadow: inset 3px 0 0 0 #f43f5e;  /* rose-500 left border */
+    }
+    tr.refresh-failed:hover {
+      background-color: #ffe4e6;  /* rose-100 */
+    }
+
     /* Header "..." menu (HTML <details>]. Zero deps, accessible by default. */
     .header-menu { position: relative; }
     .header-menu > summary {
@@ -336,6 +390,8 @@
               <th class="text-right px-4 py-3 font-medium text-slate-600" x-text="t('holdings.col.shares')"></th>
               <th class="text-right px-4 py-3 font-medium text-slate-600" x-text="t('holdings.col.costPerShare')"></th>
               <th class="text-right px-4 py-3 font-medium text-slate-600" x-text="t('holdings.col.price')"></th>
+              <th class="text-right px-4 py-3 font-medium text-slate-600" x-text="t('holdings.col.dayDelta')"></th>
+              <th class="text-right px-4 py-3 font-medium text-slate-600" x-text="t('holdings.col.week52')"></th>
               <th class="text-right px-4 py-3 font-medium text-slate-600" x-text="t('holdings.col.value')"></th>
               <th class="text-right px-4 py-3 font-medium text-slate-600" x-text="t('holdings.col.gainLoss')"></th>
               <th class="text-right px-4 py-3 font-medium text-slate-600 w-32"></th>
@@ -344,7 +400,10 @@
           <tbody>
             <template x-for="h in holdings" :key="h.id">
               <tr class="border-b border-slate-100 last:border-0 hover:bg-slate-50"
-                  :class="h.inactive ? 'opacity-50' : ''">
+                  :class="{
+                    'opacity-50': h.inactive,
+                    'refresh-failed': h._refresh_failed
+                  }">
                 <td class="px-4 py-3">
                   <div class="font-medium" x-text="h.ticker"></div>
                   <div class="flex flex-wrap gap-1 mt-1" x-show="h.attributes && Object.keys(h.attributes).length > 0">
@@ -357,6 +416,27 @@
                 <td class="px-4 py-3 text-right tabular" x-text="h.shares.toLocaleString()"></td>
                 <td class="px-4 py-3 text-right tabular text-slate-600" x-text="formatAmount(h.cost, h.currency)"></td>
                 <td class="px-4 py-3 text-right tabular" x-text="formatAmount(h.current_price, h.currency)"></td>
+                <!-- Day Δ%: ±X.XX% color-coded. '—' placeholder when prev_close is null. -->
+                <td class="px-4 py-3 text-right tabular"
+                    :title="h._refresh_failed ? t('holdings.tooltip.refreshFailed') : ''"
+                    :class="dayDeltaClass(h)">
+                  <span x-text="dayDeltaLabel(h)"></span>
+                </td>
+                <!-- 52W range bar: marker dot where current sits between low/high. -->
+                <td class="px-4 py-3 text-right">
+                  <div class="week52-bar" x-show="h.high_52w != null && h.low_52w != null"
+                       :title="h._refresh_failed ? t('holdings.tooltip.refreshFailed') : ''">
+                    <div class="week52-track">
+                      <div class="week52-marker" :style="week52Style(h)"></div>
+                    </div>
+                    <div class="week52-labels">
+                      <span x-text="formatAmount(h.low_52w, h.currency)"></span>
+                      <span x-text="formatAmount(h.high_52w, h.currency)"></span>
+                    </div>
+                  </div>
+                  <span class="week52-placeholder" x-show="h.high_52w == null || h.low_52w == null"
+                        :title="t('holdings.tooltip.refreshToPopulate')">—</span>
+                </td>
                 <td class="px-4 py-3 text-right tabular font-medium" x-text="formatAmount(h.shares * h.current_price, h.currency)"></td>
                 <td class="px-4 py-3 text-right tabular"
                     :class="gainLoss(h) >= 0 ? 'text-emerald-600' : 'text-rose-600'">
@@ -373,7 +453,7 @@
               </tr>
             </template>
             <tr x-show="holdings.length === 0">
-              <td colspan="7" class="px-4 py-12 text-center text-slate-400" x-text="t('holdings.empty')"></td>
+              <td colspan="9" class="px-4 py-12 text-center text-slate-400" x-text="t('holdings.empty')"></td>
             </tr>
           </tbody>
         </table>
@@ -798,6 +878,9 @@
 <!-- Serialize helpers (lib/serialize.js) — strips in-memory fields before JSON output -->
 <script src="lib/serialize.js"></script>
 
+<!-- Market display helpers (lib/market-display.js) — Day Δ% + 52W bar logic -->
+<script src="lib/market-display.js"></script>
+
 <script>
   // ===== i18n =====
   // Add a new language by adding a new key with all string keys.
@@ -831,8 +914,12 @@
       'holdings.col.shares': 'Shares',
       'holdings.col.costPerShare': 'Cost / share',
       'holdings.col.price': 'Price',
+      'holdings.col.dayDelta': 'Day Δ%',
+      'holdings.col.week52': '52W Range',
       'holdings.col.value': 'Value',
       'holdings.col.gainLoss': 'Gain / Loss',
+      'holdings.tooltip.refreshToPopulate': 'Click ↻ Refresh to populate',
+      'holdings.tooltip.refreshFailed': 'Last refresh failed for this holding',
       'holdings.active': 'Active',
       'holdings.inactive': 'Inactive',
       'holdings.edit': 'Edit',
@@ -952,8 +1039,12 @@
       'holdings.col.shares': '股數',
       'holdings.col.costPerShare': '每股成本',
       'holdings.col.price': '現價',
+      'holdings.col.dayDelta': '日漲跌',
+      'holdings.col.week52': '52週區間',
       'holdings.col.value': '市值',
       'holdings.col.gainLoss': '損益',
+      'holdings.tooltip.refreshToPopulate': '按 ↻ 重新整理以更新',
+      'holdings.tooltip.refreshFailed': '上次重新整理失敗',
       'holdings.active': 'Active',
       'holdings.inactive': 'Inactive',
       'holdings.edit': '編輯',
@@ -1902,6 +1993,13 @@
         return amount;
       },
       gainLoss(h) { return h.shares * (h.current_price - h.cost); },
+
+      // ---- v1.1: Day Δ% (spec §4.2, ADR 0009 §9). Source of truth: lib/market-display.js.
+      dayDeltaLabel(h) { return MarketDisplay.dayDeltaLabel(h); },
+      dayDeltaClass(h) { return MarketDisplay.dayDeltaClass(h); },
+
+      // ---- v1.1: 52W range bar (spec §4.3, ADR 0009 §9). Source of truth: lib/market-display.js.
+      week52Style(h) { return MarketDisplay.week52Style(h); },
 
       // Internal TWD aggregations (always sum in TWD, convert at the end)
       _holdingsValueTWD() {
