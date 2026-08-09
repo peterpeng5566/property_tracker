@@ -28,6 +28,10 @@
     }
     .tabular { font-variant-numeric: tabular-nums; }
 
+    /* Alpine x-cloak: hide elements until Alpine has booted. Used on banners
+       that flash their initial state before Alpine evaluates x-show. */
+    [x-cloak] { display: none !important; }
+
     /* Header "..." menu (HTML <details>]. Zero deps, accessible by default. */
     .header-menu { position: relative; }
     .header-menu > summary {
@@ -98,12 +102,12 @@
             class="px-3 py-1 rounded transition-colors">中</button>
         </div>
 
-        <!-- Refresh prices (v1.1) — high-frequency inline -->
-        <button @click="refreshAllPrices()"
-                :disabled="refreshState === 'refreshing'"
+        <!-- Refresh prices (v1.1) — high-frequency inline. Click during refresh = cancel signal. -->
+        <button @click="refreshButtonClick()"
+                :title="refreshState === 'refreshing' ? t('header.refreshCancelHint') : ''"
                 :class="{
                   'bg-white border-slate-200 text-slate-700 hover:bg-slate-50': refreshState === 'idle',
-                  'bg-sky-50 border-sky-200 text-sky-700 cursor-not-allowed': refreshState === 'refreshing',
+                  'bg-sky-50 border-sky-200 text-sky-700 hover:bg-sky-100': refreshState === 'refreshing',
                   'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100': refreshState === 'partial',
                   'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100': refreshState === 'error',
                 }"
@@ -171,6 +175,16 @@
       </div>
     </div>
   </header>
+
+  <!-- Refresh error banner (v1.1 — shown when total refresh failure) -->
+  <div x-show="refreshError" x-cloak class="bg-rose-50 border-b border-rose-200">
+    <div class="max-w-7xl mx-auto px-6 py-2 flex items-center justify-between gap-3">
+      <p class="text-xs text-rose-700" x-text="refreshErrorBanner"></p>
+      <button @click="refreshError = null"
+              class="text-xs text-rose-600 hover:text-rose-800 font-medium"
+              x-text="t('header.dismiss')"></button>
+    </div>
+  </div>
 
   <!-- Tab bar -->
   <nav class="bg-white border-b border-slate-200">
@@ -781,6 +795,9 @@
 <!-- Format helpers (lib/format.js) — pure functions, also used by tests/format.test.js -->
 <script src="lib/format.js"></script>
 
+<!-- Serialize helpers (lib/serialize.js) — strips in-memory fields before JSON output -->
+<script src="lib/serialize.js"></script>
+
 <script>
   // ===== i18n =====
   // Add a new language by adding a new key with all string keys.
@@ -804,6 +821,9 @@
       'header.refresh': 'Refresh',
       'header.refreshing': 'Refreshing...',
       'header.retryFailed': 'Retry {n} failed',
+      'header.refreshError': 'Refresh failed: {reason}',
+      'header.refreshCancelHint': 'Click to cancel',
+      'header.dismiss': 'Dismiss',
       'holdings.title': 'Holdings',
       'holdings.add': '+ New Holding',
       'holdings.empty': 'No holdings yet. Click "+ New Holding" to start.',
@@ -922,6 +942,9 @@
       'header.refresh': '重新整理',
       'header.refreshing': '重新整理中…',
       'header.retryFailed': '重試 {n} 筆失敗',
+      'header.refreshError': '重新整理失敗：{reason}',
+      'header.refreshCancelHint': '點擊取消',
+      'header.dismiss': '關閉',
       'holdings.title': 'Holdings',
       'holdings.add': '+ 新增 Holding',
       'holdings.empty': '還沒有任何 holding。按右上「+ 新增 Holding」開始。',
@@ -1110,6 +1133,7 @@
 
       // Refresh state (v1.1 — ADR 0009 §3)
       refreshState: 'idle',       // 'idle' | 'refreshing' | 'partial' | 'error'
+      refreshCancelRequested: false,  // set by user click during refresh; loop checks at next iteration
       refreshFailures: [],        // array of failed tickers (in-memory only; not persisted)
       refreshError: null,         // string | null — error message for banner
       lastQuoteResults: {},       // { [ticker]: { marketState, ... } } — in-memory, for intraday detection
@@ -1254,7 +1278,7 @@
         return this.t(key);
       },
 
-      // ---- Refresh prices (v1.1 — ADR 0009 §3). Full impl in ticket #10. ----
+      // ---- Refresh prices (v1.1 — ADR 0009 §3) ----
       get refreshLabel() {
         if (this.refreshState === 'refreshing') return this.t('header.refreshing');
         return this.t('header.refresh');
@@ -1262,17 +1286,115 @@
       get retryFailedLabel() {
         return this.t('header.retryFailed', { n: this.refreshFailures.length });
       },
-      refreshAllPrices() {
-        // Stub. Full implementation in ticket #10 (refresh mechanism):
-        //   - fetchQuotes(symbols) → merge results into holdings
-        //   - 5x exponential-backoff retry on 401
-        //   - cancel-by-click: any subsequent refresh click breaks the retry loop
-        //   - partial success: red badge + auto-retry on failed subset
-        // Until #10 lands, this is a no-op so the button visual works without side effects.
+      get refreshErrorBanner() {
+        if (!this.refreshError) return null;
+        return this.t('header.refreshError', { reason: this.refreshError });
       },
-      retryFailed() {
-        // Stub. Full implementation in ticket #10.
-        // Re-queries only the failed tickers (this.refreshFailures).
+      // Click handler: if already refreshing, set cancel flag instead of starting a new refresh.
+      // The retry loop checks refreshCancelRequested at the top of each iteration and exits.
+      // In-flight fetches are NOT aborted (browsers don't cleanly abort fetch; see ADR 0009 §2).
+      refreshButtonClick() {
+        if (this.refreshState === 'refreshing') {
+          this.refreshCancelRequested = true;
+          return;
+        }
+        this.refreshAllPrices();
+      },
+      // Bulk refresh. symbols = null → all active holdings. Otherwise the explicit list.
+      async refreshAllPrices(symbols = null) {
+        if (this.refreshState === 'refreshing') {
+          // Defensive: caller forgot to use refreshButtonClick(). Treat as cancel.
+          this.refreshCancelRequested = true;
+          return;
+        }
+
+        const targetSymbols = symbols || this.data.holdings
+          .filter(h => !h.inactive)
+          .map(h => h.ticker);
+
+        if (targetSymbols.length === 0) return;
+
+        this.refreshState = 'refreshing';
+        this.refreshError = null;
+        this.refreshCancelRequested = false;
+
+        // Clear any prior _refresh_failed flags on the active holdings we'll process.
+        // Inactive holdings keep whatever flag they had (they're not in this refresh).
+        const targetSet = new Set(targetSymbols);
+        for (const h of this.data.holdings) {
+          if (targetSet.has(h.ticker)) h._refresh_failed = false;
+        }
+
+        // Retry loop: up to 5 attempts with exponential backoff.
+        const backoffMs = [1000, 2000, 4000, 8000, 16000];
+        let pending = targetSymbols.slice();
+        let results = {};
+
+        for (let attempt = 0; attempt < 5 && pending.length > 0; attempt++) {
+          // Check cancel signal BEFORE the fetch (in case set during previous wait).
+          if (this.refreshCancelRequested) break;
+          try {
+            const partial = await Yahoo.fetchQuotes(pending);
+            results = { ...results, ...partial };
+            pending = pending.filter(s => !partial[s] || partial[s].failed);
+          } catch (e) {
+            // Total failure (auth/network/parse). Abort all retries.
+            // Mark every active holding as failed.
+            for (const h of this.data.holdings) {
+              if (targetSet.has(h.ticker)) h._refresh_failed = true;
+            }
+            this.refreshFailures = pending.slice();
+            this.refreshState = 'error';
+            this.refreshError = e.message || String(e);
+            return;
+          }
+          if (pending.length === 0) break;
+          if (this.refreshCancelRequested) break;
+          // Sleep before next attempt (skip after the final attempt).
+          if (attempt < 4) {
+            await this.sleep(backoffMs[attempt]);
+          }
+        }
+
+        // Apply results to holdings (in-memory mutations).
+        for (const h of this.data.holdings) {
+          if (!targetSet.has(h.ticker)) continue;
+          const r = results[h.ticker];
+          if (r && !r.failed) {
+            h.current_price = r.current_price;
+            h.high_52w = r.high_52w;
+            h.low_52w = r.low_52w;
+            h.prev_close = r.prev_close;
+            h._refresh_failed = false;
+            this.lastQuoteResults[h.ticker] = r;
+          } else {
+            h._refresh_failed = true;
+          }
+        }
+
+        this.refreshFailures = pending;
+        this.refreshState = pending.length > 0 ? 'partial' : 'idle';
+
+        // Persist (save() strips in-memory flags; see serializeData).
+        this.save();
+        this.scheduleAutoPush();
+      },
+      async retryFailed() {
+        if (this.refreshState === 'refreshing') return;
+        if (this.refreshFailures.length === 0) return;
+        const failed = this.refreshFailures.slice();
+        this.refreshFailures = [];
+        await this.refreshAllPrices(failed);
+      },
+      sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+      },
+      // Strip in-memory-only fields from holdings before serialization.
+      // Per ADR 0009 §4, _refresh_failed is transient UI feedback and must not be persisted.
+      // Otherwise the Drive merge could preserve stale flags and clobber real updates.
+      // Source of truth: lib/serialize.js.
+      serializeData(data) {
+        return Serialize.serializeData(data);
       },
 
       // ---- Sync: Drive file ops (ADR 0008 + ADR 0002) ----
@@ -1313,7 +1435,7 @@
         const r = await this.driveFetch(url, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(data),
+          body: this.serializeData(data),
         });
         return await r.json();
       },
@@ -1329,7 +1451,7 @@
           `--${boundary}\r\n` +
           `Content-Type: application/json\r\n` +
           `\r\n` +
-          `${JSON.stringify(data)}\r\n` +
+          `${this.serializeData(data)}\r\n` +
           `--${boundary}--\r\n`;
         const url = `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
         const r = await this.driveFetch(url, {
@@ -1477,6 +1599,8 @@
               if (h.low_52w === undefined) h.low_52w = null;
               if (h.prev_close === undefined) h.prev_close = null;
             });
+            // Defensive: strip stale in-memory flags from a prior version's localStorage (ADR 0009 §4).
+            Serialize.stripInMemoryFields(this.data.holdings);
             this.data.version = '1.1';
           } catch (e) {
             console.error('Failed to load portfolio', e);
@@ -1490,7 +1614,7 @@
         this.data.settings.display_currency = this.displayCurrency;
         this.data.settings.language = this.language;
         this.data.settings.cost_format = 'per_share';
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.data, null, 2));
+        localStorage.setItem(STORAGE_KEY, this.serializeData(this.data));
       },
 
       // ---- i18n ----
@@ -1838,7 +1962,7 @@
       setCurrency(c) { this.displayCurrency = c; },
       setLanguage(lang) { this.language = lang; },
       downloadJSON() {
-        const blob = new Blob([JSON.stringify(this.data, null, 2)], { type: 'application/json' });
+        const blob = new Blob([this.serializeData(this.data)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url; a.download = 'portfolio.json'; a.click();
@@ -1869,6 +1993,8 @@
         if (!this.data.cash_accounts) this.data.cash_accounts = [];
         if (!this.data.debts) this.data.debts = [];
         this.data.holdings.forEach(h => { if (!h.attributes) h.attributes = {}; });
+        // Strip in-memory flags defensively (ADR 0009 §4).
+        Serialize.stripInMemoryFields(this.data.holdings);
         this.data.cash_accounts.forEach(c => { if (!c.attributes) c.attributes = {}; });
         // $watch('data', ...) will trigger save() + auto-push
       },
