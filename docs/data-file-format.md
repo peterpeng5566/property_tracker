@@ -146,7 +146,7 @@ Field-level migrations (e.g. `cost` total → per-share) are destructive of the 
 **Non-destructive.** v1.1 adds `high_52w`, `low_52w`, `prev_close` to each holding. The migration is run on every `load()` and on Import. Steps, in order:
 
 1. **Holding field additions**: for each holding, if `high_52w`, `low_52w`, or `prev_close` is missing, set to `null`. (Yahoo batch refresh will populate on next user action.)
-2. **Version bump**: set `version: '1.1'` immediately after the field additions — on load, before any save. See the v1.1 schema section in [`.scratch/price-tracking/schema-section.md`](../.scratch/price-tracking/schema-section.md) for rationale.
+2. **Version bump**: set `version: '1.1'` immediately after the field additions — on load, before any save. See the v1.1 schema section in [`v1.1-schema-section.md`](v1.1-schema-section.md) for rationale.
 
 Unlike v0.4 → v1.0, this migration does NOT touch existing values. No user confirmation is required. The new fields are simply absent (JSON `null`) until a refresh populates them; the UI shows `—` as a hint.
 
@@ -156,7 +156,7 @@ Unlike v0.4 → v1.0, this migration does NOT touch existing values. No user con
 
 **Snapshot UI is a separate v1.1 effort** (not the price-tracking effort). The `snapshots` field is reserved but the UI to populate it is not built in v1. Currently always `[]`.
 
-**Current schema (per v1.1 price tracking spec)**: only `current_price` per holding. 52W high/low and prev_close are NOT included in snapshots — see [ADR 0009 §7](adr/0009-v1.1-price-tracking.md#7-snapshot-schema-unchanged) and the full v1.1 spec at [`.scratch/price-tracking/spec.md`](../.scratch/price-tracking/spec.md).
+**Current schema (per v1.1 price tracking spec)**: only `current_price` per holding. 52W high/low and prev_close are NOT included in snapshots — see [ADR 0009 §7](adr/0009-v1.1-price-tracking.md#7-snapshot-schema-unchanged) and the full v1.1 spec at [`v1.1-spec.md`](v1.1-spec.md).
 
 The intended shape for the (separate) snapshot UI effort is L4 full-detail per [ADR 0005](adr/0005-l4-snapshot-storage.md) and references attributes by ID per [ADR 0003](adr/0003-attribute-references-in-snapshots.md). The snapshot UI effort may add fields beyond `current_price`; `snapshots: []` is the only valid v1.0/v1.1 price-tracking state.
 

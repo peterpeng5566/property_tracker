@@ -4,7 +4,7 @@
 
 Accepted (v1.1)
 
-Updated from the original v1.0 ADR by [`.scratch/price-tracking/issues/06-update-adr-0001.md`](../.scratch/price-tracking/issues/06-update-adr-0001.md) to reflect v1.1's actual usage. The v1.0 chart endpoint was never implemented; v1.1 ships the batch endpoint.
+Updated from the original v1.0 ADR by ticket #06 (`.scratch/price-tracking/issues/06-update-adr-0001.md`) to reflect v1.1's actual usage. The v1.0 chart endpoint was never implemented; v1.1 ships the batch endpoint.
 
 ## Context
 
@@ -113,9 +113,9 @@ Yahoo's `query1.finance.yahoo.com` does **not** send CORS-permitting headers for
 
 - [ADR 0009 — v1.1 price tracking](0009-v1.1-price-tracking.md) — v1.1-specific architecture (bulk refresh, retry, partial success, snapshot, header layout)
 - [ADR 0007 — v1 web storage localStorage](0007-v1-web-storage-localstorage.md) — "no backend" constraint
-- [`.scratch/price-tracking/research/02-yahoo-batch-endpoint.md`](../.scratch/price-tracking/research/02-yahoo-batch-endpoint.md) — research behind the endpoint choice
-- [`.scratch/price-tracking/schema-section.md`](../.scratch/price-tracking/schema-section.md) — schema for the 4 fields
-- [`.scratch/price-tracking/spec.md`](../.scratch/price-tracking/spec.md) — full v1.1 spec
+- [Research 02 — Yahoo batch endpoint](../research/02-yahoo-batch-endpoint.md) — research behind the endpoint choice
+- [v1.1 schema section](../v1.1-schema-section.md) — schema for the 4 fields
+- [v1.1 spec](../v1.1-spec.md) — full v1.1 spec
 - Yahoo Finance unofficial API — public knowledge, no docs
 - [Yahoo crumb auth flow (community documentation)](https://github.com/gadicc/node-yahoo-finance2/blob/devel/docs/crumb.md)
 - [Yahoo Finance quote endpoint field names (community documentation)](https://stackoverflow.com/q/63130178)
