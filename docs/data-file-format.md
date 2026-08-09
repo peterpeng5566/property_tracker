@@ -11,7 +11,7 @@ The wire format for the portfolio. One JSON file, shared between:
 
 | Field              | Type     | Notes                                                            |
 | ------------------ | -------- | ---------------------------------------------------------------- |
-| `version`          | string   | Semver. Current: `'1.0'`.                                        |
+| `version`          | string   | Semver. Current: `'1.1'`. v1.0 files bump to `'1.1'` on load. |
 | `meta`             | object   | Identity + sync bookkeeping. Always present.                     |
 | `settings`         | object   | User preferences. Always present.                                |
 | `categories`       | array    | User-defined attribute categories. Default `[]`.                  |
@@ -68,11 +68,25 @@ Renaming a value retroactively affects all records and snapshots that reference 
 | `shares`     | number  | Total share count (fractional allowed).                                       |
 | `cost`       | number  | Per-share cost basis. Total cost basis = `shares × cost`.                     |
 | `currency`   | string  | Native currency. Default `'TWD'`.                                              |
-| `current_price` | number | Cached price. Local cache, 5–15 min TTL. Refreshed on user action.            |
+| `current_price` | number | Cached price. Local cache, 5–15 min TTL. Refreshed on user action. **v1.1: also auto-refreshable via Yahoo batch endpoint.** |
+| `high_52w`   | number \| null | 52-week high. `null` until first successful refresh. **v1.1 addition.** |
+| `low_52w`    | number \| null | 52-week low. `null` until first successful refresh. **v1.1 addition.** |
+| `prev_close` | number \| null | Previous trading day's close. `null` until first successful refresh. **v1.1 addition.** |
 | `attributes` | object  | `{ [categoryId]: valueId }`. See [Attributes](#attributes).                   |
 | `inactive`   | boolean | `true` for delisted / retired. Inactive holdings are excluded from totals.    |
 | `updated_at` | string  | ISO 8601. Set on every edit.                                                  |
 | `device_id`  | string  | Device that made the last edit. See [ADR 0004](adr/0004-per-record-timestamp-merge.md). |
+
+### `holdings[]` v1.1 refresh rules
+
+- **`current_price`, `high_52w`, `low_52w`, `prev_close`** are populated together by the bulk refresh button, which calls `/v7/finance/quote?symbols=...` (Yahoo Finance batch endpoint, [ADR 0001](adr/0001-yahoo-finance-prices.md) + v1.1 ADR 0009).
+- All four fields are denominated in the holding's native `currency`. Do NOT infer from ticker suffix — read from Yahoo response's `currency` field.
+- Field name mapping from Yahoo response:
+  - `quote.regularMarketPrice` → `current_price`
+  - `quote.fiftyTwoWeekHigh` → `high_52w`
+  - `quote.fiftyTwoWeekLow` → `low_52w`
+  - `quote.regularMarketPreviousClose` → `prev_close`
+- See [ADR 0009](adr/0009-v1.1-price-tracking.md) (forthcoming) for refresh behavior: auto-retry, partial success, manual override, etc.
 
 ## `cash_accounts[]`
 
@@ -129,13 +143,22 @@ Field-level migrations (e.g. `cost` total → per-share) are destructive of the 
 
 ### v1.0 → v1.1
 
-TBD. v1.1 adds the snapshot UI; the snapshot schema will be specified when that work begins.
+**Non-destructive.** v1.1 adds `high_52w`, `low_52w`, `prev_close` to each holding. The migration is run on every `load()` and on Import. Steps, in order:
+
+1. **Holding field additions**: for each holding, if `high_52w`, `low_52w`, or `prev_close` is missing, set to `null`. (Yahoo batch refresh will populate on next user action.)
+2. **Version bump**: set `version: '1.1'` immediately after the field additions — on load, before any save. See the v1.1 schema section in [`.scratch/price-tracking/schema-section.md`](../.scratch/price-tracking/schema-section.md) for rationale.
+
+Unlike v0.4 → v1.0, this migration does NOT touch existing values. No user confirmation is required. The new fields are simply absent (JSON `null`) until a refresh populates them; the UI shows `—` as a hint.
+
+**Backward compatibility**: a v1.0 app loading a v1.1 file ignores the extra fields. Edits in v1.0 will silently drop `high_52w` / `low_52w` / `prev_close` on save — round-trip loss. Both devices must be on v1.1 to fully preserve the new fields via sync.
 
 ## Snapshots
 
-**Deferred to v1.1.** The `snapshots` field is reserved but the UI to populate it is not built in v1. Currently always `[]`.
+**Snapshot UI is a separate v1.1 effort** (not the price-tracking effort). The `snapshots` field is reserved but the UI to populate it is not built in v1. Currently always `[]`.
 
-The intended shape is L4 full-detail per [ADR 0005](adr/0005-l4-snapshot-storage.md) and references attributes by ID per [ADR 0003](adr/0003-attribute-references-in-snapshots.md). The exact field set will be specified when v1.1 work begins (`snapshots: []` is the only valid v1.0 state).
+**Current schema (per v1.1 price tracking spec)**: only `current_price` per holding. 52W high/low and prev_close are NOT included in snapshots — see [ADR 0009 §7](adr/0009-v1.1-price-tracking.md#7-snapshot-schema-unchanged) and the full v1.1 spec at [`.scratch/price-tracking/spec.md`](../.scratch/price-tracking/spec.md).
+
+The intended shape for the (separate) snapshot UI effort is L4 full-detail per [ADR 0005](adr/0005-l4-snapshot-storage.md) and references attributes by ID per [ADR 0003](adr/0003-attribute-references-in-snapshots.md). The snapshot UI effort may add fields beyond `current_price`; `snapshots: []` is the only valid v1.0/v1.1 price-tracking state.
 
 ## Storage
 
