@@ -29,24 +29,79 @@ Yahoo's `query1.finance.yahoo.com` does not send CORS-permitting headers, so the
 
 The Worker uses Yahoo's `/v8/finance/chart/<SYMBOL>` endpoint (not the now-locked `/v7/finance/quote` batch endpoint) and makes one parallel request per holding. See [`docs/research/05-chart-endpoint.md`](docs/research/05-chart-endpoint.md) for endpoint rationale.
 
-1. **Sign up** at [dash.cloudflare.com](https://dash.cloudflare.com) (no credit card, email + password only).
-2. **Create Worker**: left sidebar → **Workers & Pages** → **Create** → **Create Worker** → name it `yahoo-proxy` (or anything) → **Deploy**.
-3. **Paste code**: click **Edit Code** → select all → delete → paste the entire contents of [`docs/workers/yahoo-proxy.js`](docs/workers/yahoo-proxy.js) → **Save and Deploy**.
-4. **Copy URL** from the dashboard. It looks like `https://yahoo-proxy.YOURACCOUNT.workers.dev`.
-5. **(Optional but recommended) Lock origin**: dashboard → your Worker → **Settings** → **Variables** → add variable `ALLOWED_ORIGIN` = your app's origin (e.g. `http://localhost:8000` for dev, `https://YOURNAME.github.io` for production).
-6. **Configure app**: copy `config.js.example` to `config.js` (the file is gitignored). Paste your Worker URL into `yahooProxyUrl`:
-   ```js
-   window.PORTFOLIO_CONFIG = {
-     yahooProxyUrl: 'https://yahoo-proxy.YOURACCOUNT.workers.dev',
-   };
-   ```
-7. **Verify**: open `portfolio.html` (via `./dev.sh` or your static host), click the **Refresh** button in the header. Prices should appear. In DevTools Network tab, requests should go to your Worker URL.
+### Recommended path: Wrangler CLI (more reliable)
+
+The Cloudflare dashboard's in-browser code editor (Monaco) sometimes mangles pasted code or mis-detects the module format. Wrangler CLI deploys the file as-is from your terminal. This is what Cloudflare's own engineers use.
+
+**1. Install wrangler and get an API token:**
+
+```bash
+npm install -g wrangler
+```
+
+👉 Create an API token at **https://dash.cloudflare.com/profile/api-tokens** → **Create Token** → **Edit Cloudflare Workers** template → **Continue to summary** → **Create Token**. Copy the token.
+
+**2. Set the token and deploy:**
+
+```bash
+export CLOUDFLARE_API_TOKEN='paste-your-token-here'
+cd /path/to/property_tracker_web
+wrangler deploy docs/workers/yahoo-proxy.js --name yahoo-proxy --compatibility-date 2025-01-01
+```
+
+Wrangler prints the URL: `https://yahoo-proxy.YOURACCOUNT.workers.dev`.
+
+**3. Lock origin (recommended):** create a `wrangler.toml` (gitignored) in the repo root:
+
+```toml
+name = "yahoo-proxy"
+main = "docs/workers/yahoo-proxy.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+ALLOWED_ORIGIN = "http://localhost:8000"   # or your production origin
+```
+
+Then redeploy with `wrangler deploy` (no flags needed — wrangler reads the toml).
+
+**4. Configure the app:**
+
+```bash
+cp config.js.example config.js
+# Edit config.js, paste your Worker URL into yahooProxyUrl
+```
+
+**5. Verify:** open `portfolio.html` via `./dev.sh`, click the **Refresh** button in the header. Prices should appear. DevTools Network tab should show N requests to your Worker URL.
 
 Smoke test from terminal:
 ```bash
 curl 'https://yahoo-proxy.YOURACCOUNT.workers.dev/?url=https%3A%2F%2Fquery1.finance.yahoo.com%2Fv8%2Ffinance%2Fchart%2FAAPL%3Finterval%3D1d%26range%3D1d'
 ```
 Should return Yahoo's JSON with CORS headers.
+
+### Alternative: Dashboard editor (works but finicky)
+
+If you prefer the dashboard UI over Wrangler CLI:
+
+1. **Sign up** at [dash.cloudflare.com](https://dash.cloudflare.com) (no credit card, email + password only).
+2. **Create Worker**: left sidebar → **Workers & Pages** → **Create application** → **Create Worker** → name it `yahoo-proxy` → **Deploy**.
+3. **Paste code**: click **Edit Code** → select all → delete → paste the entire contents of [`docs/workers/yahoo-proxy.js`](docs/workers/yahoo-proxy.js) → **Save and Deploy**.
+4. **Copy URL** from the dashboard. It looks like `https://yahoo-proxy.YOURACCOUNT.workers.dev`.
+5. **(Optional but recommended) Lock origin**: dashboard → your Worker → **Settings** → **Variables** → add variable `ALLOWED_ORIGIN` = your app's origin (e.g. `http://localhost:8000` for dev, `https://YOURNAME.github.io` for production).
+6. **Configure app**: copy `config.js.example` to `config.js` (the file is gitignored). Paste your Worker URL into `yahooProxyUrl`.
+
+⚠️ **Known dashboard editor issues**:
+- Pasted code sometimes appears doubled or partially missing — verify after paste.
+- Module Worker format (`export default { fetch }`) may deploy as Service Worker format in some cases — verify with `wrangler tail` if you see "No event handlers registered" errors.
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `Failed to fetch` in browser | `config.js` missing or wrong URL | Check `config.js` exists and `yahooProxyUrl` is set |
+| Worker returns `403 forbidden` | `ALLOWED_ORIGIN` doesn't match your app origin | Update `ALLOWED_ORIGIN` in dashboard or `wrangler.toml` |
+| Worker returns `502` / `error code: 1101` | Runtime exception in Worker | `wrangler tail` to see the actual error |
+| Holdings stay `—` after refresh | Network blocked or Worker URL wrong | F12 → Network tab → check request URLs |
 
 ## Sync setup
 
