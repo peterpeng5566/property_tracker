@@ -98,7 +98,8 @@ If you prefer the dashboard UI over Wrangler CLI:
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `Failed to fetch` in browser | `config.js` missing or wrong URL | Check `config.js` exists and `yahooProxyUrl` is set |
+| Banner: `Refresh failed: Yahoo proxy not configured...` | `config.js` not created from `config.js.example` | Copy `config.js.example` → `config.js`, paste Worker URL into `yahooProxyUrl` |
+| `Failed to fetch` in browser | `config.js` exists but `yahooProxyUrl` is wrong/empty | Check the URL string in `config.js` (must start with `https://`) |
 | Worker returns `403 forbidden` | `ALLOWED_ORIGIN` doesn't match your app origin | Update `ALLOWED_ORIGIN` in dashboard or `wrangler.toml` |
 | Worker returns `502` / `error code: 1101` | Runtime exception in Worker | `wrangler tail` to see the actual error |
 | Holdings stay `—` after refresh | Network blocked or Worker URL wrong | F12 → Network tab → check request URLs |

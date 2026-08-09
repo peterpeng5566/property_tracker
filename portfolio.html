@@ -1428,6 +1428,14 @@
           this.refreshCancelRequested = true;
           return;
         }
+        // Pre-flight: catch "config.js not set up" before browser hits Failed to fetch.
+        // Placed here (not in refreshAllPrices) so the manual "Retry N failed" path
+        // doesn't re-show this banner when proxy already proved to work.
+        if (!window.PORTFOLIO_CONFIG || !window.PORTFOLIO_CONFIG.yahooProxyUrl) {
+          this.refreshState = 'error';
+          this.refreshError = 'Yahoo proxy not configured. Copy config.js.example to config.js and set yahooProxyUrl. See README.md → "Yahoo CORS proxy setup".';
+          return;
+        }
         this.refreshAllPrices();
       },
       // Bulk refresh. symbols = null → all active holdings. Otherwise the explicit list.

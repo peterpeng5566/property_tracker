@@ -2,9 +2,13 @@
 
 ## Status
 
-Accepted (v1.1)
+Accepted (v1.1) — **endpoint choice superseded, see §Decision**
 
-Updated from the original v1.0 ADR by ticket #06 (`.scratch/price-tracking/issues/06-update-adr-0001.md`) to reflect v1.1's actual usage. The v1.0 chart endpoint was never implemented; v1.1 shipped the quote endpoint initially but switched to the chart endpoint after Yahoo locked the quote endpoint behind crumb auth (see [research/05](../research/05-chart-endpoint.md)).
+## ⚠️ Superseded (2025)
+
+The endpoint choice below (`/v7/finance/quote` batch) was made during v1.1 spec work but **Yahoo locked that endpoint behind browser-session-derived crumb auth before implementation finished**. The actual deployed code uses `/v8/finance/chart/<SYMBOL>` (per-symbol, parallel) via a Cloudflare Worker. The canonical endpoint rationale now lives in [ADR 0009 §1](0009-v1.1-price-tracking.md#1-yahoo-chart-endpoint-for-per-symbol-refresh) and [research/05](../research/05-chart-endpoint.md). This ADR retains its original v1.1 text below for historical reference; the **positive (provider choice, free, no key) and consequences sections remain accurate**.
+
+## Context
 
 ## Context
 
@@ -22,7 +26,9 @@ The architecture question is: which Yahoo Finance endpoint, and what fields?
 
 ## Decision
 
-### Use Yahoo Finance's unofficial `/v7/finance/quote` batch endpoint
+### Use Yahoo Finance (provider) — *endpoint choice superseded, see banner above*
+
+### ~~Use Yahoo Finance's unofficial `/v7/finance/quote` batch endpoint~~ *(now superseded)*
 
 ```
 GET https://query1.finance.yahoo.com/v7/finance/quote?symbols=AAPL,2330.TW,TWD=X&crumb=XXX
