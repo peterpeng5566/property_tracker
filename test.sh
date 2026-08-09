@@ -13,13 +13,20 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ ! -f "$DIR/lib/format.js" ]; then
-  echo "✗ lib/format.js not found in $DIR"
+if [ ! -d "$DIR/lib" ]; then
+  echo "✗ lib/ directory not found in $DIR"
+  echo "  Run this script from the project root."
   exit 1
 fi
 
-if [ ! -f "$DIR/tests/format.test.js" ]; then
-  echo "✗ tests/format.test.js not found in $DIR"
+if [ ! -d "$DIR/tests" ]; then
+  echo "✗ tests/ directory not found in $DIR"
+  echo "  Run this script from the project root."
+  exit 1
+fi
+
+if ! ls "$DIR/tests/"*.test.js >/dev/null 2>&1; then
+  echo "✗ no *.test.js files found in $DIR/tests/"
   exit 1
 fi
 
@@ -30,7 +37,8 @@ echo ""
 echo "  Node: $(node --version)"
 echo ""
 
-node --test tests/format.test.js
+# Auto-discover all test files. Quoted glob prevents shell expansion issues.
+node --test 'tests/*.test.js'
 
 echo ""
 echo "✓ All tests passed."
