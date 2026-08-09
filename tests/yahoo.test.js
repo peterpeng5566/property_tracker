@@ -5,17 +5,19 @@
 // Or:
 //   ./test.sh
 //
-// Spec source of truth: spec.md §9.1 (unit tests) + §9.2 (retry state machine).
+// Spec source of truth: spec.md §9.1 (unit tests).
 // ADR 0001 v1.1 documents the endpoint + field names.
+//
 // Implementation is pure-function with DI (fetchFn), so we mock fetch without
-// needing jsdom or network access.
+// needing jsdom or network access. As of v1.1 the lib routes through a proxy
+// URL (window.PORTFOLIO_CONFIG.yahooProxyUrl) when set; tests cover both modes.
 
 'use strict';
 
 const test = require('node:test');
 const assert = require('node:assert');
 const Yahoo = require('../lib/yahoo.js');
-const { fetchQuotes, bootstrapAuth, resetAuth, YahooAuthError, YahooNetworkError, YahooParseError } = Yahoo;
+const { fetchQuotes, YahooAuthError, YahooNetworkError, YahooParseError } = Yahoo;
 
 // ===== Mock helpers =====
 
@@ -89,27 +91,31 @@ const QUOTE_RESPONSE_MULTI = {
   },
 };
 
-// For bootstrap: fc.yahoo.com returns 200 w/ cookie; /v1/test/getcrumb returns 200 w/ crumb text.
-function bootstrapResponses(opts = {}) {
-  const cookie = opts.cookie || 'PRF=abc123';
-  const crumb = opts.crumb || 'crumble123';
-  return [
-    makeRes(200, '', { headers: { 'set-cookie': cookie } }),  // fc.yahoo.com
-    makeRes(200, crumb, { headers: { 'content-type': 'text/plain' } }),  // getcrumb
-  ];
-}
+// ===== Setup: clear config between tests =====
+// In Node, the lib captures `globalThis` as `root` (since `typeof window` is
+// undefined). Tests set `globalThis.PORTFOLIO_CONFIG` (a.k.a. `global.X`)
+// which is what the lib reads.
 
-// ===== Setup: reset module state before each test =====
+const savedConfig = globalThis.PORTFOLIO_CONFIG;
 
 test.beforeEach(() => {
-  resetAuth();
+  // Default: no proxy (direct fetch). Tests that want proxy set it explicitly.
+  delete globalThis.PORTFOLIO_CONFIG;
+});
+
+test.after(() => {
+  // Restore whatever was there before tests ran.
+  if (savedConfig !== undefined) {
+    globalThis.PORTFOLIO_CONFIG = savedConfig;
+  } else {
+    delete globalThis.PORTFOLIO_CONFIG;
+  }
 });
 
 // ===== Test 1: Single symbol, full response =====
 
 test('fetchQuotes: single symbol, full response', async () => {
   const { fetchFn, calls } = makeMockFetch([
-    ...bootstrapResponses(),
     makeRes(200, QUOTE_RESPONSE),
   ]);
 
@@ -126,20 +132,15 @@ test('fetchQuotes: single symbol, full response', async () => {
     marketState: 'REGULAR',
   });
 
-  // Verify bootstrap + quote was called
-  assert.strictEqual(calls.length, 3);
-  assert.match(calls[0].url, /^https:\/\/fc\.yahoo\.com/);
-  assert.match(calls[1].url, /getcrumb/);
-  assert.match(calls[2].url, /v7\/finance\/quote/);
-  assert.match(calls[2].url, /symbols=AAPL/);
-  assert.match(calls[2].url, /crumb=crumble123/);
+  // Direct fetch (no proxy configured)
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].url, 'https://query1.finance.yahoo.com/v7/finance/quote?symbols=AAPL');
 });
 
 // ===== Test 2: Multiple symbols, all succeed =====
 
 test('fetchQuotes: multiple symbols, all succeed', async () => {
   const { fetchFn } = makeMockFetch([
-    ...bootstrapResponses(),
     makeRes(200, QUOTE_RESPONSE_MULTI),
   ]);
 
@@ -158,7 +159,6 @@ test('fetchQuotes: multiple symbols, all succeed', async () => {
 test('fetchQuotes: multiple symbols, one missing → failed: true', async () => {
   // Request 5 symbols, response has 4 (TYPO is silently dropped)
   const { fetchFn } = makeMockFetch([
-    ...bootstrapResponses(),
     makeRes(200, QUOTE_RESPONSE_MULTI),
   ]);
 
@@ -172,46 +172,10 @@ test('fetchQuotes: multiple symbols, one missing → failed: true', async () => 
   assert.strictEqual(result.TYPO_XX.current_price, undefined);
 });
 
-// ===== Test 4: 401 first, then 200 =====
-
-test('fetchQuotes: 401 first, then 200 → re-bootstrap, retry succeeds', async () => {
-  const { fetchFn, calls } = makeMockFetch([
-    ...bootstrapResponses(),                                  // bootstrap #1 (2 calls)
-    makeRes(401, { error: 'Unauthorized' }),                  // quote 401
-    ...bootstrapResponses({ crumb: 'freshcrumb' }),           // bootstrap #2 (2 calls)
-    makeRes(200, QUOTE_RESPONSE),                             // quote retry 200
-  ]);
-
-  const result = await fetchQuotes(['AAPL'], fetchFn);
-
-  assert.strictEqual(result.AAPL.current_price, 175.5);
-  // 2 (bootstrap) + 1 (quote 401) + 2 (re-bootstrap) + 1 (retry) = 6
-  assert.strictEqual(calls.length, 6);
-  // 6th call (retry) should use the new crumb
-  assert.match(calls[5].url, /crumb=freshcrumb/);
-});
-
-// ===== Test 5: 401 twice → YahooAuthError =====
-
-test('fetchQuotes: 401 twice → throws YahooAuthError', async () => {
-  const { fetchFn } = makeMockFetch([
-    ...bootstrapResponses(),                                  // bootstrap #1
-    makeRes(401, { error: 'Unauthorized' }),                  // quote 401
-    ...bootstrapResponses(),                                  // re-bootstrap
-    makeRes(401, { error: 'Unauthorized' }),                  // retry still 401
-  ]);
-
-  await assert.rejects(
-    fetchQuotes(['AAPL'], fetchFn),
-    (err) => err instanceof YahooAuthError && /401/.test(err.message)
-  );
-});
-
-// ===== Test 6: 500 response → YahooNetworkError =====
+// ===== Test 4: 500 response → YahooNetworkError =====
 
 test('fetchQuotes: 500 response → throws YahooNetworkError', async () => {
   const { fetchFn } = makeMockFetch([
-    ...bootstrapResponses(),
     makeRes(500, { error: 'Internal Server Error' }),
   ]);
 
@@ -221,11 +185,10 @@ test('fetchQuotes: 500 response → throws YahooNetworkError', async () => {
   );
 });
 
-// ===== Test 7: Malformed JSON → YahooParseError =====
+// ===== Test 5: Malformed JSON → YahooParseError =====
 
 test('fetchQuotes: malformed JSON → throws YahooParseError', async () => {
   const { fetchFn } = makeMockFetch([
-    ...bootstrapResponses(),
     makeRes(200, { broken: 'no quoteResponse here' }),
   ]);
 
@@ -235,11 +198,10 @@ test('fetchQuotes: malformed JSON → throws YahooParseError', async () => {
   );
 });
 
-// ===== Test 8: Empty results array → all symbols failed =====
+// ===== Test 6: Empty results array → all symbols failed =====
 
 test('fetchQuotes: empty results array → all symbols failed: true', async () => {
   const { fetchFn } = makeMockFetch([
-    ...bootstrapResponses(),
     makeRes(200, { quoteResponse: { result: [], error: null } }),
   ]);
 
@@ -251,11 +213,10 @@ test('fetchQuotes: empty results array → all symbols failed: true', async () =
   assert.strictEqual(result['2330.TW'].failed, true);
 });
 
-// ===== Test 9: FX symbol parsed normally =====
+// ===== Test 7: FX symbol parsed normally =====
 
 test('fetchQuotes: FX symbol (TWD=X) parsed normally, currency: USD', async () => {
   const { fetchFn } = makeMockFetch([
-    ...bootstrapResponses(),
     makeRes(200, QUOTE_RESPONSE_MULTI),
   ]);
 
@@ -267,7 +228,7 @@ test('fetchQuotes: FX symbol (TWD=X) parsed normally, currency: USD', async () =
   assert.strictEqual(result['TWD=X'].marketState, 'REGULAR');
 });
 
-// ===== Test 10: Field name mapping (exact) =====
+// ===== Test 8: Field name mapping (exact) =====
 
 test('fetchQuotes: Yahoo field names map correctly', async () => {
   // Verify exact field names: regularMarketPrice → current_price, etc.
@@ -293,7 +254,6 @@ test('fetchQuotes: Yahoo field names map correctly', async () => {
   };
 
   const { fetchFn } = makeMockFetch([
-    ...bootstrapResponses(),
     makeRes(200, customQuote),
   ]);
 
@@ -327,7 +287,6 @@ test('fetchQuotes: empty symbols array returns empty object (no fetch)', async (
 
 test('fetchQuotes: duplicate symbols are deduped', async () => {
   const { fetchFn, calls } = makeMockFetch([
-    ...bootstrapResponses(),
     makeRes(200, QUOTE_RESPONSE),
   ]);
 
@@ -335,49 +294,8 @@ test('fetchQuotes: duplicate symbols are deduped', async () => {
 
   assert.strictEqual(Object.keys(result).length, 1);
   // URL should only have one AAPL
-  assert.match(calls[2].url, /symbols=AAPL/);
-  assert.doesNotMatch(calls[2].url, /symbols=AAPL,AAPL/);
-});
-
-// ===== Bonus: bootstrapAuth happy path =====
-
-test('bootstrapAuth: returns cookie + crumb, caches in module', async () => {
-  const { fetchFn, calls } = makeMockFetch(bootstrapResponses({ cookie: 'PRF=test', crumb: 'mycrumb' }));
-
-  const result = await bootstrapAuth(fetchFn);
-
-  assert.strictEqual(result.cookie, 'PRF=test');
-  assert.strictEqual(result.crumb, 'mycrumb');
-  assert.strictEqual(calls.length, 2);
-  assert.match(calls[0].url, /^https:\/\/fc\.yahoo\.com/);
-  assert.match(calls[1].url, /getcrumb/);
-});
-
-// ===== Bonus: bootstrapAuth fails if cookie fetch fails =====
-
-test('bootstrapAuth: throws YahooAuthError if cookie fetch fails', async () => {
-  const { fetchFn } = makeMockFetch([
-    makeRes(503, { error: 'Service Unavailable' }),
-  ]);
-
-  await assert.rejects(
-    bootstrapAuth(fetchFn),
-    (err) => err instanceof YahooAuthError && /503/.test(err.message)
-  );
-});
-
-// ===== Bonus: bootstrapAuth fails if crumb is empty =====
-
-test('bootstrapAuth: throws YahooAuthError if crumb is empty', async () => {
-  const { fetchFn } = makeMockFetch([
-    makeRes(200, '', { headers: { 'set-cookie': 'PRF=abc' } }),
-    makeRes(200, '   ', { headers: { 'content-type': 'text/plain' } }),  // whitespace = empty after trim
-  ]);
-
-  await assert.rejects(
-    bootstrapAuth(fetchFn),
-    (err) => err instanceof YahooAuthError && /empty crumb/.test(err.message)
-  );
+  assert.match(calls[0].url, /symbols=AAPL/);
+  assert.doesNotMatch(calls[0].url, /symbols=AAPL,AAPL/);
 });
 
 // ===== Bonus: Error classes are exported correctly =====
@@ -394,28 +312,47 @@ test('Yahoo: error classes are exported with correct names', () => {
   assert.ok(errP instanceof Error);
 });
 
-// ===== Retry state machine tests (spec §9.2) =====
+// ===== Proxy routing =====
 
-// Note: spec §9.2 describes `refreshAllPrices` retry logic, which is in
-// portfolio.html (ticket #10). Lower-level auth retry is in fetchQuotes.
-// These tests cover the lower-level auth retry that's already in lib/yahoo.js.
+test('fetchQuotes: uses proxy URL when PORTFOLIO_CONFIG.yahooProxyUrl is set', async () => {
+  globalThis.PORTFOLIO_CONFIG = { yahooProxyUrl: 'https://my-proxy.workers.dev' };
 
-// Retry behavior: re-bootstrap on 401 (verified in Test 4)
-// Retry behavior: throw YahooAuthError after 2 failures (verified in Test 5)
-// Retry behavior: keep crumb cached across successful calls (verified in Test 1)
-
-test('fetchQuotes: crumb is cached across calls (no re-bootstrap)', async () => {
-  const { fetchFn, calls } = makeMockFetch([
-    ...bootstrapResponses({ crumb: 'cacheme' }),  // bootstrap once
-    makeRes(200, QUOTE_RESPONSE),                 // call 1
-    makeRes(200, QUOTE_RESPONSE),                 // call 2 — should NOT re-bootstrap
-  ]);
+  let capturedUrl = '';
+  const fetchFn = async (url) => {
+    capturedUrl = url;
+    return makeRes(200, QUOTE_RESPONSE);
+  };
 
   await fetchQuotes(['AAPL'], fetchFn);
+
+  // Should be routed through the proxy with Yahoo URL as ?url= param
+  assert.match(capturedUrl, /^https:\/\/my-proxy\.workers\.dev\/\?url=/);
+  assert.ok(capturedUrl.includes(encodeURIComponent('https://query1.finance.yahoo.com/v7/finance/quote?symbols=AAPL')));
+});
+
+test('fetchQuotes: direct fetch when no proxy configured (default)', async () => {
+  // No PORTFOLIO_CONFIG set
+  let capturedUrl = '';
+  const fetchFn = async (url) => {
+    capturedUrl = url;
+    return makeRes(200, QUOTE_RESPONSE);
+  };
+
   await fetchQuotes(['AAPL'], fetchFn);
 
-  // 2 quote calls + 2 bootstrap calls = 4 total
-  assert.strictEqual(calls.length, 4);
-  assert.match(calls[2].url, /crumb=cacheme/);
-  assert.match(calls[3].url, /crumb=cacheme/);
+  assert.strictEqual(capturedUrl, 'https://query1.finance.yahoo.com/v7/finance/quote?symbols=AAPL');
+});
+
+test('fetchQuotes: empty proxy URL falls back to direct fetch', async () => {
+  globalThis.PORTFOLIO_CONFIG = { yahooProxyUrl: '' };
+
+  let capturedUrl = '';
+  const fetchFn = async (url) => {
+    capturedUrl = url;
+    return makeRes(200, QUOTE_RESPONSE);
+  };
+
+  await fetchQuotes(['AAPL'], fetchFn);
+
+  assert.strictEqual(capturedUrl, 'https://query1.finance.yahoo.com/v7/finance/quote?symbols=AAPL');
 });

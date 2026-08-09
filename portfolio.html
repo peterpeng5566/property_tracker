@@ -888,6 +888,11 @@
 
 </div>
 
+<!-- Per-user runtime config (gitignored). Copy config.js.example to config.js and
+     fill in the Cloudflare Worker URL. Without this, Yahoo refresh fails with CORS.
+     See README.md → "Yahoo CORS proxy setup". -->
+<script src="config.js"></script>
+
 <!-- Format helpers (lib/format.js) — pure functions, also used by tests/format.test.js -->
 <script src="lib/format.js"></script>
 

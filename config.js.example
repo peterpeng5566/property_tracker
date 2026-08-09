@@ -1,0 +1,12 @@
+// config.js.example — Copy to config.js and fill in your Cloudflare Worker URL.
+// config.js is gitignored. Without it, Yahoo refresh will fail in the browser
+// due to CORS. With it, the Worker proxies requests to Yahoo.
+//
+// See README.md → "Yahoo CORS proxy setup" for deployment steps.
+
+window.PORTFOLIO_CONFIG = {
+  // Cloudflare Worker URL from Step 4 of the README setup instructions.
+  // Example: 'https://yahoo-proxy.YOURACCOUNT.workers.dev'
+  // Leave empty to bypass the proxy (useful for testing or if Worker is down).
+  yahooProxyUrl: '',
+};

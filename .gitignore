@@ -1,2 +1,5 @@
 # Local scratch / wayfinder maps
 .scratch/
+
+# Per-user runtime config (Worker URL); copy config.js.example
+config.js
