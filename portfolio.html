@@ -905,6 +905,10 @@
 <!-- Intraday detection (lib/intraday.js) — spec §6.2-§6.4 -->
 <script src="lib/intraday.js"></script>
 
+<!-- Yahoo Finance batch client (lib/yahoo.js) — refresh() calls Yahoo.fetchQuotes.
+     Routes through PORTFOLIO_CONFIG.yahooProxyUrl if set (see config.js + README). -->
+<script src="lib/yahoo.js"></script>
+
 <script>
   // ===== i18n =====
   // Add a new language by adding a new key with all string keys.
