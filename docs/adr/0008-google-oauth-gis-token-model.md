@@ -74,6 +74,7 @@ Three fetches. No discovery doc, no batching, no CORS layer needed. Loading `gap
 - Access token is short-lived (~1 hour). Implicit flow issues **no refresh token**.
 - On expiry → call `requestAccessToken()` again. Each sync call is a user gesture (open page / save), so the gesture requirement is naturally satisfied.
 - On 401 response → re-request token, then retry.
+- On page reload, the in-memory token is gone but Google's authorization record persists per browser profile. `requestAccessToken({prompt: ''})` re-acquires silently when consent was previously granted; first-time users still see consent (no prior auth → Google falls back to UI). User gesture (a click) is still required — that's an OAuth hard constraint. The header button is the entry point (see issue #09).
 
 ## Consequences
 
@@ -86,14 +87,14 @@ Three fetches. No discovery doc, no batching, no CORS layer needed. Loading `gap
 
 ### Negative
 
-- **No refresh token** — every ~1 hour the user must re-prompt. For a personal app used interactively, this is invisible (each open is a gesture).
-- **Token in memory only** — page reload re-prompts. Acceptable for personal use, no UX degradation visible.
+- **No refresh token** — every ~1 hour the user must re-acquire a token. The header button is the user-gesture entry point (one click); with `prompt: ''`, returning users skip the consent screen. Acceptable for personal use.
+- **Token in memory only** — page reload requires a click to re-acquire, but consent is skipped (see issue #09). No data loss: Drive is the source of truth, and local portfolio is in localStorage.
 - **No PKCE upgrade path on Web** — if we ever want a refresh token on Web, we'd need a backend. Defer.
 
 ### Trade-offs accepted
 
 - **Single-token usage**, no scope-incremental auth (we only need `drive.file`).
-- **No offline auth cache** — page reload re-prompts. Drive is the source of truth anyway; offline init from localStorage is enough.
+- **In-memory token + silent re-acquire** — page reload requires a user-gesture click but skips consent (via `prompt: ''`). localStorage holds the `client_id` only, not the token.
 
 ## Rejected options
 
@@ -105,7 +106,7 @@ Three fetches. No discovery doc, no batching, no CORS layer needed. Loading `gap
 
 ## Deferred / future
 
-- **Refresh tokens** — Web uses implicit token model; access token expires ~hourly and the user re-consents on next sync. Long-running sessions would need refresh tokens (PKCE / authorization code flow), but that's not needed for personal use.
+- **Refresh tokens** — Web uses implicit token model; access token expires ~hourly and the user re-acquires on next sync (1 click, silent re-consent if previously authorized). Long-running sessions would need refresh tokens (PKCE / authorization code flow), but that's not needed for personal use.
 - **OAuth App Verification** — Personal use, single user, no verification needed. Cosmetic for now.
 - **Multiple scopes / incremental authorization** — Only `drive.file` needed; irrelevant today.
 

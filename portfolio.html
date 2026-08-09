@@ -69,7 +69,7 @@
           <span class="text-slate-500">TWD</span>
         </div>
         <!-- Sync -->
-        <button @click="openSyncModal()"
+        <button @click="headerClick()"
                 :class="{
                   'border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-slate-900': syncStatus === 'disconnected',
                   'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100': syncStatus === 'error',
@@ -127,31 +127,31 @@
       <!-- Net Worth -->
       <div class="bg-white p-6 rounded-2xl border border-slate-200">
         <p class="text-xs text-slate-500 uppercase tracking-wider font-medium" x-text="t('summary.netWorth')"></p>
-        <p class="text-3xl font-semibold tabular mt-2" x-text="formatTotal(netWorth())"></p>
+        <p class="text-3xl font-semibold tabular mt-2" x-text="formatAmount(netWorth(), this.displayCurrency)"></p>
         <p class="text-xs text-slate-500 mt-2"
            x-text="t('summary.netWorthSub', { a: activeHoldingsCount(), c: activeCashCount(), d: activeDebtsCount() })"></p>
       </div>
       <!-- Holdings Value -->
       <div class="bg-white p-6 rounded-2xl border border-slate-200">
         <p class="text-xs text-slate-500 uppercase tracking-wider font-medium" x-text="t('summary.holdingsValue')"></p>
-        <p class="text-3xl font-semibold tabular mt-2" x-text="formatTotal(holdingsValue())"></p>
+        <p class="text-3xl font-semibold tabular mt-2" x-text="formatAmount(holdingsValue(), this.displayCurrency)"></p>
         <p class="text-xs mt-2"
            :class="holdingsGainLoss() >= 0 ? 'text-emerald-600' : 'text-rose-600'">
-          <span x-text="(holdingsGainLoss() >= 0 ? '+' : '') + formatTotal(holdingsGainLoss())"></span>
+          <span x-text="(holdingsGainLoss() >= 0 ? '+' : '') + formatAmount(holdingsGainLoss(), this.displayCurrency)"></span>
           <span x-text="' (' + (holdingsGainLossPct() >= 0 ? '+' : '') + holdingsGainLossPct().toFixed(2) + '%)'"></span>
         </p>
       </div>
       <!-- Cash -->
       <div class="bg-white p-6 rounded-2xl border border-slate-200">
         <p class="text-xs text-slate-500 uppercase tracking-wider font-medium" x-text="t('summary.cash')"></p>
-        <p class="text-3xl font-semibold tabular mt-2" x-text="formatTotal(totalCash())"></p>
+        <p class="text-3xl font-semibold tabular mt-2" x-text="formatAmount(totalCash(), this.displayCurrency)"></p>
         <p class="text-xs text-slate-500 mt-2"
            x-text="activeCashCount() + ' ' + t('summary.accounts')"></p>
       </div>
       <!-- Debts -->
       <div class="bg-white p-6 rounded-2xl border border-slate-200">
         <p class="text-xs text-slate-500 uppercase tracking-wider font-medium" x-text="t('summary.debts')"></p>
-        <p class="text-3xl font-semibold tabular mt-2 text-rose-600" x-text="formatTotal(totalDebts())"></p>
+        <p class="text-3xl font-semibold tabular mt-2 text-rose-600" x-text="formatAmount(totalDebts(), this.displayCurrency)"></p>
         <p class="text-xs text-slate-500 mt-2"
            x-text="activeDebtsCount() + ' ' + t('summary.debtItems')"></p>
       </div>
@@ -174,7 +174,7 @@
                     <tr x-show="group.count > 0 || group.value_id === '_unassigned'">
                       <td class="py-1" x-text="group.value_name"></td>
                       <td class="py-1 text-right text-slate-500 tabular" x-text="group.count + ' ' + t('groupBy.holdings')"></td>
-                      <td class="py-1 text-right tabular font-medium" x-text="formatWan(group.total)"></td>
+                      <td class="py-1 text-right tabular font-medium" x-text="formatAmount(group.total, 'TWD')"></td>
                     </tr>
                   </template>
                 </tbody>
@@ -190,7 +190,7 @@
                     <tr x-show="group.count > 0 || group.value_id === '_unassigned'">
                       <td class="py-1" x-text="group.value_name"></td>
                       <td class="py-1 text-right text-slate-500 tabular" x-text="group.count + ' ' + t('groupBy.accounts')"></td>
-                      <td class="py-1 text-right tabular font-medium" x-text="formatWan(group.total)"></td>
+                      <td class="py-1 text-right tabular font-medium" x-text="formatAmount(group.total, 'TWD')"></td>
                     </tr>
                   </template>
                 </tbody>
@@ -206,7 +206,7 @@
                     <tr x-show="group.count > 0 || group.value_id === '_unassigned'">
                       <td class="py-1" x-text="group.value_name"></td>
                       <td class="py-1 text-right text-slate-500 tabular" x-text="group.count + ' ' + t('groupBy.debtItems')"></td>
-                      <td class="py-1 text-right tabular font-medium text-rose-600" x-text="formatWan(group.total)"></td>
+                      <td class="py-1 text-right tabular font-medium text-rose-600" x-text="formatAmount(group.total, 'TWD')"></td>
                     </tr>
                   </template>
                 </tbody>
@@ -263,12 +263,12 @@
                   </div>
                 </td>
                 <td class="px-4 py-3 text-right tabular" x-text="h.shares.toLocaleString()"></td>
-                <td class="px-4 py-3 text-right tabular text-slate-600" x-text="formatMoney(h.cost, h.currency)"></td>
-                <td class="px-4 py-3 text-right tabular" x-text="formatMoney(h.current_price, h.currency)"></td>
-                <td class="px-4 py-3 text-right tabular font-medium" x-text="formatWan(toTWD(h.shares * h.current_price, h.currency))"></td>
+                <td class="px-4 py-3 text-right tabular text-slate-600" x-text="formatAmount(h.cost, h.currency)"></td>
+                <td class="px-4 py-3 text-right tabular" x-text="formatAmount(h.current_price, h.currency)"></td>
+                <td class="px-4 py-3 text-right tabular font-medium" x-text="formatAmount(h.shares * h.current_price, h.currency)"></td>
                 <td class="px-4 py-3 text-right tabular"
                     :class="gainLoss(h) >= 0 ? 'text-emerald-600' : 'text-rose-600'">
-                  <span x-text="(gainLoss(h) >= 0 ? '+' : '') + formatWan(toTWD(gainLoss(h), h.currency))"></span>
+                  <span x-text="(gainLoss(h) >= 0 ? '+' : '') + formatAmount(gainLoss(h), h.currency)"></span>
                 </td>
                 <td class="px-4 py-3 text-right">
                   <button @click="toggleInactive(h.id)"
@@ -321,7 +321,7 @@
                     </template>
                   </div>
                 </td>
-                <td class="px-4 py-3 text-right tabular font-medium" x-text="formatWan(toTWD(c.balance, c.currency))"></td>
+                <td class="px-4 py-3 text-right tabular font-medium" x-text="formatAmount(c.balance, c.currency)"></td>
                 <td class="px-4 py-3" x-text="c.currency"></td>
                 <td class="px-4 py-3 text-right">
                   <button @click="toggleCashInactive(c.id)"
@@ -373,7 +373,7 @@
                   </div>
                 </td>
                 <td class="px-4 py-3 text-right tabular font-medium text-rose-600"
-                    x-text="'-' + formatWan(toTWD(d.balance, d.currency))"></td>
+                    x-text="formatAmount(-d.balance, d.currency)"></td>
                 <td class="px-4 py-3" x-text="d.currency"></td>
                 <td class="px-4 py-3 text-right">
                   <button @click="toggleDebtInactive(d.id)"
@@ -644,8 +644,13 @@
           <a href="../docs/google-oauth-setup.md" target="_blank" class="text-slate-700 hover:text-slate-900 underline"
              x-text="'📘 ' + t('sync.setupGuide')"></a>
         </p>
-        <button @click="setSyncClientId()" class="mt-2 text-sm bg-slate-900 text-white px-3 py-1.5 rounded-md hover:bg-slate-800 transition-colors"
-                x-text="t('sync.saveClientId')"></button>
+        <div class="mt-2 flex gap-2">
+          <button @click="setSyncClientId()" class="text-sm bg-slate-900 text-white px-3 py-1.5 rounded-md hover:bg-slate-800 transition-colors"
+                  x-text="t('sync.saveClientId')"></button>
+          <button x-show="syncClientId" @click="deleteSyncClientId()"
+                  class="text-sm border border-rose-200 text-rose-600 px-3 py-1.5 rounded-md hover:bg-rose-50 transition-colors"
+                  x-text="t('sync.deleteClientId')"></button>
+        </div>
       </div>
 
       <div class="border-t border-slate-100 my-4"></div>
@@ -694,6 +699,9 @@
   </div>
 
 </div>
+
+<!-- Format helpers (lib/format.js) — pure functions, also used by tests/format.test.js -->
+<script src="lib/format.js"></script>
 
 <script>
   // ===== i18n =====
@@ -799,6 +807,8 @@
       'sync.setupGuide': 'Setup guide (5 steps, 10 min)',
       'sync.clientIdPlaceholder': 'xxxxx.apps.googleusercontent.com',
       'sync.saveClientId': 'Save client ID',
+      'sync.deleteClientId': 'Delete client ID',
+      'sync.confirmDeleteClientId': 'Delete the client ID? Your token will be revoked and the saved client_id removed. Local and Drive portfolio data are preserved.',
       'sync.connect': 'Connect to Google Drive',
       'sync.disconnect': 'Disconnect',
       'sync.connectFirst': 'Save client ID first',
@@ -912,6 +922,8 @@
       'sync.setupGuide': '設定教學（5 步、10 分鐘）',
       'sync.clientIdPlaceholder': 'xxxxx.apps.googleusercontent.com',
       'sync.saveClientId': '儲存 Client ID',
+      'sync.deleteClientId': '刪除 Client ID',
+      'sync.confirmDeleteClientId': '確定要刪除 Client ID？ Token 會撤銷、儲存的 Client ID 會移除，但 local 與 Drive 上的 portfolio 資料都會保留。',
       'sync.connect': '連線 Google Drive',
       'sync.disconnect': '中斷連線',
       'sync.connectFirst': '請先儲存 Client ID',
@@ -1082,6 +1094,20 @@
         }
       },
 
+      deleteSyncClientId() {
+        // Destructive: clears localStorage + disconnects if connected.
+        // Confirmation is required because the user has to set up again to sync.
+        if (!confirm(this.t('sync.confirmDeleteClientId'))) return;
+        if (this.syncAccessToken) {
+          this.disconnectDrive();
+        }
+        this.syncClientId = '';
+        this.syncClientIdDraft = '';
+        localStorage.removeItem('property_tracker_sync_client_id');
+        this.tokenClient = null;
+        this.syncError = null;
+      },
+
       openSyncModal() {
         this.syncClientIdDraft = this.syncClientId;
         this.showSyncModal = true;
@@ -1089,6 +1115,17 @@
 
       closeSyncModal() {
         this.showSyncModal = false;
+      },
+
+      headerClick() {
+        // Header sync button: if client_id is set and we are not connected, click
+        // goes straight to the OAuth flow (no modal). Otherwise the click opens
+        // the modal — for first-time setup, status/error view, or settings.
+        if (this.syncClientId && (this.syncStatus === 'disconnected' || this.syncStatus === 'error')) {
+          this.connectDrive();
+          return;
+        }
+        this.openSyncModal();
       },
 
       connectDrive() {
@@ -1105,7 +1142,11 @@
         this.syncStatus = 'connecting';
         this.syncError = null;
         // requestAccessToken requires user gesture; the button click is that gesture.
-        this.tokenClient.requestAccessToken({ prompt: this.syncAccessToken ? '' : 'consent' });
+        // prompt: '' skips the consent screen when the user has already authorized
+        // (e.g. on page reload, where the in-memory token is gone but Google's
+        // authorization record persists). First-time users will still see consent
+        // because Google falls back to UI when no prior authorization exists.
+        this.tokenClient.requestAccessToken({ prompt: '' });
       },
 
       disconnectDrive() {
@@ -1662,28 +1703,11 @@
       activeDebtsCount() { return this.data.debts.filter(d => !d.inactive).length; },
 
       // ---- Formatting ----
-      formatMoney(amount, currency) {
-        if (currency === 'TWD') {
-          return 'NT$ ' + amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        }
-        if (currency === 'USD') {
-          return '$' + amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        }
-        return amount.toFixed(2);
-      },
-      formatWan(twdAmount) {
-        const wan = Math.abs(twdAmount / 10000);
-        const sign = twdAmount < 0 ? '-' : '';
-        return sign + 'NT(W)$ ' + wan.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      },
-      formatUSD(usdAmount) {
-        const sign = usdAmount < 0 ? '-' : '';
-        return sign + '$' + Math.abs(usdAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      },
-      formatTotal(amount) {
-        if (this.displayCurrency === 'TWD') return this.formatWan(amount);
-        if (this.displayCurrency === 'USD') return this.formatUSD(amount);
-        return amount.toFixed(2);
+      // Thin wrapper around window.formatAmount (lib/format.js). Source of truth for the
+      // compact suffix rules lives in lib/format.js so tests/format.test.js can verify it
+      // without spinning up a browser.
+      formatAmount(amount, sourceCurrency) {
+        return window.formatAmount(amount, sourceCurrency, this.displayCurrency, this.fxRate());
       },
 
       // ---- Actions ----

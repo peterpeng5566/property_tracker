@@ -47,16 +47,19 @@ The currency a holding, cash account, or debt is denominated in. Set per record,
 _Avoid_: Source currency, original currency
 
 **Display currency**:
-The currency the user wants totals shown in. Toggles between TWD and USD.
+The currency the user wants all monetary values shown in. Toggles between TWD and USD. Per-record fields (cost, current price) and aggregates (market value, gain/loss, cash, debts, net worth) both follow the toggle.
 _Avoid_: Base currency, report currency
 
 **FX rate**:
 The exchange rate used at the moment a snapshot was taken, e.g. `TWD=X` = 32.2. Stored per snapshot.
 _Avoid_: Exchange rate, conversion rate
 
-**Ten-thousand unit** (萬):
-A TWD display convention. Amounts in TWD are formatted in units of 10,000 to keep numbers short (e.g. `945 萬` instead of `9,450,000`).
-_Avoid_: Wan (romanisation is not project vocabulary)
+**Compact suffix**:
+A display convention for keeping monetary values short. Format is `$<value><suffix>` where the suffix depends on display currency and magnitude:
+- TWD: ≥100M → Y (億), ≥10K → W (萬), else full (`$1,265.86`)
+- USD: ≥1M → M, ≥1K → K, else full (`$1,265.86`)
+All values use `$` prefix regardless of currency; 2 decimals; `-` prefix for negatives.
+_Avoid_: Wan (romanisation is not project vocabulary), compact notation (too vague)
 
 ## Attribute system
 

@@ -15,6 +15,14 @@ A personal net-worth tracker. Tracks stocks, cash, and debts with manual snapsho
 
 Default port is 8000. Pass another as the first arg if 8000 is busy: `./dev.sh 8080`. The local server is required because Google OAuth rejects `file://` origins.
 
+## Test it
+
+```bash
+./test.sh
+```
+
+Runs automated tests for `lib/format.js` (the compact suffix display rules: W/K/M/Y). Uses Node.js's built-in `node:test`. Requires Node 18+.
+
 ## Sync setup
 
 Google Drive sync needs an OAuth Client ID. One-time setup (~10 min): see [docs/google-oauth-setup.md](docs/google-oauth-setup.md).
