@@ -95,11 +95,37 @@ test('fetchQuotes: empty symbols array returns empty object (no fetches)', async
   assert.equal(calls.length, 0);
 });
 
-test('fetchQuotes: throws YahooAuthError when fetchFn not provided', async () => {
-  await assert.rejects(
-    () => fetchQuotes(['AAPL']),
-    (err) => err instanceof YahooAuthError && err.message.includes('fetch')
-  );
+test('fetchQuotes: falls back to global fetch when fetchFn not provided', async () => {
+  // Node 21+ exposes fetch globally. When fetchFn is omitted, the lib
+  // should use that global fetch — which we intercept by temporarily
+  // deleting it.
+  const savedFetch = globalThis.fetch;
+  let called = false;
+  globalThis.fetch = async (url) => {
+    called = true;
+    return mockResponse(chartResponse('AAPL'));
+  };
+  try {
+    const out = await fetchQuotes(['AAPL']);
+    assert.equal(called, true);
+    assert.ok(out.AAPL);
+  } finally {
+    if (savedFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = savedFetch;
+  }
+});
+
+test('fetchQuotes: throws YahooAuthError when no fetchFn and no global fetch', async () => {
+  const savedFetch = globalThis.fetch;
+  delete globalThis.fetch;
+  try {
+    await assert.rejects(
+      () => fetchQuotes(['AAPL']),
+      (err) => err instanceof YahooAuthError && err.message.includes('fetch')
+    );
+  } finally {
+    if (savedFetch !== undefined) globalThis.fetch = savedFetch;
+  }
 });
 
 test('fetchQuotes: throws YahooAuthError when symbols not array', async () => {
