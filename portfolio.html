@@ -793,6 +793,22 @@
     </div>
   </div>
 
+  <!-- Intraday Confirm Dialog -->
+  <div x-show="showIntradayDialog" x-transition.opacity class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" @click.self="cancelIntradaySnapshot()" @keydown.escape.window="cancelIntradaySnapshot()" style="display:none;">
+    <div class="bg-white rounded-2xl w-full max-w-md p-6" @click.stop>
+      <h2 class="text-lg font-semibold mb-2" x-text="t('intraday.title')"></h2>
+      <p class="text-sm text-slate-600 mb-6" x-text="t('intraday.body')"></p>
+      <div class="flex justify-end gap-2">
+        <button type="button" @click="cancelIntradaySnapshot()"
+                class="px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 rounded-md transition-colors"
+                x-text="t('modal.cancel')"></button>
+        <button type="button" @click="confirmIntradaySnapshot()" x-ref="intradayProceedBtn"
+                class="px-4 py-2 bg-slate-900 text-white text-sm rounded-md hover:bg-slate-800 transition-colors"
+                x-text="t('intraday.proceed')"></button>
+      </div>
+    </div>
+  </div>
+
   <!-- Sync Modal -->
   <div x-show="showSyncModal" x-transition.opacity class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" @click.self="closeSyncModal()" style="display:none;">
     <div class="bg-white rounded-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" @click.stop>
@@ -881,6 +897,9 @@
 <!-- Market display helpers (lib/market-display.js) — Day Δ% + 52W bar logic -->
 <script src="lib/market-display.js"></script>
 
+<!-- Intraday detection (lib/intraday.js) — spec §6.2-§6.4 -->
+<script src="lib/intraday.js"></script>
+
 <script>
   // ===== i18n =====
   // Add a new language by adding a new key with all string keys.
@@ -967,6 +986,9 @@
       'modal.attributes': 'Attributes',
       'modal.cancel': 'Cancel',
       'modal.save': 'Save',
+      'intraday.title': 'Market is currently active',
+      'intraday.body': 'Snapshot will record the current price, which may differ from the closing price. Continue?',
+      'intraday.proceed': 'Continue',
       'categories.title': 'Categories',
       'categories.add': '+ Add Category',
       'categories.addValue': '+ Add Value',
@@ -1092,6 +1114,9 @@
       'modal.attributes': '屬性',
       'modal.cancel': '取消',
       'modal.save': '儲存',
+      'intraday.title': '現在盤中',
+      'intraday.body': 'Snapshot 會記錄當下的 current_price，之後可能與收盤價不同，要繼續嗎？',
+      'intraday.proceed': '繼續',
       'categories.title': 'Categories',
       'categories.add': '+ 新增 Category',
       'categories.addValue': '+ 新增值',
@@ -1205,6 +1230,11 @@
 
       // Debt modal state
       showDebtModal: false,
+
+      // Intraday confirm dialog state (spec §6.2, ticket #12)
+      // Snapshot action shows this when shouldWarnIntraday() returns true.
+      showIntradayDialog: false,
+      _intradayResolve: null,  // Promise resolver for the dialog
       editingDebt: null,
       debtForm: { name: '', balance: 0, currency: 'TWD', attributes: {} },
 
@@ -1814,6 +1844,44 @@
       closeCashModal() {
         this.showCashModal = false;
         this.editingCash = null;
+      },
+
+      // ---- v1.1: Intraday confirm dialog (spec §6.2, ticket #12). Source of truth: lib/intraday.js.
+      // Delegates detection to the pure lib function.
+      shouldWarnIntraday() {
+        return Intraday.shouldWarnIntraday(this.holdings, this.lastQuoteResults);
+      },
+      // Promise-based dialog API. Caller awaits the result.
+      // Resolution pattern avoids callback hell in takeSnapshot().
+      showIntradayConfirmDialog() {
+        return new Promise((resolve) => {
+          this._intradayResolve = resolve;
+          this.showIntradayDialog = true;
+        });
+      },
+      confirmIntradaySnapshot() {
+        this.showIntradayDialog = false;
+        if (this._intradayResolve) {
+          this._intradayResolve(true);
+          this._intradayResolve = null;
+        }
+      },
+      cancelIntradaySnapshot() {
+        this.showIntradayDialog = false;
+        if (this._intradayResolve) {
+          this._intradayResolve(false);
+          this._intradayResolve = null;
+        }
+      },
+      // Snapshot action wiring (skeleton). The actual snapshot UI/landscape
+      // is a separate effort; this provides the warning hook so future snapshot
+      // code just calls await takeSnapshot() and gets the dialog flow for free.
+      async takeSnapshot() {
+        if (this.shouldWarnIntraday()) {
+          const confirmed = await this.showIntradayConfirmDialog();
+          if (!confirmed) return;
+        }
+        // TODO(snapshot-effort): implement snapshot creation + storage here.
       },
       setCashFormAttribute(catId, valId) {
         if (valId) this.cashForm.attributes[catId] = valId;
