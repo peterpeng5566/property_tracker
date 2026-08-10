@@ -46,7 +46,7 @@ npm install -g wrangler
 ```bash
 export CLOUDFLARE_API_TOKEN='paste-your-token-here'
 cd /path/to/property_tracker_web
-wrangler deploy docs/workers/yahoo-proxy.js --name yahoo-proxy --compatibility-date 2025-01-01
+wrangler deploy docs/workers/yahoo-proxy.mjs --name yahoo-proxy --compatibility-date 2025-01-01
 ```
 
 Wrangler prints the URL: `https://yahoo-proxy.YOURACCOUNT.workers.dev`.
@@ -55,7 +55,7 @@ Wrangler prints the URL: `https://yahoo-proxy.YOURACCOUNT.workers.dev`.
 
 ```toml
 name = "yahoo-proxy"
-main = "docs/workers/yahoo-proxy.js"
+main = "docs/workers/yahoo-proxy.mjs"
 compatibility_date = "2025-01-01"
 
 [vars]
@@ -85,7 +85,7 @@ If you prefer the dashboard UI over Wrangler CLI:
 
 1. **Sign up** at [dash.cloudflare.com](https://dash.cloudflare.com) (no credit card, email + password only).
 2. **Create Worker**: left sidebar → **Workers & Pages** → **Create application** → **Create Worker** → name it `yahoo-proxy` → **Deploy**.
-3. **Paste code**: click **Edit Code** → select all → delete → paste the entire contents of [`docs/workers/yahoo-proxy.js`](docs/workers/yahoo-proxy.js) → **Save and Deploy**.
+3. **Paste code**: click **Edit Code** → select all → delete → paste the entire contents of [`docs/workers/yahoo-proxy.mjs`](docs/workers/yahoo-proxy.mjs) → **Save and Deploy**.
 4. **Copy URL** from the dashboard. It looks like `https://yahoo-proxy.YOURACCOUNT.workers.dev`.
 5. **(Optional but recommended) Lock origin**: dashboard → your Worker → **Settings** → **Variables** → add variable `ALLOWED_ORIGIN` = your app's origin (e.g. `http://localhost:8000` for dev, `https://YOURNAME.github.io` for production).
 6. **Configure app**: copy `config.js.example` to `config.js` (the file is gitignored). Paste your Worker URL into `yahooProxyUrl`.

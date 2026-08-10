@@ -1,4 +1,4 @@
-// docs/workers/yahoo-proxy.js — Cloudflare Worker for Yahoo Finance CORS bypass.
+// docs/workers/yahoo-proxy.mjs — Cloudflare Worker for Yahoo Finance CORS bypass.
 //
 // DEPLOY:
 //   1. Sign up at dash.cloudflare.com (no credit card needed).
@@ -24,7 +24,8 @@
 //   - Adds a User-Agent and consent cookie to Yahoo requests (Yahoo blocks
 //     requests without these from non-browser sources).
 //   - Caches the consent cookie for 24h in module scope.
-//   - Restricts target URLs to query1.finance.yahoo.com only (security).
+//   - Restricts target URLs to query1.finance.yahoo.com (chart data) and
+//     fc.yahoo.com (cookie bootstrap host) (security).
 //   - Restricts origin to ALLOWED_ORIGIN env var if set (security).
 //
 // TESTING:
@@ -46,6 +47,7 @@
 
 const CHART_HOST = 'query1.finance.yahoo.com';
 const COOKIE_HOST = 'fc.yahoo.com';
+const ALLOWED_HOSTS = new Set([CHART_HOST, COOKIE_HOST]);
 const CACHE_MS = 24 * 60 * 60 * 1000;  // 24h — Yahoo's A3 cookie expires in 1 year
 
 // Module-scoped cache for the consent cookie. Survives across requests in
@@ -119,8 +121,9 @@ async function handleRequest(request, env) {
     return new Response('invalid url', { status: 400 });
   }
 
-  // Domain allowlist — only query1.finance.yahoo.com
-  if (target.host !== CHART_HOST) {
+  // Domain allowlist — query1.finance.yahoo.com (chart data) and fc.yahoo.com
+  // (cookie bootstrap, but also valid as a proxy target per spec)
+  if (!ALLOWED_HOSTS.has(target.host)) {
     return new Response('forbidden host', { status: 403 });
   }
 
@@ -149,6 +152,18 @@ async function handleRequest(request, env) {
 
 export default {
   async fetch(request, env) {
-    return handleRequest(request, env);
+    try {
+      return await handleRequest(request, env);
+    } catch (e) {
+      // Per spec: cookie bootstrap failure (and any other unhandled error)
+      // surfaces as 500 rather than propagating to the runtime.
+      return new Response(`server error: ${e?.message ?? e}`, { status: 500 });
+    }
   },
 };
+
+// Test helper — exposed so Node contract tests can reset the module-scoped
+// cookie cache between tests. Not part of the runtime API surface.
+export function _resetCookieCacheForTesting() {
+  cookieCache = { value: '', expiresAt: 0 };
+}

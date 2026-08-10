@@ -37,8 +37,16 @@ echo ""
 echo "  Node: $(node --version)"
 echo ""
 
-# Auto-discover all test files. Quoted glob prevents shell expansion issues.
-node --test 'tests/*.test.js'
+# Auto-discover all unit tests. Explicit list (not a glob) so the worker
+# contract test (tests/worker.contract.test.js) is excluded — it is run by
+# safety-net stage 2 only, per ticket 02. Add new unit tests here when they
+# are introduced.
+node --test \
+  tests/format.test.js \
+  tests/intraday.test.js \
+  tests/market-display.test.js \
+  tests/serialize.test.js \
+  tests/yahoo.test.js
 
 echo ""
 echo "✓ All tests passed."
