@@ -10,3 +10,7 @@ wrangler.toml
 
 # Node dependencies (Playwright + transitive); package-lock.json is committed
 node_modules/
+
+# Playwright artifacts (error-context.md, traces, screenshots)
+test-results/
+playwright-report/

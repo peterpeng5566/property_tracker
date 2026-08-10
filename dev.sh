@@ -26,7 +26,16 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! python3 -B -c "import socket; s=socket.socket(); s.bind(('127.0.0.1', $PORT)); s.close()" 2>/dev/null; then
+# SO_REUSEADDR lets the pre-flight succeed for sockets in TIME_WAIT (common
+# when the previous server was killed recently). Python's http.server already
+# sets SO_REUSEADDR via HTTPServer.allow_reuse_address, so this matches its
+# real behaviour — the pre-flight is just a nicer error message.
+if ! python3 -B -c "
+import socket
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('127.0.0.1', $PORT))
+s.close()" 2>/dev/null; then
   echo "✗ Port $PORT is already in use."
   echo "  Either kill the process using it, or pass a different port:"
   echo "    ./dev.sh 8080"

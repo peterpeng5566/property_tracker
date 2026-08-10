@@ -23,8 +23,10 @@ Before any commit that touches `lib/`, `portfolio.html`, `docs/workers/`, `docs/
 The script runs four stages in order:
 
 1. `./test.sh` — unit tests on `lib/` modules
-2. `node --test tests/worker.contract.test.js` — Worker contract tests (conditional: prints "skipped" and exits 0 if the test file is absent; becomes unconditional after ticket 02 lands)
+2. `node --test tests/worker.contract.test.js` — Worker contract tests
 3. `wrangler deploy --dry-run --outdir /tmp/property-tracker-worker-build` — Worker bundle sanity
-4. `npx --no-install playwright test` — Browser smoke (conditional: prints "skipped" and exits 0 if `tests/browser/` or `node_modules/@playwright` are absent; becomes unconditional after ticket 03 lands)
+4. `npx --no-install playwright test` — Browser smoke against `./dev.sh 8000`
 
-The conditional skips are what let the script run on a clean tree before all dependent tickets have landed. After all v1.2 tickets land, every stage runs unconditionally. See `docs/adr/0010-v1.2-testing-safety-net.md` for the architectural decisions.
+Stage 4 needs a Chromium binary. By default the config points at `/usr/bin/chromium` (system Chromium). Override with `PLAYWRIGHT_CHROMIUM_PATH=/path/to/chrome`, or unset it and run `npx playwright install chromium` to use Playwright's bundled build (~150 MB download). Stage 4 also needs `python3` on PATH (used by `./dev.sh`).
+
+See `docs/adr/0010-v1.2-testing-safety-net.md` for the architectural decisions.
