@@ -1,0 +1,12 @@
+{
+  "name": "property-tracker-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Personal net-worth tracker — web companion.",
+  "scripts": {
+    "test:browser": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
+  }
+}

@@ -120,3 +120,21 @@ _Avoid_: Server copy, cloud copy
 **Conflict**:
 When the local and remote copies have diverged. Resolved per-record using timestamps.
 _Avoid_: Merge conflict (technical), edit conflict
+
+## Safety net
+
+**Required check**:
+A test that runs on every commit and must pass; failures block commit. In v1.2, `./scripts/safety-net.sh` runs these as a pre-commit gate (unit tests, Worker contract tests, Wrangler dry-run, browser smoke).
+_Avoid_: pre-commit hook (suggests git plumbing), CI check (implies external CI)
+
+**Live canary**:
+A test that exercises the real Worker + Yahoo endpoints; run on a schedule or before a release; may fail without blocking ordinary development. In v1.2, a separate `./scripts/canary.sh` is planned but not yet built.
+_Avoid_: smoke test (overloaded), integration test (overloaded)
+
+**Thin shim**:
+An Alpine method whose body is one call into `lib/` plus reactive bookkeeping. The source of truth for tested logic stays in `lib/`; the shim only wires the call.
+_Avoid_: wrapper (overloaded), adapter (suggests interface normalisation)
+
+**Safety net**:
+The combination of required checks, live canary, and `lib/` extraction that prevents the recent class of regression (script-tag omission, caller-contract mismatch, endpoint drift). Captured in `./scripts/safety-net.sh` and `docs/adr/0010-v1.2-testing-safety-net.md`.
+_Avoid_: test suite (too generic), guard (overloaded)

@@ -4,3 +4,9 @@
 # Per-user runtime config (Worker URL); copy config.js.example
 config.js
 wrangler.toml
+
+# Wrangler local dev cache (miniflare state from `wrangler dev`)
+.wrangler/
+
+# Node dependencies (Playwright + transitive); package-lock.json is committed
+node_modules/
