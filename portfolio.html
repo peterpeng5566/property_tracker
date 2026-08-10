@@ -901,6 +901,11 @@
      window.fromTWD (lib/format.js), so must load AFTER format.js. -->
 <script src="lib/calc.js"></script>
 
+<!-- Group-by-category helpers (lib/group.js) — Home page group-by buckets;
+     pure functions also used by tests/group.test.js. Depends on
+     window.toTWD (lib/format.js), so must load AFTER format.js. -->
+<script src="lib/group.js"></script>
+
 <!-- Serialize helpers (lib/serialize.js) — strips in-memory fields before JSON output -->
 <script src="lib/serialize.js"></script>
 
@@ -2039,35 +2044,35 @@
       },
 
       // ---- Grouping (generic) ----
-      _groupBy(items, catId, totalFn) {
-        const cat = this.data.categories.find(c => c.id === catId);
-        if (!cat) return [];
-        const groups = {};
-        (cat.values || []).forEach(v => {
-          groups[v.id] = { value_id: v.id, value_name: v.name, total: 0, count: 0 };
+      // Source of truth for the bucket math lives in lib/group.js. The Alpine
+      // methods below are thin shims: each closes over this.data.* and the
+      // this.fxRate() getter so the x-for bindings on the Home page keep
+      // working unchanged. The _localizeUnassigned() helper swaps the lib's
+      // English placeholder for the i18n-catalog value_name because Alpine
+      // owns the translation table (lib/group.js is pure + Node-testable).
+
+      _localizeUnassigned(groups) {
+        const label = this.t('groupBy.unassigned');
+        groups.forEach(g => {
+          if (g.value_id === '_unassigned') g.value_name = label;
         });
-        groups['_unassigned'] = { value_id: '_unassigned', value_name: this.t('groupBy.unassigned'), total: 0, count: 0 };
-        items.filter(item => !item.inactive).forEach(item => {
-          const key = (item.attributes && item.attributes[catId]) || '_unassigned';
-          if (groups[key]) {
-            groups[key].total += window.toTWD(totalFn(item), item.currency, this.fxRate());
-            groups[key].count += 1;
-          }
-        });
-        return Object.values(groups).sort((a, b) => {
-          if (a.value_id === '_unassigned') return 1;
-          if (b.value_id === '_unassigned') return -1;
-          return b.total - a.total;
-        });
+        return groups;
       },
+
       holdingsGroupedBy(catId) {
-        return this._groupBy(this.data.holdings, catId, h => h.shares * h.current_price);
+        return this._localizeUnassigned(
+          Group.holdingsGroupedBy(this.data.holdings, this.data.categories, catId, this.fxRate())
+        );
       },
       cashGroupedBy(catId) {
-        return this._groupBy(this.data.cash_accounts, catId, c => c.balance);
+        return this._localizeUnassigned(
+          Group.cashGroupedBy(this.data.cash_accounts, this.data.categories, catId, this.fxRate())
+        );
       },
       debtsGroupedBy(catId) {
-        return this._groupBy(this.data.debts, catId, d => d.balance);
+        return this._localizeUnassigned(
+          Group.debtsGroupedBy(this.data.debts, this.data.categories, catId, this.fxRate())
+        );
       },
 
       // ---- Calculations ----
