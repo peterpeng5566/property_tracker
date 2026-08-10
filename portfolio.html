@@ -896,6 +896,11 @@
 <!-- Format helpers (lib/format.js) — pure functions, also used by tests/format.test.js -->
 <script src="lib/format.js"></script>
 
+<!-- Calculation helpers (lib/calc.js) — Home page totals + gain/loss; pure
+     functions also used by tests/calc.test.js. Depends on window.toTWD /
+     window.fromTWD (lib/format.js), so must load AFTER format.js. -->
+<script src="lib/calc.js"></script>
+
 <!-- Serialize helpers (lib/serialize.js) — strips in-memory fields before JSON output -->
 <script src="lib/serialize.js"></script>
 
@@ -2045,7 +2050,7 @@
         items.filter(item => !item.inactive).forEach(item => {
           const key = (item.attributes && item.attributes[catId]) || '_unassigned';
           if (groups[key]) {
-            groups[key].total += this.toTWD(totalFn(item), item.currency);
+            groups[key].total += window.toTWD(totalFn(item), item.currency, this.fxRate());
             groups[key].count += 1;
           }
         });
@@ -2066,18 +2071,12 @@
       },
 
       // ---- Calculations ----
+      // Source of truth for these helpers lives in lib/calc.js (so tests/
+      // calc.test.js can exercise them under node:test). The Alpine methods
+      // below are thin shims that close over this.data.* and the
+      // this.fxRate() / this.displayCurrency getters.
       fxRate() { return this.data.settings.fx_rate || 32.2; },
-      toTWD(amount, currency) {
-        if (currency === 'TWD') return amount;
-        if (currency === 'USD') return amount * this.fxRate();
-        return amount;
-      },
-      fromTWD(amount, currency) {
-        if (currency === 'TWD') return amount;
-        if (currency === 'USD') return amount / this.fxRate();
-        return amount;
-      },
-      gainLoss(h) { return h.shares * (h.current_price - h.cost); },
+      gainLoss(h) { return Calc.gainLoss(h); },
 
       // ---- v1.1: Day Δ% (spec §4.2, ADR 0009 §9). Source of truth: lib/market-display.js.
       dayDeltaLabel(h) { return MarketDisplay.dayDeltaLabel(h); },
@@ -2086,52 +2085,40 @@
       // ---- v1.1: 52W range bar (spec §4.3, ADR 0009 §9). Source of truth: lib/market-display.js.
       week52Style(h) { return MarketDisplay.week52Style(h); },
 
-      // Internal TWD aggregations (always sum in TWD, convert at the end)
-      _holdingsValueTWD() {
-        return this.data.holdings.filter(h => !h.inactive)
-          .reduce((sum, h) => sum + this.toTWD(h.shares * h.current_price, h.currency), 0);
-      },
-      _holdingsCostTWD() {
-        return this.data.holdings.filter(h => !h.inactive)
-          .reduce((sum, h) => sum + this.toTWD(h.shares * h.cost, h.currency), 0);
-      },
-      _totalCashTWD() {
-        return this.data.cash_accounts.filter(c => !c.inactive)
-          .reduce((sum, c) => sum + this.toTWD(c.balance, c.currency), 0);
-      },
-      _totalDebtsTWD() {
-        return this.data.debts.filter(d => !d.inactive)
-          .reduce((sum, d) => sum + this.toTWD(d.balance, d.currency), 0);
-      },
+      // Internal TWD aggregations live in lib/calc.js. The Alpine methods
+      // below are thin shims: each closes over this.data.* and the
+      // this.fxRate() / this.displayCurrency getters so the x-text bindings
+      // on the Home page keep working unchanged.
 
       // Display currency aggregations
-      totalAssets() {
-        return this.fromTWD(this._holdingsValueTWD() + this._totalCashTWD(), this.displayCurrency);
-      },
       holdingsValue() {
-        return this.fromTWD(this._holdingsValueTWD(), this.displayCurrency);
+        return Calc.holdingsValue(this.data.holdings, this.displayCurrency, this.fxRate());
       },
       holdingsCost() {
-        return this.fromTWD(this._holdingsCostTWD(), this.displayCurrency);
+        return Calc.holdingsCost(this.data.holdings, this.displayCurrency, this.fxRate());
       },
-      holdingsGainLoss() { return this.holdingsValue() - this.holdingsCost(); },
+      holdingsGainLoss() {
+        return Calc.holdingsGainLoss(this.data.holdings, this.displayCurrency, this.fxRate());
+      },
       holdingsGainLossPct() {
-        if (this.holdingsCost() === 0) return 0;
-        return (this.holdingsGainLoss() / this.holdingsCost()) * 100;
+        return Calc.holdingsGainLossPct(this.data.holdings, this.displayCurrency, this.fxRate());
       },
       totalCash() {
-        return this.fromTWD(this._totalCashTWD(), this.displayCurrency);
+        return Calc.totalCash(this.data.cash_accounts, this.displayCurrency, this.fxRate());
       },
       totalDebts() {
-        return this.fromTWD(this._totalDebtsTWD(), this.displayCurrency);
+        return Calc.totalDebts(this.data.debts, this.displayCurrency, this.fxRate());
       },
       netWorth() {
-        return this.totalAssets() - this.totalDebts();
+        return Calc.netWorth(
+          this.data.holdings, this.data.cash_accounts, this.data.debts,
+          this.displayCurrency, this.fxRate()
+        );
       },
 
-      activeHoldingsCount() { return this.data.holdings.filter(h => !h.inactive).length; },
-      activeCashCount() { return this.data.cash_accounts.filter(c => !c.inactive).length; },
-      activeDebtsCount() { return this.data.debts.filter(d => !d.inactive).length; },
+      activeHoldingsCount() { return Calc.activeCount(this.data.holdings); },
+      activeCashCount() { return Calc.activeCount(this.data.cash_accounts); },
+      activeDebtsCount() { return Calc.activeCount(this.data.debts); },
 
       // ---- Formatting ----
       // Thin wrapper around window.formatAmount (lib/format.js). Source of truth for the

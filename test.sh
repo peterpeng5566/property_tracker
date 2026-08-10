@@ -42,6 +42,7 @@ echo ""
 # safety-net stage 2 only, per ticket 02. Add new unit tests here when they
 # are introduced.
 node --test \
+  tests/calc.test.js \
   tests/format.test.js \
   tests/intraday.test.js \
   tests/market-display.test.js \
