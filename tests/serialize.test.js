@@ -158,9 +158,15 @@ test('stripInMemoryFields is idempotent (running twice is safe)', () => {
   assert.deepEqual(out1, out2);
 });
 
-// --- Realistic end-to-end: refresh-then-serialize scenario ---
+// --- Realistic post-refresh persistence scenario ---
+//
+// Note: this test no longer exercises the real refreshAllPrices() workflow
+// (that lives in lib/refresh.js since ticket 06). It just pins what
+// serializeData does with the in-memory shape that Alpine's _applyRefreshResult
+// leaves on each holding (the _refresh_failed flag), and the spec rule that
+// flags must not survive serialization.
 
-test('end-to-end: refreshAllPrices writes _refresh_failed, serializeData strips it', () => {
+test('serialize: post-refresh state holding is stripped of _refresh_failed on persist', () => {
   // Simulate the post-refresh state that would be saved.
   const data = {
     version: '1.1',

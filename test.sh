@@ -44,6 +44,7 @@ echo ""
 node --test \
   tests/calc.test.js \
 tests/group.test.js \
+tests/refresh.test.js \
   tests/format.test.js \
   tests/intraday.test.js \
   tests/market-display.test.js \

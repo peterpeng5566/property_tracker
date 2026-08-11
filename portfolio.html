@@ -906,6 +906,11 @@
      window.toTWD (lib/format.js), so must load AFTER format.js. -->
 <script src="lib/group.js"></script>
 
+<!-- Refresh state machine (lib/refresh.js) — retry / cancel / partial-success
+     workflow. Pure functions used by tests/refresh.test.js. Self-contained —
+     no deps on other lib globals (Yahoo/Format are injected at call site). -->
+<script src="lib/refresh.js"></script>
+
 <!-- Serialize helpers (lib/serialize.js) — strips in-memory fields before JSON output -->
 <script src="lib/serialize.js"></script>
 
@@ -1449,6 +1454,9 @@
         this.refreshAllPrices();
       },
       // Bulk refresh. symbols = null → all active holdings. Otherwise the explicit list.
+      // Thin shim around the pure state machine in lib/refresh.js — this method
+      // owns the in-memory side effects (writes to data.holdings, sets refreshState,
+      // saves to localStorage / auto-pushes) so the lib can stay pure and tested.
       async refreshAllPrices(symbols = null) {
         if (this.refreshState === 'refreshing') {
           // Defensive: caller forgot to use refreshButtonClick(). Treat as cancel.
@@ -1473,38 +1481,62 @@
           if (targetSet.has(h.ticker)) h._refresh_failed = false;
         }
 
-        // Retry loop: up to 5 attempts with exponential backoff.
-        const backoffMs = [1000, 2000, 4000, 8000, 16000];
-        let pending = targetSymbols.slice();
-        let results = {};
+        // The lib only exposes succeeded/failed/cancelled in its return value,
+        // so we capture the latest per-symbol results map inside onAttempt and
+        // apply them after the lib returns. The lib is unaware of the
+        // _refresh_failed / save() / scheduleAutoPush() concerns.
+        let lastResults = {};
 
-        for (let attempt = 0; attempt < 5 && pending.length > 0; attempt++) {
-          // Check cancel signal BEFORE the fetch (in case set during previous wait).
-          if (this.refreshCancelRequested) break;
+        // Wrap Yahoo.fetchQuotes so thrown errors become per-symbol failed
+        // results (per v1.1 §3.5). Lets the lib treat catastrophic failure as
+        // a normal retry-exhausted path.
+        const fetchQuotes = async (syms) => {
           try {
-            const partial = await Yahoo.fetchQuotes(pending);
-            results = { ...results, ...partial };
-            pending = pending.filter(s => !partial[s] || partial[s].failed);
+            return await Yahoo.fetchQuotes(syms);
           } catch (e) {
-            // Total failure (auth/network/parse). Abort all retries.
-            // Mark every active holding as failed.
-            for (const h of this.data.holdings) {
-              if (targetSet.has(h.ticker)) h._refresh_failed = true;
-            }
-            this.refreshFailures = pending.slice();
-            this.refreshState = 'error';
-            this.refreshError = e.message || String(e);
-            return;
+            const out = {};
+            for (const s of syms) out[s] = { failed: true, error: e.message || String(e) };
+            return out;
           }
-          if (pending.length === 0) break;
-          if (this.refreshCancelRequested) break;
-          // Sleep before next attempt (skip after the final attempt).
-          if (attempt < 4) {
-            await this.sleep(backoffMs[attempt]);
-          }
-        }
+        };
 
-        // Apply results to holdings (in-memory mutations).
+        const res = await Refresh.runRefresh({
+          symbols: targetSymbols,
+          fetchQuotes,
+          isCancelled: () => this.refreshCancelRequested,
+          sleep: (ms) => this.sleep(ms),
+          onAttempt: ({ attempt, pending, results }) => {
+            // Capture the most-recent per-symbol result map; _applyRefreshResult
+            // will use it after the loop. We intentionally do NOT publish
+            // `pending` to this.refreshFailures here — the previous inline
+            // behavior published that array only AFTER the loop completed (so
+            // the 'Retry N failed' button doesn't appear while the loop is
+            // still in a "partial / in-flight" state). _applyRefreshResult
+            // updates this.refreshFailures at the end, preserving that timing.
+            lastResults = results;
+          },
+        });
+
+        this._applyRefreshResult(targetSet, lastResults, res);
+      },
+
+      // Apply per-symbol results back to this.data.holdings (in-memory only).
+      // Source of truth for the rules lives in this comment block; the
+      // actual computation is pure and lives in lib/refresh.js.
+      //   - succeeded entries: write price fields, clear _refresh_failed,
+      //     stash into lastQuoteResults (for MarketDisplay day-delta logic).
+      //   - failed entries: set _refresh_failed = true.
+      //   - inactive or non-target holdings: untouched.
+      // Then: set refreshState (idle vs partial based on still-failed count),
+      // persist via save() (which strips in-memory flags), and trigger the
+      // background Drive push.
+      _applyRefreshResult(targetSet, results, res) {
+        // Mirror the lib's failed array into the reactive list exactly once —
+        // BEFORE the in-memory holdings are mutated. This preserves the
+        // previous inline behavior where 'Retry N failed' only appears after
+        // the loop completes (so the button doesn't flash during retries).
+        this.refreshFailures = res.failed.slice();
+
         for (const h of this.data.holdings) {
           if (!targetSet.has(h.ticker)) continue;
           const r = results[h.ticker];
@@ -1520,19 +1552,16 @@
           }
         }
 
-        this.refreshFailures = pending;
-        this.refreshState = pending.length > 0 ? 'partial' : 'idle';
+        this.refreshState = this.refreshFailures.length > 0 ? 'partial' : 'idle';
 
-        // Persist (save() strips in-memory flags; see serializeData).
+        // Persist (save() strips in-memory flags; see lib/serialize.js).
         this.save();
         this.scheduleAutoPush();
       },
+
+      // One-line delegation: refresh the tickers that the last run failed on.
       async retryFailed() {
-        if (this.refreshState === 'refreshing') return;
-        if (this.refreshFailures.length === 0) return;
-        const failed = this.refreshFailures.slice();
-        this.refreshFailures = [];
-        await this.refreshAllPrices(failed);
+        return this.refreshAllPrices(this.refreshFailures);
       },
       sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
