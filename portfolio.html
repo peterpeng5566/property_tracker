@@ -911,6 +911,11 @@
      no deps on other lib globals (Yahoo/Format are injected at call site). -->
 <script src="lib/refresh.js"></script>
 
+<!-- Sync merge (lib/sync.js) — per-record newer-wins (ADR 0004) + meta field
+     fallback rules. Pure functions used by tests/sync.test.js. No deps on
+     other lib globals (DEVICE_ID is injected by the Alpine shim). -->
+<script src="lib/sync.js"></script>
+
 <!-- Serialize helpers (lib/serialize.js) — strips in-memory fields before JSON output -->
 <script src="lib/serialize.js"></script>
 
@@ -1640,43 +1645,15 @@
       },
 
       // ---- Sync: orchestration + merge (ADR 0002 + ADR 0004) ----
+      // All actual merge logic lives in lib/sync.js so it's pinned by
+      // tests/sync.test.js. The methods below are thin Alpine shims that
+      // pass our DEVICE_ID constant through to the lib.
       mergeById(localArr, remoteArr) {
-        // Per-record newer-wins by updated_at (ADR 0004). Records without
-        // updated_at (e.g., legacy v0.4 data) are treated as epoch 0.
-        const map = new Map();
-        for (const r of (localArr || [])) map.set(r.id, r);
-        for (const r of (remoteArr || [])) {
-          const l = map.get(r.id);
-          if (!l) {
-            map.set(r.id, r);
-          } else {
-            const lt = Date.parse(l.updated_at || 0) || 0;
-            const rt = Date.parse(r.updated_at || 0) || 0;
-            map.set(r.id, rt > lt ? r : l);
-          }
-        }
-        return Array.from(map.values());
+        return Sync.mergeById(localArr, remoteArr);
       },
 
       mergePortfolios(local, remote) {
-        // Records: per-record newer wins (ADR 0004).
-        // categories + settings: replace from remote if present (v1 limitation —
-        // these lack updated_at; documented in ticket #05).
-        // meta: union (keep device_id from each side, take newer last_synced_at).
-        return {
-          version: remote.version || local.version,
-          meta: {
-            device_id: local.meta?.device_id || remote.meta?.device_id || DEVICE_ID,
-            last_synced_at: remote.meta?.last_synced_at || local.meta?.last_synced_at || null,
-            created_at: local.meta?.created_at || remote.meta?.created_at || new Date().toISOString(),
-          },
-          settings: remote.settings || local.settings,
-          categories: remote.categories || local.categories,
-          holdings: this.mergeById(local.holdings, remote.holdings),
-          cash_accounts: this.mergeById(local.cash_accounts, remote.cash_accounts),
-          debts: this.mergeById(local.debts, remote.debts),
-          snapshots: this.mergeById(local.snapshots, remote.snapshots),
-        };
+        return Sync.mergePortfolios(local, remote, DEVICE_ID);
       },
 
       async syncNow() {
