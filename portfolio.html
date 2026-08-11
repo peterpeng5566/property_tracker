@@ -916,6 +916,12 @@
      other lib globals (DEVICE_ID is injected by the Alpine shim). -->
 <script src="lib/sync.js"></script>
 
+<!-- Snapshot builder (lib/snapshot.js) — L4 full-detail snapshot assembly
+     (ADR 0005). Pure functions used by tests/snapshot.test.js. Depends on
+     Calc.* (lib/calc.js) and Serialize.stripInMemoryFields (lib/serialize.js),
+     so must load AFTER both. -->
+<script src="lib/snapshot.js"></script>
+
 <!-- Serialize helpers (lib/serialize.js) — strips in-memory fields before JSON output -->
 <script src="lib/serialize.js"></script>
 
@@ -1906,15 +1912,26 @@
           this._intradayResolve = null;
         }
       },
-      // Snapshot action wiring (skeleton). The actual snapshot UI/landscape
-      // is a separate effort; this provides the warning hook so future snapshot
-      // code just calls await takeSnapshot() and gets the dialog flow for free.
+      // Snapshot action wiring. The dialog flow (intraday confirm, overwrite
+      // confirm) lives here in Alpine; the actual snapshot construction
+      // (date / holdings / cash / debts / fx_rate / totals / delta + in-memory
+      // flag stripping) lives in lib/snapshot.js (ADR 0005). The Alpine
+      // method is a thin shim: dialog → Snapshot.buildSnapshot → write +
+      // save.
       async takeSnapshot() {
         if (this.shouldWarnIntraday()) {
           const confirmed = await this.showIntradayConfirmDialog();
           if (!confirmed) return;
         }
-        // TODO(snapshot-effort): implement snapshot creation + storage here.
+        if (!this.data.snapshots) this.data.snapshots = [];
+        const prevSnapshot = this.data.snapshots[this.data.snapshots.length - 1] || null;
+        const snap = Snapshot.buildSnapshot(this.data, {
+          now: new Date(),
+          fxRate: this.fxRate(),
+          prevSnapshot,
+        });
+        this.data.snapshots.push(snap);
+        this.save();
       },
       setCashFormAttribute(catId, valId) {
         if (valId) this.cashForm.attributes[catId] = valId;
