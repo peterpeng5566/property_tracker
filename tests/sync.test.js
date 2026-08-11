@@ -367,3 +367,78 @@ test('mergePortfolios: realistic round-trip with all meta fields exercised', () 
   assert.equal(out.cash_accounts.length, 1);
   assert.equal(out.cash_accounts[0].balance, 1000);
 });
+
+// --- Regression: deletion must propagate via sync ---
+//
+// Symptom: clicking the per-row Delete button on a holding / cash / debt
+// removed the record locally, but the next sync pulled the same record
+// back from remote (because mergeById keeps remote-only records). The
+// root cause was in the Alpine remove* methods doing hard-delete; the
+// sync layer itself was correct as long as the local record survived
+// long enough to propagate the tombstone. These tests pin the contract:
+// "soft-delete on local (inactive=true, updated_at bumped) wins over a
+// still-active remote copy." All three collections must be covered.
+
+test('mergePortfolios: local soft-delete on holding propagates to remote (inactive + recent ts)', () => {
+  const now = '2024-06-15T12:00:00Z';
+  const old = '2024-01-01T00:00:00Z';
+  const local = {
+    holdings: [{ id: 'h1', shares: 10, cost: 100, currency: 'TWD',
+                  current_price: 100, inactive: true,
+                  updated_at: now, device_id: 'this' }],
+  };
+  const remote = {
+    holdings: [{ id: 'h1', shares: 10, cost: 100, currency: 'TWD',
+                  current_price: 100, inactive: false,
+                  updated_at: old, device_id: 'other' }],
+  };
+  const out = mergePortfolios(local, remote, 'this');
+  assert.equal(out.holdings.length, 1, 'record should still exist (tombstone, not hard delete)');
+  assert.equal(out.holdings[0].inactive, true, 'inactive=true must win');
+});
+
+test('mergePortfolios: local soft-delete on cash_account propagates to remote', () => {
+  const now = '2024-06-15T12:00:00Z';
+  const old = '2024-01-01T00:00:00Z';
+  const local = {
+    cash_accounts: [{ id: 'c1', name: 'old', balance: 0, currency: 'TWD',
+                      inactive: true, updated_at: now, device_id: 'this' }],
+  };
+  const remote = {
+    cash_accounts: [{ id: 'c1', name: 'old', balance: 500, currency: 'TWD',
+                      inactive: false, updated_at: old, device_id: 'other' }],
+  };
+  const out = mergePortfolios(local, remote, 'this');
+  assert.equal(out.cash_accounts.length, 1);
+  assert.equal(out.cash_accounts[0].inactive, true, 'inactive=true must win (sync propagates delete)');
+});
+
+test('mergePortfolios: local soft-delete on debt propagates to remote (regression: the bug the user reported)', () => {
+  const now = '2024-06-15T12:00:00Z';
+  const old = '2024-01-01T00:00:00Z';
+  const local = {
+    debts: [{ id: 'd1', name: 'credit card', balance: 1000, currency: 'TWD',
+              inactive: true, updated_at: now, device_id: 'this' }],
+  };
+  const remote = {
+    debts: [{ id: 'd1', name: 'credit card', balance: 1000, currency: 'TWD',
+              inactive: false, updated_at: old, device_id: 'other' }],
+  };
+  const out = mergePortfolios(local, remote, 'this');
+  assert.equal(out.debts.length, 1, 'record must remain as inactive tombstone (NOT hard-deleted)');
+  assert.equal(out.debts[0].inactive, true, 'inactive=true must propagate so totals on both devices exclude it');
+});
+
+test('mergePortfolios: hard-delete (local drops record) does NOT propagate — the original bug', () => {
+  // This is the BROKEN pre-fix behavior. After the fix, removeDebt no
+  // longer reaches this state — it keeps the record with inactive=true.
+  // But this test pins the existing mergeById contract so a future
+  // change that accidentally re-introduces hard-delete won't go unnoticed.
+  const old = '2024-01-01T00:00:00Z';
+  const local = { debts: [] }; // record was hard-deleted
+  const remote = { debts: [{ id: 'd1', balance: 1000, currency: 'TWD',
+                              inactive: false, updated_at: old, device_id: 'other' }] };
+  const out = mergePortfolios(local, remote, 'this');
+  assert.equal(out.debts.length, 1, 'mergeById keeps remote-only records (documented contract)');
+  assert.equal(out.debts[0].inactive, false, 'record comes back active — this is why hard-delete is wrong');
+});

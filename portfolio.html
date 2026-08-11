@@ -1857,13 +1857,29 @@
         }
         this.closeModal();
       },
+      // removeHolding: soft-delete with sync propagation. The record stays
+      // in data.holdings (filtered out of totals via lib/calc.js's
+      // isActive check) but is marked inactive=true + updated_at + device_id
+      // bumped so the next mergePortfolios propagates the tombstone to
+      // remote instead of having remote resurrect the record (which would
+      // happen if we did a hard-delete via .filter — see tests/sync.test.js
+      // "hard-delete (local drops record) does NOT propagate").
       removeHolding(id) {
         if (!confirm(this.t('holdings.confirmDelete'))) return;
-        this.data.holdings = this.data.holdings.filter(h => h.id !== id);
+        const h = this.data.holdings.find(h => h.id === id);
+        if (h) {
+          h.inactive = true;
+          h.updated_at = new Date().toISOString();
+          h.device_id = DEVICE_ID;
+        }
       },
       toggleInactive(id) {
         const h = this.data.holdings.find(h => h.id === id);
-        if (h) h.inactive = !h.inactive;
+        if (h) {
+          h.inactive = !h.inactive;
+          h.updated_at = new Date().toISOString();
+          h.device_id = DEVICE_ID;
+        }
       },
 
       // ---- Cash CRUD ----
@@ -1960,11 +1976,20 @@
       },
       removeCash(id) {
         if (!confirm(this.t('cash.confirmDelete'))) return;
-        this.data.cash_accounts = this.data.cash_accounts.filter(c => c.id !== id);
+        const c = this.data.cash_accounts.find(c => c.id === id);
+        if (c) {
+          c.inactive = true;
+          c.updated_at = new Date().toISOString();
+          c.device_id = DEVICE_ID;
+        }
       },
       toggleCashInactive(id) {
         const c = this.data.cash_accounts.find(c => c.id === id);
-        if (c) c.inactive = !c.inactive;
+        if (c) {
+          c.inactive = !c.inactive;
+          c.updated_at = new Date().toISOString();
+          c.device_id = DEVICE_ID;
+        }
       },
 
       // ---- Debt CRUD ----
@@ -2012,11 +2037,20 @@
       },
       removeDebt(id) {
         if (!confirm(this.t('debts.confirmDelete'))) return;
-        this.data.debts = this.data.debts.filter(d => d.id !== id);
+        const d = this.data.debts.find(d => d.id === id);
+        if (d) {
+          d.inactive = true;
+          d.updated_at = new Date().toISOString();
+          d.device_id = DEVICE_ID;
+        }
       },
       toggleDebtInactive(id) {
         const d = this.data.debts.find(d => d.id === id);
-        if (d) d.inactive = !d.inactive;
+        if (d) {
+          d.inactive = !d.inactive;
+          d.updated_at = new Date().toISOString();
+          d.device_id = DEVICE_ID;
+        }
       },
 
       // ---- Categories ----
