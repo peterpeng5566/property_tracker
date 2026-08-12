@@ -38,6 +38,7 @@ _Avoid_: Symbol (overloaded), stock code
 
 **Inactive**:
 A state a holding can be in when it has been delisted or otherwise retired. Inactive holdings are not counted in totals but remain in the portfolio for history.
+**Do not use as a soft-delete mechanism.** True delete is a separate operation recorded in the *Deletion log* (see `docs/adr/0011-true-delete-deletion-log.md`). The intermediate fix that conflated Delete with Inactive violated this glossary and was superseded; the "Avoid: Deleted" warning above is the correct shape.
 _Avoid_: Deleted (sounds destructive), archived (overloaded)
 
 ## Money
@@ -107,6 +108,13 @@ _Avoid_: Summary, balance
 The difference between a snapshot and the previous one, computed at snapshot time. Per-holding and per-total.
 _Avoid_: Diff, change (too generic)
 
+**Backup**:
+A point-in-time snapshot of the full portfolio used as a recovery target for the *Deletion log*. Two layers, both FIFO 5, both automatic:
+- **Layer 1** — stored inside `data.backups[]` as snapshot entries with `{id, saved_at, device_id, data, deletions}`. Captures every `save()`. Syncs across devices via `mergeById` (global 5 newest across all devices).
+- **Layer 2** — stored as a Drive file named `portfolio-backup-{device-id}-{ISO-timestamp}.json` in the same folder as `portfolio.json`. Captures every `writePortfolioFile()`. List refreshed on Backups page mount.
+Restoring a backup is full-state and self-protected: the current state becomes a new backup before the restore applies, so the user can restore-restore to undo. See `docs/adr/0012-backup-architecture.md`.
+_Avoid_: snapshot (overloaded — see *Snapshot* for manual per-day captures), checkpoint (technical), version (overloaded)
+
 ## Sync
 
 **Local copy**:
@@ -120,6 +128,10 @@ _Avoid_: Server copy, cloud copy
 **Conflict**:
 When the local and remote copies have diverged. Resolved per-record using timestamps.
 _Avoid_: Merge conflict (technical), edit conflict
+
+**Deletion log**:
+`data.deletions[]` — an additive array of `{id, target_id, type, deleted_at, device_id}` entries that records "this record was hard-deleted; do not resurrect from remote." Combined with `mergeById` to filter out deleted IDs after every merge. Conflict resolution: *delete always wins* — a stale edit on another device after a delete is lost. The log grows unbounded; recovery from a bad delete is via the *Backup* layer, not via deletion-log edits. See `docs/adr/0011-true-delete-deletion-log.md`.
+_Avoid_: tombstone list (overloaded), delete log (too generic)
 
 ## Safety net
 
