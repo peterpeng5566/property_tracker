@@ -45,6 +45,7 @@ node --test \
   tests/calc.test.js \
 tests/group.test.js \
 tests/refresh.test.js \
+tests/records.test.js \
 tests/sync.test.js \
 tests/snapshot.test.js \
   tests/format.test.js \

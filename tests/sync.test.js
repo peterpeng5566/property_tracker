@@ -488,7 +488,12 @@ test('mergePortfolios: snapshots filtered by merged deletion log', () => {
 
 // --- mergePortfolios: data.deletions[] merge ---
 
-test('mergePortfolios: data.deletions[] merged via mergeById (newer entry wins)', () => {
+test('mergePortfolios: data.deletions[] same-id collision → mergeById tie-break (local wins)', () => {
+  // Deletion entries carry `deleted_at`, but mergeById compares by
+  // `updated_at` (ADR 0004 + lib/sync.js tsOf). Neither side has
+  // `updated_at`, so both fall back to epoch 0 → tie → local wins.
+  // The "newer entry wins" claim does NOT apply here — see the next
+  // test for an explicit local-wins proof.
   const old = '2024-01-01T00:00:00Z';
   const now = '2024-06-15T00:00:00Z';
   const local = {
@@ -499,7 +504,24 @@ test('mergePortfolios: data.deletions[] merged via mergeById (newer entry wins)'
   };
   const out = mergePortfolios(local, remote, 'this');
   assert.equal(out.deletions.length, 1);
-  assert.equal(out.deletions[0].device_id, 'this', 'newer deletion wins');
+  assert.equal(out.deletions[0].device_id, 'this', 'local wins on tie (mergeById uses updated_at, not deleted_at)');
+});
+
+test('mergePortfolios: data.deletions[] local older-by-deleted_at still wins on tie (proves the contract)', () => {
+  // Sanity check: invert the inputs so local is older by deleted_at.
+  // Result must still pick local — confirming the tie-break is truly
+  // "local wins", not "newer-wins by deleted_at" (which would pick
+  // remote here).
+  const old = '2024-01-01T00:00:00Z';
+  const now = '2024-06-15T00:00:00Z';
+  const local = {
+    deletions: [{ id: 'del-1', target_id: 'h1', type: 'holdings', deleted_at: old, device_id: 'this' }],
+  };
+  const remote = {
+    deletions: [{ id: 'del-1', target_id: 'h1', type: 'holdings', deleted_at: now, device_id: 'other' }],
+  };
+  const out = mergePortfolios(local, remote, 'this');
+  assert.equal(out.deletions[0].device_id, 'this', 'local wins regardless of deleted_at ordering — mergeById tie-break');
 });
 
 test('mergePortfolios: data.deletions[] unions across devices', () => {

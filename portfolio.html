@@ -916,6 +916,14 @@
      other lib globals (DEVICE_ID is injected by the Alpine shim). -->
 <script src="lib/sync.js"></script>
 
+<!-- Record helpers (lib/records.js) — true-delete + tombstone append for
+     holdings / cash / debts (ADR 0011, draft — ticket 04). Pure functions
+     used by tests/records.test.js. No deps on other lib globals
+     (deviceId / genDelId / deletedAt are injected by the Alpine shim).
+     Must load AFTER lib/sync.js so the Alpine shim can wire the
+     tombstone into the deletion-log merge. -->
+<script src="lib/records.js"></script>
+
 <!-- Snapshot builder (lib/snapshot.js) — L4 full-detail snapshot assembly
      (ADR 0005). Pure functions used by tests/snapshot.test.js. Depends on
      Calc.* (lib/calc.js) and Serialize.stripInMemoryFields (lib/serialize.js),
@@ -1239,7 +1247,7 @@
       snapshots: [],
       // v1.3: deletion log (true-delete tombstones) + in-portfolio backups
       // (Layer 1 of the two-layer backup safety net). Both arrays are
-      // additive — see ADR 0011 / ADR 0012.
+      // additive — see ADR 0011 / ADR 0012 (drafts — ticket 04).
       deletions: [],
       backups: [],
     };
@@ -1868,24 +1876,28 @@
         }
         this.closeModal();
       },
-      // removeHolding: true-delete with deletion-log tombstone. The
-      // record is hard-deleted from data.holdings AND a tombstone is
-      // appended to data.deletions[] so the next sync propagates the
-      // removal to remote. See ADR 0011. Inactive and Deleted are
+      // removeHolding: true-delete via lib/records.recordDeletion. Thin
+      // shim — see _removeRecord for the shared logic (confirm prompt,
+      // splice + tombstone append, reactive assign-back). The deletion
+      // log + tombstone contract is documented in ADR 0011 (draft —
+      // ticket 04). Inactive and Deleted are
       // separate concepts — the glossary forbids conflating them.
-      removeHolding(id) {
-        if (!confirm(this.t('holdings.confirmDelete'))) return;
-        const idx = this.data.holdings.findIndex(h => h.id === id);
-        if (idx === -1) return;
-        this.data.holdings.splice(idx, 1);
-        this.data.deletions.push({
-          id: genId('del'),
-          target_id: id,
-          type: 'holdings',
-          deleted_at: new Date().toISOString(),
-          device_id: DEVICE_ID,
+      // Shared thin shim for true-delete + tombstone append. Called
+      // by removeHolding / removeCash / removeDebt below.
+      _removeRecord(id, collection, confirmKey) {
+        if (!confirm(this.t(confirmKey))) return;
+        const out = Records.recordDeletion(this.data[collection], this.data.deletions, {
+          targetId: id,
+          type: collection,
+          deviceId: DEVICE_ID,
+          deletedAt: new Date().toISOString(),
+          genDelId: () => genId('del'),
         });
+        if (!out.didDelete) return;
+        this.data[collection] = out.records;
+        this.data.deletions = out.deletions;
       },
+      removeHolding(id) { this._removeRecord(id, 'holdings', 'holdings.confirmDelete'); },
       toggleInactive(id) {
         const h = this.data.holdings.find(h => h.id === id);
         if (h) {
@@ -1987,19 +1999,7 @@
         }
         this.closeCashModal();
       },
-      removeCash(id) {
-        if (!confirm(this.t('cash.confirmDelete'))) return;
-        const idx = this.data.cash_accounts.findIndex(c => c.id === id);
-        if (idx === -1) return;
-        this.data.cash_accounts.splice(idx, 1);
-        this.data.deletions.push({
-          id: genId('del'),
-          target_id: id,
-          type: 'cash_accounts',
-          deleted_at: new Date().toISOString(),
-          device_id: DEVICE_ID,
-        });
-      },
+      removeCash(id) { this._removeRecord(id, 'cash_accounts', 'cash.confirmDelete'); },
       toggleCashInactive(id) {
         const c = this.data.cash_accounts.find(c => c.id === id);
         if (c) {
@@ -2052,19 +2052,7 @@
         }
         this.closeDebtModal();
       },
-      removeDebt(id) {
-        if (!confirm(this.t('debts.confirmDelete'))) return;
-        const idx = this.data.debts.findIndex(d => d.id === id);
-        if (idx === -1) return;
-        this.data.debts.splice(idx, 1);
-        this.data.deletions.push({
-          id: genId('del'),
-          target_id: id,
-          type: 'debts',
-          deleted_at: new Date().toISOString(),
-          device_id: DEVICE_ID,
-        });
-      },
+      removeDebt(id) { this._removeRecord(id, 'debts', 'debts.confirmDelete'); },
       toggleDebtInactive(id) {
         const d = this.data.debts.find(d => d.id === id);
         if (d) {
