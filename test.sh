@@ -48,6 +48,7 @@ tests/refresh.test.js \
 tests/records.test.js \
 tests/sync.test.js \
 tests/snapshot.test.js \
+tests/backup.test.js \
   tests/format.test.js \
   tests/intraday.test.js \
   tests/market-display.test.js \

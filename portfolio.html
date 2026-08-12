@@ -924,6 +924,17 @@
      tombstone into the deletion-log merge. -->
 <script src="lib/records.js"></script>
 
+<!-- Backup helpers (lib/backup.js) — two-layer backup safety net for true
+     delete (ADR 0012 + ticket #02). Layer 1 (in-portfolio data.backups[]):
+     buildBackupSnapshot, pushBackup, restoreFromBackup. Layer 2 (Drive
+     file): writePortfolioBackupFile, listPortfolioBackupFiles,
+     cleanupOldBackups. Pure functions used by tests/backup.test.js. The
+     Drive API functions take fetchFn via injection so the tests are
+     hermetic. GenId / now are injected for restoreFromBackup. Loaded
+     AFTER lib/records.js because the Backups page UI (ticket #03) calls
+     restoreFromBackup which composes over the deletion log. -->
+<script src="lib/backup.js"></script>
+
 <!-- Snapshot builder (lib/snapshot.js) — L4 full-detail snapshot assembly
      (ADR 0005). Pure functions used by tests/snapshot.test.js. Depends on
      Calc.* (lib/calc.js) and Serialize.stripInMemoryFields (lib/serialize.js),
@@ -1299,6 +1310,7 @@
       autoSyncEnabled: true,      // auto-push on save (default ON)
       autoPushTimer: null,        // setTimeout handle for debounced auto-push
       _lastSyncTimestamp: 0,      // ms; used to skip auto-push on our own writes
+      _lastBackupHash: null,      // hash of state at last backup push (dedup; see save() below)
 
       // Refresh state (v1.1 — ADR 0009 §3)
       refreshState: 'idle',       // 'idle' | 'refreshing' | 'partial' | 'error'
@@ -1632,6 +1644,30 @@
       },
 
       async writePortfolioFile(fileId, data) {
+        // v1.3: Layer 2 backup (ADR 0012, ticket #02). Before overwriting
+        // portfolio.json, snapshot the existing Drive file into a new
+        // `portfolio-backup-{deviceId}-{ISO}.json` file. Order per spec:
+        //   snapshot existing → cleanup oldest → write new backup → overwrite.
+        // If the backup write fails, the overwrite is aborted (the existing
+        // portfolio.json is preserved). Source of truth: lib/backup.js.
+        const fetchFn = (url, opts) => this.driveFetch(url, opts);
+        try {
+          const existingData = await this.readPortfolioFile(fileId);
+          const snapshot = Backup.buildBackupSnapshot(existingData);
+          const content = JSON.stringify(snapshot);
+          const timestamp = new Date().toISOString();
+          await Backup.cleanupOldBackups(fileId, 5, { fetchFn });
+          await Backup.writePortfolioBackupFile(fileId, content, {
+            fetchFn,
+            deviceId: DEVICE_ID,
+            timestamp,
+          });
+        } catch (e) {
+          // Backup step failed (read, cleanup, or write). Do NOT overwrite
+          // the existing portfolio.json.
+          throw new Error('Backup write failed (portfolio.json not overwritten): ' + (e.message || e));
+        }
+        // Existing overwrite step: PATCH the existing portfolio.json file.
         const url = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`;
         const r = await this.driveFetch(url, {
           method: 'PATCH',
@@ -1793,7 +1829,45 @@
         this.data.settings.display_currency = this.displayCurrency;
         this.data.settings.language = this.language;
         this.data.settings.cost_format = 'per_share';
+        // v1.3: Layer 1 backup (ADR 0012, ticket #02). Push a snapshot
+        // of the current state into data.backups[] BEFORE persisting to
+        // localStorage. The snapshot is of the pre-save state (which is
+        // the same as the just-modified state — save() does not mutate
+        // data, only persists it). FIFO 5 truncation applies via
+        // Backup.pushBackup. The backups survive the serializeData step
+        // because lib/serialize.js only strips in-memory flags (_*
+        // prefixed) on holdings, not on data.backups[]. Source of truth:
+        // lib/backup.js.
+        //
+        // Push dedup: the deep watcher on `data` fires after save() and
+        // calls save() again. Without a guard, this would push on every
+        // recursive call and grow data.backups unboundedly. We track the
+        // hash of the user-mutable state and skip the push when the hash
+        // matches the last push (the recursive call sees the same state).
+        // data.backups and data.deletions are excluded from the hash
+        // because they are the side-effect of the push itself.
+        const stateHash = this._stateHash();
+        if (stateHash !== this._lastBackupHash) {
+          Backup.pushBackup(this.data, Backup.buildBackupSnapshot(this.data));
+          this._lastBackupHash = stateHash;
+        }
         localStorage.setItem(STORAGE_KEY, this.serializeData(this.data));
+      },
+
+      _stateHash() {
+        // Hash the user-mutable fields of data. Excludes data.backups
+        // (which pushBackup grows) and data.deletions (which the
+        // deletion log grows) so the hash is stable across the very
+        // mutations we are trying to dedupe.
+        return JSON.stringify({
+          h: this.data.holdings,
+          c: this.data.cash_accounts,
+          d: this.data.debts,
+          s: this.data.snapshots,
+          m: this.data.meta,
+          st: this.data.settings,
+          cat: this.data.categories,
+        });
       },
 
       // ---- i18n ----
