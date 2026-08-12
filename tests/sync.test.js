@@ -9,7 +9,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const Sync = require('../lib/sync.js');
-const { mergeById, mergePortfolios } = Sync;
+const { mergeById, mergeByIdWithDeletions, mergePortfolios } = Sync;
 
 const iso = (s) => new Date(s).toISOString();
 const H = (id, opts = {}) => ({ id, ticker: opts.ticker || id, shares: 0, ...opts });
@@ -368,77 +368,275 @@ test('mergePortfolios: realistic round-trip with all meta fields exercised', () 
   assert.equal(out.cash_accounts[0].balance, 1000);
 });
 
+// --- mergeByIdWithDeletions: tombstone filter on top of mergeById ---
+
+test('mergeByIdWithDeletions: local deletion + remote record → record removed', () => {
+  // Records that exist on remote but were hard-deleted on local (and a
+  // tombstone appended to data.deletions) must not survive a sync.
+  const local = [];
+  const remote = [H('h1', { shares: 10 })];
+  const localDels = [{ id: 'del-1', target_id: 'h1', type: 'holdings', deleted_at: '2024-06-15T00:00:00Z', device_id: 'this' }];
+  const out = mergeByIdWithDeletions(local, remote, localDels, []);
+  assert.equal(out.length, 0, 'record must be filtered out by local deletion tombstone');
+});
+
+test('mergeByIdWithDeletions: both deletion inputs null/undefined → treated as empty', () => {
+  const local = [];
+  const remote = [H('h1', { shares: 10 })];
+  assert.equal(mergeByIdWithDeletions(local, remote, null, null).length, 1);
+  assert.equal(mergeByIdWithDeletions(local, remote, undefined, undefined).length, 1);
+});
+
+test('mergeByIdWithDeletions: local empty, remote empty, both deletions present → empty', () => {
+  const localDels = [{ id: 'del-1', target_id: 'h1', type: 'holdings', deleted_at: '2024-06-15T00:00:00Z', device_id: 'a' }];
+  const remoteDels = [{ id: 'del-2', target_id: 'h2', type: 'holdings', deleted_at: '2024-06-15T00:00:00Z', device_id: 'b' }];
+  const out = mergeByIdWithDeletions([], [], localDels, remoteDels);
+  assert.equal(out.length, 0);
+});
+
+test('mergeByIdWithDeletions: remote deletion log + local record → record removed', () => {
+  const local = [H('h1', { shares: 10 })];
+  const remote = [];
+  const remoteDels = [{ id: 'del-1', target_id: 'h1', type: 'holdings', deleted_at: '2024-06-15T00:00:00Z', device_id: 'other' }];
+  const out = mergeByIdWithDeletions(local, remote, [], remoteDels);
+  assert.equal(out.length, 0, 'remote tombstone must propagate to local');
+});
+
+test('mergeByIdWithDeletions: deletion on both sides agrees → record removed', () => {
+  const local = [];
+  const remote = [H('h1', { shares: 10 })];
+  const localDels = [{ id: 'del-1', target_id: 'h1', type: 'holdings', deleted_at: '2024-06-15T00:00:00Z', device_id: 'a' }];
+  const remoteDels = [{ id: 'del-2', target_id: 'h1', type: 'holdings', deleted_at: '2024-06-15T00:00:00Z', device_id: 'b' }];
+  const out = mergeByIdWithDeletions(local, remote, localDels, remoteDels);
+  assert.equal(out.length, 0);
+});
+
+test('mergeByIdWithDeletions: delete always wins over newer edit on another device', () => {
+  // Device A deletes h1 at time T+10. Device B (offline) edited h1 at
+  // time T+5. After sync, the deletion must stand — high-intent user
+  // action overrides stale edit.
+  const local = []; // local deleted
+  const remote = [H('h1', { shares: 99, updated_at: '2024-06-15T05:00:00Z' })];
+  const localDels = [{ id: 'del-1', target_id: 'h1', type: 'holdings', deleted_at: '2024-06-15T10:00:00Z', device_id: 'this' }];
+  const out = mergeByIdWithDeletions(local, remote, localDels, []);
+  assert.equal(out.length, 0, 'deletion must override remote\'s newer-looking edit');
+});
+
+test('mergeByIdWithDeletions: undeleted record survives filter', () => {
+  const local = [H('h1', { shares: 10 })];
+  const remote = [H('h2', { shares: 20 })];
+  const localDels = [{ id: 'del-1', target_id: 'h3', type: 'holdings', deleted_at: '2024-06-15T00:00:00Z', device_id: 'a' }];
+  const out = mergeByIdWithDeletions(local, remote, localDels, []);
+  assert.equal(out.length, 2);
+  assert.ok(out.some(r => r.id === 'h1'));
+  assert.ok(out.some(r => r.id === 'h2'));
+});
+
+test('mergeByIdWithDeletions: bare mergeById contract still holds (remote-only record without matching deletion passes through)', () => {
+  // The "hard-delete doesn't propagate" contract from c434c0d — bare
+  // mergeById keeps remote-only records. mergeByIdWithDeletions
+  // preserves this when there is no matching tombstone in the merged
+  // deletion log.
+  const local = [];
+  const remote = [H('h1', { shares: 10 })];
+  const out = mergeByIdWithDeletions(local, remote, [], []);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, 'h1');
+});
+
+// --- mergePortfolios: deletion log filter applied to record collections ---
+
+test('mergePortfolios: holdings filtered by merged deletion log (hard-delete propagates)', () => {
+  const local = {
+    holdings: [],
+    deletions: [{ id: 'del-1', target_id: 'h1', type: 'holdings', deleted_at: '2024-06-15T00:00:00Z', device_id: 'this' }],
+  };
+  const remote = { holdings: [H('h1', { shares: 10 })] };
+  const out = mergePortfolios(local, remote, 'this');
+  assert.equal(out.holdings.length, 0, 'hard-deleted holding must NOT survive sync');
+});
+
+test('mergePortfolios: cash_accounts filtered by merged deletion log', () => {
+  const local = {
+    cash_accounts: [],
+    deletions: [{ id: 'del-1', target_id: 'c1', type: 'cash_accounts', deleted_at: '2024-06-15T00:00:00Z', device_id: 'this' }],
+  };
+  const remote = { cash_accounts: [H('c1', { balance: 500 })] };
+  const out = mergePortfolios(local, remote, 'this');
+  assert.equal(out.cash_accounts.length, 0);
+});
+
+test('mergePortfolios: debts filtered by merged deletion log', () => {
+  const local = {
+    debts: [],
+    deletions: [{ id: 'del-1', target_id: 'd1', type: 'debts', deleted_at: '2024-06-15T00:00:00Z', device_id: 'this' }],
+  };
+  const remote = { debts: [H('d1', { balance: 1000 })] };
+  const out = mergePortfolios(local, remote, 'this');
+  assert.equal(out.debts.length, 0);
+});
+
+test('mergePortfolios: snapshots filtered by merged deletion log', () => {
+  const local = {
+    snapshots: [],
+    deletions: [{ id: 'del-1', target_id: 's1', type: 'snapshots', deleted_at: '2024-06-15T00:00:00Z', device_id: 'this' }],
+  };
+  const remote = { snapshots: [H('s1', { net_worth: 1000 })] };
+  const out = mergePortfolios(local, remote, 'this');
+  assert.equal(out.snapshots.length, 0);
+});
+
+// --- mergePortfolios: data.deletions[] merge ---
+
+test('mergePortfolios: data.deletions[] merged via mergeById (newer entry wins)', () => {
+  const old = '2024-01-01T00:00:00Z';
+  const now = '2024-06-15T00:00:00Z';
+  const local = {
+    deletions: [{ id: 'del-1', target_id: 'h1', type: 'holdings', deleted_at: now, device_id: 'this' }],
+  };
+  const remote = {
+    deletions: [{ id: 'del-1', target_id: 'h1', type: 'holdings', deleted_at: old, device_id: 'other' }],
+  };
+  const out = mergePortfolios(local, remote, 'this');
+  assert.equal(out.deletions.length, 1);
+  assert.equal(out.deletions[0].device_id, 'this', 'newer deletion wins');
+});
+
+test('mergePortfolios: data.deletions[] unions across devices', () => {
+  const local = {
+    deletions: [{ id: 'del-1', target_id: 'h1', type: 'holdings', deleted_at: '2024-06-15T00:00:00Z', device_id: 'a' }],
+  };
+  const remote = {
+    deletions: [{ id: 'del-2', target_id: 'h2', type: 'holdings', deleted_at: '2024-06-15T00:00:00Z', device_id: 'b' }],
+  };
+  const out = mergePortfolios(local, remote, 'a');
+  assert.equal(out.deletions.length, 2);
+});
+
+test('mergePortfolios: data.deletions[] empty array when both sides missing', () => {
+  // Collections use mergeById which returns [] for empty inputs, same
+  // as holdings / cash_accounts / debts / snapshots — never undefined.
+  const out = mergePortfolios({}, {}, 'd');
+  assert.deepEqual(out.deletions, []);
+});
+
+// --- mergePortfolios: data.backups[] merge + FIFO 5 ---
+
+test('mergePortfolios: data.backups[] merged + sorted + truncated to last 5', () => {
+  // Local has 4 old backups, remote has 4 newer backups — merged should
+  // be 8 entries before truncation; but the FIFO 5 keeps the 5 newest.
+  const local = {
+    backups: [
+      { id: 'b1', saved_at: '2024-01-01T00:00:00Z', snapshot: {} },
+      { id: 'b2', saved_at: '2024-02-01T00:00:00Z', snapshot: {} },
+      { id: 'b3', saved_at: '2024-03-01T00:00:00Z', snapshot: {} },
+      { id: 'b4', saved_at: '2024-04-01T00:00:00Z', snapshot: {} },
+    ],
+  };
+  const remote = {
+    backups: [
+      { id: 'b5', saved_at: '2024-05-01T00:00:00Z', snapshot: {} },
+      { id: 'b6', saved_at: '2024-06-01T00:00:00Z', snapshot: {} },
+      { id: 'b7', saved_at: '2024-07-01T00:00:00Z', snapshot: {} },
+      { id: 'b8', saved_at: '2024-08-01T00:00:00Z', snapshot: {} },
+    ],
+  };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.backups.length, 5, 'FIFO 5 — keep the 5 newest');
+  // b4..b8 (newest 5 by saved_at)
+  assert.deepEqual(out.backups.map(b => b.id), ['b4', 'b5', 'b6', 'b7', 'b8']);
+});
+
+test('mergePortfolios: data.backups[] with < 5 merged → no truncation', () => {
+  const local = {
+    backups: [
+      { id: 'b1', saved_at: '2024-01-01T00:00:00Z', snapshot: {} },
+    ],
+  };
+  const remote = {
+    backups: [
+      { id: 'b2', saved_at: '2024-02-01T00:00:00Z', snapshot: {} },
+      { id: 'b3', saved_at: '2024-03-01T00:00:00Z', snapshot: {} },
+    ],
+  };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.backups.length, 3);
+  assert.deepEqual(out.backups.map(b => b.id), ['b1', 'b2', 'b3']);
+});
+
+test('mergePortfolios: data.backups[] empty array when both sides missing', () => {
+  // Collections use mergeById which returns [] for empty inputs, same
+  // as holdings / cash_accounts / debts / snapshots — never undefined.
+  const out = mergePortfolios({}, {}, 'd');
+  assert.deepEqual(out.backups, []);
+});
+
 // --- Regression: deletion must propagate via sync ---
 //
-// Symptom: clicking the per-row Delete button on a holding / cash / debt
-// removed the record locally, but the next sync pulled the same record
-// back from remote (because mergeById keeps remote-only records). The
-// root cause was in the Alpine remove* methods doing hard-delete; the
-// sync layer itself was correct as long as the local record survived
-// long enough to propagate the tombstone. These tests pin the contract:
-// "soft-delete on local (inactive=true, updated_at bumped) wins over a
-// still-active remote copy." All three collections must be covered.
+// Symptom (pre-fix, c434c0d): clicking the per-row Delete button on a
+// holding / cash / debt hard-deleted the record locally, but the next
+// sync pulled the same record back from remote (because mergeById keeps
+// remote-only records). The c434c0d intermediate fix (soft-delete with
+// inactive=true + bumped updated_at) was not the right shape — the
+// glossary already warns "Inactive: Avoid Deleted". The v1.3 fix uses a
+// separate data.deletions[] tombstone log + mergeByIdWithDeletions to
+// filter the merged result. These tests pin the new contract: a
+// deletion on local produces a tombstone that, after sync, removes the
+// record from the remote copy on this device. All three collections
+// (holdings / cash_accounts / debts) are covered.
 
-test('mergePortfolios: local soft-delete on holding propagates to remote (inactive + recent ts)', () => {
-  const now = '2024-06-15T12:00:00Z';
-  const old = '2024-01-01T00:00:00Z';
+test('mergePortfolios: local deletion on holding removes remote record (deletion log)', () => {
   const local = {
-    holdings: [{ id: 'h1', shares: 10, cost: 100, currency: 'TWD',
-                  current_price: 100, inactive: true,
-                  updated_at: now, device_id: 'this' }],
+    holdings: [],
+    deletions: [{ id: 'del-1', target_id: 'h1', type: 'holdings',
+                  deleted_at: '2024-06-15T12:00:00Z', device_id: 'this' }],
   };
   const remote = {
     holdings: [{ id: 'h1', shares: 10, cost: 100, currency: 'TWD',
                   current_price: 100, inactive: false,
-                  updated_at: old, device_id: 'other' }],
+                  updated_at: '2024-01-01T00:00:00Z', device_id: 'other' }],
   };
   const out = mergePortfolios(local, remote, 'this');
-  assert.equal(out.holdings.length, 1, 'record should still exist (tombstone, not hard delete)');
-  assert.equal(out.holdings[0].inactive, true, 'inactive=true must win');
+  assert.equal(out.holdings.length, 0, 'tombstone must remove the record — the c434c0d bug');
 });
 
-test('mergePortfolios: local soft-delete on cash_account propagates to remote', () => {
-  const now = '2024-06-15T12:00:00Z';
-  const old = '2024-01-01T00:00:00Z';
+test('mergePortfolios: local deletion on cash_account removes remote record (deletion log)', () => {
   const local = {
-    cash_accounts: [{ id: 'c1', name: 'old', balance: 0, currency: 'TWD',
-                      inactive: true, updated_at: now, device_id: 'this' }],
+    cash_accounts: [],
+    deletions: [{ id: 'del-1', target_id: 'c1', type: 'cash_accounts',
+                  deleted_at: '2024-06-15T12:00:00Z', device_id: 'this' }],
   };
   const remote = {
     cash_accounts: [{ id: 'c1', name: 'old', balance: 500, currency: 'TWD',
-                      inactive: false, updated_at: old, device_id: 'other' }],
+                      inactive: false, updated_at: '2024-01-01T00:00:00Z', device_id: 'other' }],
   };
   const out = mergePortfolios(local, remote, 'this');
-  assert.equal(out.cash_accounts.length, 1);
-  assert.equal(out.cash_accounts[0].inactive, true, 'inactive=true must win (sync propagates delete)');
+  assert.equal(out.cash_accounts.length, 0, 'tombstone must remove the record');
 });
 
-test('mergePortfolios: local soft-delete on debt propagates to remote (regression: the bug the user reported)', () => {
-  const now = '2024-06-15T12:00:00Z';
-  const old = '2024-01-01T00:00:00Z';
+test('mergePortfolios: local deletion on debt removes remote record (regression: the bug the user reported)', () => {
   const local = {
-    debts: [{ id: 'd1', name: 'credit card', balance: 1000, currency: 'TWD',
-              inactive: true, updated_at: now, device_id: 'this' }],
+    debts: [],
+    deletions: [{ id: 'del-1', target_id: 'd1', type: 'debts',
+                  deleted_at: '2024-06-15T12:00:00Z', device_id: 'this' }],
   };
   const remote = {
     debts: [{ id: 'd1', name: 'credit card', balance: 1000, currency: 'TWD',
-              inactive: false, updated_at: old, device_id: 'other' }],
+              inactive: false, updated_at: '2024-01-01T00:00:00Z', device_id: 'other' }],
   };
   const out = mergePortfolios(local, remote, 'this');
-  assert.equal(out.debts.length, 1, 'record must remain as inactive tombstone (NOT hard-deleted)');
-  assert.equal(out.debts[0].inactive, true, 'inactive=true must propagate so totals on both devices exclude it');
+  assert.equal(out.debts.length, 0, 'tombstone must remove the record so totals on both devices exclude it');
 });
 
-test('mergePortfolios: hard-delete (local drops record) does NOT propagate — the original bug', () => {
-  // This is the BROKEN pre-fix behavior. After the fix, removeDebt no
-  // longer reaches this state — it keeps the record with inactive=true.
-  // But this test pins the existing mergeById contract so a future
-  // change that accidentally re-introduces hard-delete won't go unnoticed.
-  const old = '2024-01-01T00:00:00Z';
-  const local = { debts: [] }; // record was hard-deleted
+test('mergePortfolios: hard-delete WITHOUT a matching tombstone keeps remote-only record (documented contract)', () => {
+  // This pins the bare mergeById contract. If a record was hard-deleted
+  // locally AND no tombstone was appended (e.g., a buggy old removeX
+  // method), the record comes back from remote. The v1.3 fix relies on
+  // removeX *always* appending a tombstone — this test guards against
+  // a future regression that removes the tombstone append.
+  const local = { debts: [] }; // record was hard-deleted, no tombstone
   const remote = { debts: [{ id: 'd1', balance: 1000, currency: 'TWD',
-                              inactive: false, updated_at: old, device_id: 'other' }] };
+                              inactive: false, updated_at: '2024-01-01T00:00:00Z', device_id: 'other' }] };
   const out = mergePortfolios(local, remote, 'this');
-  assert.equal(out.debts.length, 1, 'mergeById keeps remote-only records (documented contract)');
-  assert.equal(out.debts[0].inactive, false, 'record comes back active — this is why hard-delete is wrong');
+  assert.equal(out.debts.length, 1, 'without a tombstone, remote-only records survive — delete + tombstone must always go together');
 });

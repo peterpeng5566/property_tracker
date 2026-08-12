@@ -1237,6 +1237,11 @@
       cash_accounts: [],
       debts: [],
       snapshots: [],
+      // v1.3: deletion log (true-delete tombstones) + in-portfolio backups
+      // (Layer 1 of the two-layer backup safety net). Both arrays are
+      // additive — see ADR 0011 / ADR 0012.
+      deletions: [],
+      backups: [],
     };
   }
 
@@ -1744,6 +1749,12 @@
             this.data.settings.cost_format = 'per_share';
             if (!this.data.cash_accounts) this.data.cash_accounts = [];
             if (!this.data.debts) this.data.debts = [];
+            // v1.3 additive fields: lazy-init the deletion log and the
+            // in-portfolio backups. Both are arrays of records merged
+            // by lib/sync.js via mergeById — no version bump needed
+            // because adding a missing array is additive (ADR 0009 §6).
+            if (!this.data.deletions) this.data.deletions = [];
+            if (!this.data.backups) this.data.backups = [];
             this.data.holdings.forEach(h => { if (!h.attributes) h.attributes = {}; });
             this.data.cash_accounts.forEach(c => { if (!c.attributes) c.attributes = {}; });
             this.data.debts.forEach(d => { if (!d.attributes) d.attributes = {}; });
@@ -1857,21 +1868,23 @@
         }
         this.closeModal();
       },
-      // removeHolding: soft-delete with sync propagation. The record stays
-      // in data.holdings (filtered out of totals via lib/calc.js's
-      // isActive check) but is marked inactive=true + updated_at + device_id
-      // bumped so the next mergePortfolios propagates the tombstone to
-      // remote instead of having remote resurrect the record (which would
-      // happen if we did a hard-delete via .filter — see tests/sync.test.js
-      // "hard-delete (local drops record) does NOT propagate").
+      // removeHolding: true-delete with deletion-log tombstone. The
+      // record is hard-deleted from data.holdings AND a tombstone is
+      // appended to data.deletions[] so the next sync propagates the
+      // removal to remote. See ADR 0011. Inactive and Deleted are
+      // separate concepts — the glossary forbids conflating them.
       removeHolding(id) {
         if (!confirm(this.t('holdings.confirmDelete'))) return;
-        const h = this.data.holdings.find(h => h.id === id);
-        if (h) {
-          h.inactive = true;
-          h.updated_at = new Date().toISOString();
-          h.device_id = DEVICE_ID;
-        }
+        const idx = this.data.holdings.findIndex(h => h.id === id);
+        if (idx === -1) return;
+        this.data.holdings.splice(idx, 1);
+        this.data.deletions.push({
+          id: genId('del'),
+          target_id: id,
+          type: 'holdings',
+          deleted_at: new Date().toISOString(),
+          device_id: DEVICE_ID,
+        });
       },
       toggleInactive(id) {
         const h = this.data.holdings.find(h => h.id === id);
@@ -1976,12 +1989,16 @@
       },
       removeCash(id) {
         if (!confirm(this.t('cash.confirmDelete'))) return;
-        const c = this.data.cash_accounts.find(c => c.id === id);
-        if (c) {
-          c.inactive = true;
-          c.updated_at = new Date().toISOString();
-          c.device_id = DEVICE_ID;
-        }
+        const idx = this.data.cash_accounts.findIndex(c => c.id === id);
+        if (idx === -1) return;
+        this.data.cash_accounts.splice(idx, 1);
+        this.data.deletions.push({
+          id: genId('del'),
+          target_id: id,
+          type: 'cash_accounts',
+          deleted_at: new Date().toISOString(),
+          device_id: DEVICE_ID,
+        });
       },
       toggleCashInactive(id) {
         const c = this.data.cash_accounts.find(c => c.id === id);
@@ -2037,12 +2054,16 @@
       },
       removeDebt(id) {
         if (!confirm(this.t('debts.confirmDelete'))) return;
-        const d = this.data.debts.find(d => d.id === id);
-        if (d) {
-          d.inactive = true;
-          d.updated_at = new Date().toISOString();
-          d.device_id = DEVICE_ID;
-        }
+        const idx = this.data.debts.findIndex(d => d.id === id);
+        if (idx === -1) return;
+        this.data.debts.splice(idx, 1);
+        this.data.deletions.push({
+          id: genId('del'),
+          target_id: id,
+          type: 'debts',
+          deleted_at: new Date().toISOString(),
+          device_id: DEVICE_ID,
+        });
       },
       toggleDebtInactive(id) {
         const d = this.data.debts.find(d => d.id === id);
@@ -2224,6 +2245,9 @@
         this.data.settings.cost_format = 'per_share';
         if (!this.data.cash_accounts) this.data.cash_accounts = [];
         if (!this.data.debts) this.data.debts = [];
+        // v1.3 additive fields: see load() for the same lazy-init.
+        if (!this.data.deletions) this.data.deletions = [];
+        if (!this.data.backups) this.data.backups = [];
         this.data.holdings.forEach(h => { if (!h.attributes) h.attributes = {}; });
         // Strip in-memory flags defensively (ADR 0009 §4).
         Serialize.stripInMemoryFields(this.data.holdings);
