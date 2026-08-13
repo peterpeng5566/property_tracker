@@ -632,3 +632,79 @@ test('restoreFromSnapshot: cloud backup preserves its data.deletions', () => {
   // The current deletion log entries are preserved in the self-protection entry.
   assert.equal(result.selfProtectionEntry.data.deletions[0].id, 'del-current');
 });
+
+// ---- Slice 9: parseBackupFilename (filename contract symmetric to encoder) ----
+//
+// parseBackupFilename is the decoder side of the filename format
+// `portfolio-backup-{deviceId}-{timestamp}.json` that
+// writePortfolioBackupFile encodes. Single source of truth: lib/backup.js.
+
+test('parseBackupFilename: well-formed filename → {deviceId, timestamp}', () => {
+  const Backup = require('../lib/backup.js');
+  const result = Backup.parseBackupFilename('portfolio-backup-mydevice-2024-06-15T00:00:00.000Z.json');
+  assert.deepEqual(result, {
+    deviceId: 'mydevice',
+    timestamp: '2024-06-15T00:00:00.000Z',
+  });
+});
+
+test('parseBackupFilename: round-trip with writePortfolioBackupFile (single source of truth)', async () => {
+  const Backup = require('../lib/backup.js');
+  // The encoder's filename is parsed back into the same args.
+  let capturedName = null;
+  const fetchFn = async () => ({ json: async () => ({ id: 'x', name: capturedName }) });
+  // Capture the filename by intercepting the multipart body.
+  const capturingFetch = async (url, opts) => {
+    const m = /"name":"([^"]+)"/.exec(opts.body);
+    capturedName = m ? m[1] : null;
+    return { json: async () => ({ id: 'x', name: capturedName }) };
+  };
+  await Backup.writePortfolioBackupFile('{}', {
+    fetchFn: capturingFetch,
+    deviceId: 'web-abc123',
+    timestamp: '2024-06-15T12:34:56.789Z',
+  });
+  // The filename the encoder produced.
+  assert.equal(capturedName, 'portfolio-backup-web-abc123-2024-06-15T12:34:56.789Z.json');
+  // The decoder must recover the exact same deviceId + timestamp.
+  const parsed = Backup.parseBackupFilename(capturedName);
+  assert.deepEqual(parsed, {
+    deviceId: 'web-abc123',
+    timestamp: '2024-06-15T12:34:56.789Z',
+  });
+});
+
+test('parseBackupFilename: deviceId with dashes is captured whole (greedy .+)', () => {
+  const Backup = require('../lib/backup.js');
+  // Greedy regex must consume dashes in deviceId, stopping only at the
+  // last `-YYYY-MM-DDT` boundary.
+  const result = Backup.parseBackupFilename('portfolio-backup-web-abc-123-2024-06-15T00:00:00Z.json');
+  assert.deepEqual(result, {
+    deviceId: 'web-abc-123',
+    timestamp: '2024-06-15T00:00:00Z',
+  });
+});
+
+test('parseBackupFilename: rejects malformed filenames → null', () => {
+  const Backup = require('../lib/backup.js');
+  // Wrong prefix
+  assert.equal(Backup.parseBackupFilename('snapshot-mydevice-2024-06-15T00:00:00Z.json'), null);
+  // Missing timestamp
+  assert.equal(Backup.parseBackupFilename('portfolio-backup-mydevice.json'), null);
+  // Wrong extension
+  assert.equal(Backup.parseBackupFilename('portfolio-backup-mydevice-2024-06-15T00:00:00Z.txt'), null);
+  // No extension
+  assert.equal(Backup.parseBackupFilename('portfolio-backup-mydevice-2024-06-15T00:00:00Z'), null);
+  // Empty deviceId would mean the regex matches nothing (`.+` requires ≥1 char)
+  assert.equal(Backup.parseBackupFilename('portfolio-backup--2024-06-15T00:00:00Z.json'), null);
+  // Garbage after the T prefix (not a real ISO 8601 timestamp)
+  assert.equal(Backup.parseBackupFilename('portfolio-backup-mydevice-Tnotatimestamp.json'), null);
+});
+
+test('parseBackupFilename: non-string input → null', () => {
+  const Backup = require('../lib/backup.js');
+  assert.equal(Backup.parseBackupFilename(null), null);
+  assert.equal(Backup.parseBackupFilename(undefined), null);
+  assert.equal(Backup.parseBackupFilename(42), null);
+  assert.equal(Backup.parseBackupFilename({ name: 'foo' }), null);
+});

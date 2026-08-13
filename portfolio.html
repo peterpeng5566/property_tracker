@@ -2040,7 +2040,7 @@
           this._cloudBackups = files.map((f) => ({
             ...f,
             saved_at: f.modifiedTime,
-            device_id: this._deviceIdFromFilename(f.name),
+            device_id: Backup.parseBackupFilename(f.name)?.deviceId,
           }));
           this._cloudBackupsLoaded = true;
         } catch (e) {
@@ -2051,16 +2051,6 @@
         } finally {
           this._cloudBackupsLoading = false;
         }
-      },
-
-      // Parse the device-id out of a Layer 2 backup filename. Filename
-      // contract (lib/backup.js): portfolio-backup-{deviceId}-{ISO}.json
-      // The timestamp portion may contain ':' or '.' — we anchor at the
-      // .json extension and at the 'portfolio-backup-' prefix.
-      _deviceIdFromFilename(name) {
-        if (!name) return null;
-        const m = /^portfolio-backup-(.+)-\d{4}-\d{2}-\d{2}T.*\.json$/.exec(name);
-        return m ? m[1] : null;
       },
 
       // Human-readable timestamp for the Backups page rows. Short,
