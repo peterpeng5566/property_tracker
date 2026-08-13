@@ -2023,9 +2023,15 @@
         // re-renders don't re-list the folder on every dependency
         // change. Returns silently on failure (offline, no token, etc.)
         // — the empty state handles the user-visible messaging.
+        //
+        // Cache invariant: _cloudBackupsLoaded is only set to true
+        // AFTER a fetch actually ran (with a token). When there is no
+        // token, we leave the cache invalid so the next sign-in triggers
+        // a fresh fetch — otherwise navigating to Backups before
+        // connecting would stash "loaded with empty" and the cache
+        // guard would short-circuit the fetch after sign-in.
         if (!this.syncAccessToken) {
           this._cloudBackups = [];
-          this._cloudBackupsLoaded = true;
           return;
         }
         if (this._cloudBackupsLoaded) return;

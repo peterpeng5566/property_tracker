@@ -253,6 +253,82 @@ test.describe('portfolio.html backups page (ticket #03)', () => {
     expect(errors).toEqual([]);
   });
 
+  test('list refreshes after sign-in: cache is NOT stale when user signs in after first navigation', async ({ page }) => {
+    // Repro for the user-reported bug: "I see backup files in Drive,
+    // but the Backups page shows 'No backups yet'." The most likely
+    // cause is a stale cache: when the user navigates to Backups
+    // before connecting to Drive, fetchCloudBackups sets
+    // _cloudBackupsLoaded=true with an empty array. After the user
+    // signs in, the cache guard returns early and the page keeps
+    // showing empty.
+    const errors = collectAppErrors(page);
+    const fixture = makeFixture({ localCount: 0, cloudCount: 0 });
+    const cloudFiles = makeCloudBackupFiles(3);
+
+    await page.addInitScript(initScript(fixture));
+    await page.route('**/*', async (route) => {
+      const url = route.request().url();
+      const req = route.request();
+      if (url.includes('/drive/v3/files?') && req.method() === 'GET') {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ files: cloudFiles }),
+        });
+      }
+      if (url.includes('/upload/drive/v3/files') && req.method() === 'POST') {
+        return route.fulfill({ status: 200, contentType: 'application/json', body: '{"id":"new"}' });
+      }
+      if (url.includes("/drive/v3/files?q=") && /name='property_tracker_portfolio_v1.json'/.test(decodeURIComponent(url))) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ files: [{ id: 'portfolio-file-id', name: 'property_tracker_portfolio_v1.json', modifiedTime: '2024-07-01T00:00:00Z' }] }),
+        });
+      }
+      return route.continue();
+    });
+
+    await page.goto('http://localhost:8000/portfolio.html');
+
+    // Step 1: navigate to Backups BEFORE connecting. This is the
+    // scenario that triggers the cache-stale bug.
+    await page.locator('button:has-text("Backups")').click();
+    await expect(page.locator('[data-testid="backups-page"]')).toBeVisible({ timeout: 10_000 });
+
+    // The Cloud section should show "Connect to Google Drive to see
+    // cloud backups." because the user is not signed in yet.
+    await expect(page.locator('text=Connect to Google Drive')).toBeVisible();
+
+    // Step 2: user signs in (we just set the token directly via Alpine).
+    await page.evaluate(() => {
+      const root = document.querySelector('[x-data]');
+      const data = window.Alpine.$data(root);
+      data.syncAccessToken = 'fake-token-for-test';
+    });
+
+    // Step 3: re-trigger the fetch by clicking Backups again. The cache
+    // guard in fetchCloudBackups should NOT short-circuit — the user
+    // just signed in and we need fresh data.
+    await page.locator('button:has-text("Backups")').click();
+    await page.evaluate(() => {
+      const root = document.querySelector('[x-data]');
+      const data = window.Alpine.$data(root);
+      // The bug: _cloudBackupsLoaded was set to true with empty
+      // _cloudBackups when no token. Re-clicking the Backups button
+      // calls fetchCloudBackups, which short-circuits because the
+      // cache is "loaded". The fix should re-fetch on every Backups
+      // nav click (or invalidate the cache when the token changes).
+      return data.fetchCloudBackups();
+    });
+
+    // The Cloud sub-list should now render the 3 mock files.
+    const cloudRows = page.locator('[data-testid="cloud-backups"] [data-testid="backup-row"]');
+    await expect(cloudRows).toHaveCount(3, { timeout: 10_000 });
+
+    expect(errors).toEqual([]);
+  });
+
   test('restore applies: confirm dialog accepted; holdings reflect backup state; toast visible', async ({ page }) => {
     const errors = collectAppErrors(page);
     const fixture = makeFixture({ localCount: 1 });
