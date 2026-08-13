@@ -259,6 +259,10 @@
               :class="currentPage === 'categories' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
               class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
               x-text="t('nav.categories')"></button>
+      <button @click="currentPage = 'backups'; fetchCloudBackups().catch(() => {})"
+              :class="currentPage === 'backups' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
+              class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
+              x-text="t('nav.backups')"></button>
     </div>
   </nav>
 
@@ -619,6 +623,88 @@
     </section>
     </div>
 
+    <!-- Backups page (v1.3 — ADR 0012, ticket #03).
+         Two sub-lists: Cloud (Layer 2 from Drive, fetched on page mount)
+         and Local (Layer 1 from this.data.backups). Each row shows
+         timestamp + device-id + source badge + Restore button. Empty
+         state when neither layer has anything yet. Source of truth for
+         the restore algorithm: lib/backup.js (Backup.restoreFromBackup
+         / restoreFromSnapshot). Source of truth for the Layer 2 fetch:
+         Backup.listPortfolioBackupFiles / readPortfolioBackupFile. -->
+    <div x-show="currentPage === 'backups'" data-testid="backups-page" x-cloak>
+    <section class="mb-8">
+      <h2 class="text-lg font-semibold mb-2" x-text="t('backups.title')"></h2>
+      <p class="text-xs text-slate-500 mb-6 max-w-3xl" x-text="t('backups.subtitle')"></p>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+        <!-- Cloud (Layer 2) -->
+        <div class="bg-white rounded-2xl border border-slate-200 p-5">
+          <h3 class="text-sm font-semibold text-slate-700 mb-4"
+              x-text="t('backups.cloudHeading')"></h3>
+
+          <div x-show="!syncAccessToken" class="text-xs text-slate-400 py-4"
+               x-text="t('backups.cloudUnavailable')"></div>
+
+          <div x-show="syncAccessToken && _cloudBackupsLoading" class="text-xs text-slate-400 py-4"
+               x-text="t('backups.loading')"></div>
+
+          <ul data-testid="cloud-backups" class="space-y-2">
+            <template x-for="b in _cloudBackups" :key="b.id">
+              <li data-testid="backup-row"
+                  class="flex items-center justify-between gap-3 border border-slate-100 rounded-lg px-3 py-2 hover:bg-slate-50">
+                <div class="flex items-center gap-2 flex-wrap min-w-0">
+                  <span data-testid="backup-timestamp" class="text-xs font-medium text-slate-700 tabular"
+                        x-text="formatBackupTime(b.saved_at)"></span>
+                  <span data-testid="backup-device" class="text-xs px-1.5 py-0.5 rounded bg-slate-100 text-slate-600"
+                        x-text="b.device_id || '—'"></span>
+                  <span data-testid="backup-source" class="text-xs px-1.5 py-0.5 rounded bg-sky-100 text-sky-700"
+                        x-text="t('backups.sourceCloud')"></span>
+                </div>
+                <button data-testid="backup-restore-btn"
+                        @click="restoreFromBackup({ id: b.id, source: 'cloud', saved_at: b.saved_at, device_id: b.device_id })"
+                        class="text-xs px-2 py-1 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded transition-colors"
+                        x-text="t('backups.restore')"></button>
+              </li>
+            </template>
+          </ul>
+
+          <p x-show="syncAccessToken && !_cloudBackupsLoading && _cloudBackups.length === 0"
+             class="text-xs text-slate-400 py-4" x-text="t('backups.empty')"></p>
+        </div>
+
+        <!-- Local (Layer 1) -->
+        <div class="bg-white rounded-2xl border border-slate-200 p-5">
+          <h3 class="text-sm font-semibold text-slate-700 mb-4"
+              x-text="t('backups.localHeading')"></h3>
+
+          <ul data-testid="local-backups" class="space-y-2">
+            <template x-for="b in data.backups" :key="b.id">
+              <li data-testid="backup-row"
+                  class="flex items-center justify-between gap-3 border border-slate-100 rounded-lg px-3 py-2 hover:bg-slate-50">
+                <div class="flex items-center gap-2 flex-wrap min-w-0">
+                  <span data-testid="backup-timestamp" class="text-xs font-medium text-slate-700 tabular"
+                        x-text="formatBackupTime(b.saved_at)"></span>
+                  <span data-testid="backup-device" class="text-xs px-1.5 py-0.5 rounded bg-slate-100 text-slate-600"
+                        x-text="b.data?.meta?.device_id || data.meta?.device_id || '—'"></span>
+                  <span data-testid="backup-source" class="text-xs px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700"
+                        x-text="t('backups.sourceLocal')"></span>
+                </div>
+                <button data-testid="backup-restore-btn"
+                        @click="restoreFromBackup({ id: b.id, source: 'local', saved_at: b.saved_at, device_id: b.data?.meta?.device_id || data.meta?.device_id })"
+                        class="text-xs px-2 py-1 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded transition-colors"
+                        x-text="t('backups.restore')"></button>
+              </li>
+            </template>
+          </ul>
+
+          <p x-show="data.backups.length === 0"
+             class="text-xs text-slate-400 py-4" x-text="t('backups.empty')"></p>
+        </div>
+      </div>
+    </section>
+    </div>
+
   </main>
 
   <!-- Holdings Modal -->
@@ -965,6 +1051,7 @@
       'nav.holdings': 'Holdings',
       'nav.cashDebt': 'Cash & Debts',
       'nav.categories': 'Categories',
+      'nav.backups': 'Backups',
       'summary.netWorth': 'Total Net Worth',
       'summary.netWorthSub': '{a} holdings + {c} cash − {d} debts',
       'summary.holdingsValue': 'Holdings Value',
@@ -1086,6 +1173,25 @@
       'sync.justNow': 'just now',
       'sync.autoSync': 'Auto-sync on save',
       'sync.autoSyncHelp': 'Push 5s after each change',
+
+      // v1.3 — Backups page (ticket #03, ADR 0012).
+      // The page header, two sub-list headings, the empty state, the
+      // row badges, and the restore flow's confirm/toast strings live
+      // here. The locale-only strings; the data-shape wiring lives in
+      // the Backups page section (template x-if=currentPage === 'backups').
+      'backups.title': 'Backups',
+      'backups.subtitle': 'Two-layer backup: every save() and every Drive write is preserved. Layer 1 (in-portfolio, max 5) survives offline; Layer 2 (Drive file, max 5) survives localStorage wipe. Restore with self-protection: the current state becomes a new backup before applying.',
+      'backups.cloudHeading': 'Cloud backups (5)',
+      'backups.localHeading': 'Local backups (5)',
+      'backups.empty': 'No backups yet. Backups are saved automatically on every change.',
+      'backups.sourceLocal': 'Local',
+      'backups.sourceCloud': 'Cloud',
+      'backups.restore': 'Restore',
+      'backups.confirmRestore': "This will replace your current portfolio with the snapshot from {time} by {device}. The current state will be saved as a new backup. Continue?",
+      'backups.toastSuccess': "Restored from {time}. Your current state was saved as a new backup.",
+      'backups.toastError': 'Restore failed: {reason}',
+      'backups.loading': 'Loading cloud backups…',
+      'backups.cloudUnavailable': 'Connect to Google Drive to see cloud backups.',
     },
     zh: {
       'app.title': 'Property Tracker',
@@ -1093,6 +1199,7 @@
       'nav.holdings': 'Holdings',
       'nav.cashDebt': '現金與負債',
       'nav.categories': 'Categories',
+      'nav.backups': '備份與還原',
       'summary.netWorth': '總資產 Net Worth',
       'summary.netWorthSub': '{a} holdings + {c} 現金 − {d} 負債',
       'summary.holdingsValue': 'Holdings 市值',
@@ -1214,6 +1321,21 @@
       'sync.justNow': '剛剛',
       'sync.autoSync': '儲存時自動同步',
       'sync.autoSyncHelp': '每次變更 5 秒後推送',
+
+      // v1.3 — Backups page (ticket #03, ADR 0012).
+      'backups.title': '備份與還原',
+      'backups.subtitle': '兩層備份:save() 與每次 Drive 上寫都保留。Layer 1 (本機,最多 5) 離線可用;Layer 2 (Drive 檔案,最多 5) 可從 localStorage 清空後回復。回復時有自我保護:套用前先將目前狀態儲存為新備份。',
+      'backups.cloudHeading': '雲端備份 (5)',
+      'backups.localHeading': '本機備份 (5)',
+      'backups.empty': '目前沒有備份,資料修改後會自動儲存。',
+      'backups.sourceLocal': '本機',
+      'backups.sourceCloud': '雲端',
+      'backups.restore': '還原',
+      'backups.confirmRestore': "即將把目前的投資組合替換為 {time} 在 {device} 的快照。目前的狀態會先被儲存為一個新備份。是否繼續?",
+      'backups.toastSuccess': "已還原至 {time}。原本的狀態已儲存為新備份。",
+      'backups.toastError': '還原失敗:{reason}',
+      'backups.loading': '讀取雲端備份中…',
+      'backups.cloudUnavailable': '請連結 Google Drive 以查看雲端備份。',
     },
   };
 
@@ -1311,6 +1433,21 @@
       autoPushTimer: null,        // setTimeout handle for debounced auto-push
       _lastSyncTimestamp: 0,      // ms; used to skip auto-push on our own writes
       _lastBackupHash: null,      // hash of state at last backup push (dedup; see save() below)
+
+      // Backups page state (v1.3 — ticket #03, ADR 0012).
+      // _cloudBackups: [{id, name, modifiedTime, saved_at, device_id}]
+      //   mapped from the listPortfolioBackupFiles response. _cloudBackupsLoaded
+      //   gates a refetch; the result is cached for the lifetime of the page
+      //   to avoid re-listing the entire Drive folder on each re-render.
+      // _restoreToast: transient message shown after a restore attempt.
+      // _restoreToastVariant: 'success' or 'error' (sets the color).
+      // _toastTimer: setTimeout handle for clearing the toast.
+      _cloudBackups: [],
+      _cloudBackupsLoading: false,
+      _cloudBackupsLoaded: false,
+      _restoreToast: null,
+      _restoreToastVariant: 'success',
+      _toastTimer: null,
 
       // Refresh state (v1.1 — ADR 0009 §3)
       refreshState: 'idle',       // 'idle' | 'refreshing' | 'partial' | 'error'
@@ -1817,6 +1954,14 @@
             // Defensive: strip stale in-memory flags from a prior version's localStorage (ADR 0009 §4).
             Serialize.stripInMemoryFields(this.data.holdings);
             this.data.version = '1.1';
+            // v1.3: pre-seed _lastBackupHash with the current state's
+            // hash so the deep watcher's post-load save() (which fires
+            // 1-3 times during Alpine init as the reactive system
+            // re-evaluates the freshly-loaded data) does NOT push a
+            // redundant backup of state we just loaded. Without this,
+            // every page load adds one entry to data.backups[] — we
+            // only want backups for *user-initiated* state changes.
+            this._lastBackupHash = this._stateHash();
           } catch (e) {
             console.error('Failed to load portfolio', e);
           }
@@ -1868,6 +2013,190 @@
           st: this.data.settings,
           cat: this.data.categories,
         });
+      },
+
+      // ---- Backups page (v1.3 — ticket #03, ADR 0012) ----
+      // The page is purely Alpine — no DOM-creep. The lib owns the
+      // restore algorithm + the Layer 2 Drive fetch; the shim wires
+      // them to user input. Self-protection is implemented INSIDE
+      // Backup.restoreFromBackup / restoreFromSnapshot (see lib/backup.js).
+      async fetchCloudBackups() {
+        // Re-fetch from Drive only when the page is mounted and the
+        // user is signed in. The result is cached in _cloudBackups so
+        // re-renders don't re-list the folder on every dependency
+        // change. Returns silently on failure (offline, no token, etc.)
+        // — the empty state handles the user-visible messaging.
+        if (!this.syncAccessToken) {
+          this._cloudBackups = [];
+          this._cloudBackupsLoaded = true;
+          return;
+        }
+        if (this._cloudBackupsLoaded) return;
+        this._cloudBackupsLoading = true;
+        try {
+          // We don't have a portfolio file id readily available here, so
+          // pass any string; listPortfolioBackupFiles uses Drive's
+          // name-prefix query and ignores the fileId parameter.
+          const fetchFn = (url, opts) => this.driveFetch(url, opts);
+          const files = await Backup.listPortfolioBackupFiles('*', { fetchFn });
+          this._cloudBackups = files.map((f) => ({
+            ...f,
+            saved_at: f.modifiedTime,
+            device_id: this._deviceIdFromFilename(f.name),
+          }));
+          this._cloudBackupsLoaded = true;
+        } catch (e) {
+          // Surface the error to the console; the empty state shows
+          // the user-friendly message.
+          console.warn('fetchCloudBackups:', e?.message || e);
+          this._cloudBackups = [];
+        } finally {
+          this._cloudBackupsLoading = false;
+        }
+      },
+
+      // Parse the device-id out of a Layer 2 backup filename. Filename
+      // contract (lib/backup.js): portfolio-backup-{deviceId}-{ISO}.json
+      // The timestamp portion may contain ':' or '.' — we anchor at the
+      // .json extension and at the 'portfolio-backup-' prefix.
+      _deviceIdFromFilename(name) {
+        if (!name) return null;
+        const m = /^portfolio-backup-(.+)-\d{4}-\d{2}-\d{2}T.*\.json$/.exec(name);
+        return m ? m[1] : null;
+      },
+
+      // Human-readable timestamp for the Backups page rows. Short,
+      // sortable, locale-friendly. Falls back to the raw ISO string
+      // when parsing fails so the row still renders.
+      formatBackupTime(isoString) {
+        if (!isoString) return '—';
+        const d = new Date(isoString);
+        if (Number.isNaN(d.getTime())) return isoString;
+        const yr = d.getFullYear();
+        const mo = String(d.getMonth() + 1).padStart(2, '0');
+        const da = String(d.getDate()).padStart(2, '0');
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        return `${yr}-${mo}-${da} ${hh}:${mm}`;
+      },
+
+      // The Restore button handler. Triggers a window.confirm; on
+      // accept, runs the self-protection flow + save + writePortfolioFile.
+      // On reject, does nothing (data is unchanged). On Drive failure,
+      // surfaces an error toast and rolls back the in-memory change.
+      // backup shape: { id, source: 'local' | 'cloud', saved_at, device_id }
+      async restoreFromBackup(backup) {
+        const timeStr = this.formatBackupTime(backup.saved_at);
+        const devStr = backup.device_id || '—';
+        if (!window.confirm(this.t('backups.confirmRestore', { time: timeStr, device: devStr }))) {
+          return;
+        }
+        // Snapshot the original data so we can roll back on Drive failure.
+        const originalDataJson = JSON.stringify(this.data);
+        try {
+          // 1. Self-protection push (pre-restore snapshot). FIFO 5
+          //    applies via Backup.pushBackup. Build a properly-formed
+          //    backup ENTRY (id + saved_at + data envelope); raw
+          //    snapshots lack the envelope so the Backups page row
+          //    (timestamp + device) would render as dashes.
+          const snap1 = {
+            id: genId('bp'),
+            saved_at: new Date().toISOString(),
+            data: Backup.buildBackupSnapshot(this.data),
+          };
+          Backup.pushBackup(this.data, snap1);
+          // 2. Compute restored data. Two paths:
+          //    - local: lookup by id in data.backups (already there)
+          //    - cloud: fetch the file content, pass to restoreFromSnapshot
+          let result;
+          if (backup.source === 'cloud') {
+            const fetchFn = (url, opts) => this.driveFetch(url, opts);
+            let cloudContent;
+            try {
+              cloudContent = await Backup.readPortfolioBackupFile(backup.id, { fetchFn });
+            } catch (e) {
+              throw new Error('cloud backup fetch failed: ' + (e?.message || e));
+            }
+            result = Backup.restoreFromSnapshot(this.data, cloudContent);
+          } else {
+            result = Backup.restoreFromBackup(this.data, backup.id);
+            if (!result) throw new Error('local backup not found: ' + backup.id);
+          }
+          // Defensive: result.data is derived from the snapshot (which may
+          // be a partial shape from an older backup or a Cloud backup file).
+          // Backfill the standard additive fields the rest of the page reads
+          // — the deep watcher + computed getters like categoriesForCash
+          // break if these are missing.
+          result.data.holdings = result.data.holdings || [];
+          result.data.cash_accounts = result.data.cash_accounts || [];
+          result.data.debts = result.data.debts || [];
+          result.data.snapshots = result.data.snapshots || [];
+          result.data.categories = result.data.categories || [];
+          result.data.deletions = result.data.deletions || [];
+          if (!result.data.settings) result.data.settings = this.data.settings;
+          // Defensive: restoreFromSnapshot returns a `data` object whose
+          // shape is derived from the snapshot. If the snapshot (e.g. a
+          // Cloud-restore payload or an older local backup) is missing
+          // `settings`, save() would crash on `this.data.settings.X`.
+          // Backfill settings from the current state.
+          if (!result.data.settings) {
+            result.data.settings = this.data.settings;
+          }
+          // 3. Apply the restore (replaces this.data wholesale).
+          this.data = result.data;
+          // 4. Persist to localStorage. The deep watcher on data will
+          //    fire here and call save() too; the explicit save() is
+          //    belt-and-braces for when the watcher is detached. Layer 2
+          //    push is triggered next.
+          this.save();
+          // 5. Layer 2 push via writePortfolioFile (or create if first
+          //    run). writePortfolioFile snapshots the existing Drive
+          //    file BEFORE overwriting, per ticket #02.
+          const file = await this.findPortfolioFile().catch(() => null);
+          if (file && file.id) {
+            await this.writePortfolioFile(file.id, this.data);
+          } else {
+            await this.createPortfolioFile(this.data);
+          }
+          // 6. Refresh the cloud backup list (the restore just added a
+          //    new Layer 2 backup). Set _cloudBackupsLoaded = false so
+          //    the next fetchCloudBackups() call actually fetches.
+          this._cloudBackupsLoaded = false;
+          await this.fetchCloudBackups();
+          // 7. Toast.
+          this._showToast(this.t('backups.toastSuccess', { time: timeStr }), 'success');
+        } catch (e) {
+          // Roll back the in-memory state to the original. The
+          // self-protection entry that was pushed in step 1 is lost
+          // (acceptable: the user will see the toast error and can
+          // retry; the original data is preserved).
+          try {
+            this.data = JSON.parse(originalDataJson);
+            this.save();
+          } catch (_) { /* no-op; will be overwritten by next save() */ }
+          this._showToast(this.t('backups.toastError', { reason: e?.message || e }), 'error');
+          throw e;
+        }
+      },
+
+      _showToast(message, variant = 'success') {
+        // Update the toast state in the separate toast scope (lives
+        // outside the portfolio() component so it persists when async
+        // errors are thrown out of restoreFromBackup). window.__toast
+        // is the bridge defined in the inline script below.
+        if (window.__toast) {
+          window.__toast.show(message, variant);
+        } else {
+          // Fallback: also reflect on the component scope so a
+          // single-page reload doesn't lose the message.
+          this._restoreToast = message;
+          this._restoreToastVariant = variant;
+          if (this._toastTimer) clearTimeout(this._toastTimer);
+          this._toastTimer = setTimeout(() => {
+            this._restoreToast = null;
+            this._toastTimer = null;
+          }, 5000);
+        }
       },
 
       // ---- i18n ----
@@ -2329,6 +2658,52 @@
     };
   }
 </script>
+
+  <!-- Per-user runtime config (gitignored). Copy config.js.example to config.js and
+     fill in the Cloudflare Worker URL. Without this, Yahoo refresh fails with CORS.
+     See README.md → "Yahoo CORS proxy setup". -->
+
+<!-- Backups: transient restore-toast (v1.3 — ticket #03).
+     Bottom-center banner; appears for 5s after a successful (or failed)
+     restore. Lives in its OWN Alpine scope so the toast state persists
+     even when the parent portfolio() async methods throw (rejection
+     path). The portfolio shim reaches into this scope via window.__toast
+     to update message + variant; the timer here clears it after 5s.
+     Browser smoke: data-testid="restore-toast". -->
+<script>
+  function toastScope() {
+    return {
+      message: null,
+      variant: 'success',
+      timer: null,
+    };
+  }
+  // Bridge so the portfolio() component can drive the toast without
+  // needing a direct reference. Updated by toastScope() mount below.
+  window.__toast = {
+    show(msg, variant) {
+      const el = document.querySelector('[data-toast-scope]');
+      if (!el || !window.Alpine) return;
+      const data = window.Alpine.$data(el);
+      if (!data) return;
+      data.message = msg;
+      data.variant = variant || 'success';
+      if (data.timer) clearTimeout(data.timer);
+      data.timer = setTimeout(() => { data.message = null; data.timer = null; }, 5000);
+    },
+  };
+</script>
+
+<div data-toast-scope x-data="toastScope()" x-cloak>
+  <div x-show="message"
+       x-transition.opacity
+       data-testid="restore-toast"
+       :class="variant === 'error' ? 'bg-rose-600' : 'bg-emerald-600'"
+       class="fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg text-white text-sm shadow-lg z-50 max-w-md"
+       role="status">
+    <p x-text="message"></p>
+  </div>
+</div>
 
 </body>
 </html>

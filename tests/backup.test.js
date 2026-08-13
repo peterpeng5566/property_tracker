@@ -483,3 +483,138 @@ test('cleanupOldBackups: missing fetchFn → throws', async () => {
     /fetchFn/,
   );
 });
+
+// ---- Slice 7: readPortfolioBackupFile (Layer 2 Drive read for restore) ----
+
+test('readPortfolioBackupFile: GETs the backup file content with ?backup=1 flag', async () => {
+  const Backup = require('../lib/backup.js');
+  let captured = null;
+  const fetchFn = async (url, opts) => {
+    captured = { url, opts };
+    return {
+      json: async () => ({ holdings: [{ id: 'h1', shares: 5 }] }),
+    };
+  };
+
+  const out = await Backup.readPortfolioBackupFile('backup-file-id', { fetchFn });
+
+  // URL pins the contract.
+  assert.match(captured.url, /^https:\/\/www\.googleapis\.com\/drive\/v3\/files\/backup-file-id\?/);
+  assert.match(captured.url, /[?&]alt=media/);
+  assert.match(captured.url, /[?&]backup=1/);
+  // Method is GET (default; no override).
+  assert.equal(captured.opts?.method, undefined);
+  // Returns the parsed JSON body.
+  assert.deepEqual(out, { holdings: [{ id: 'h1', shares: 5 }] });
+});
+
+test('readPortfolioBackupFile: missing fetchFn → throws', async () => {
+  const Backup = require('../lib/backup.js');
+  await assert.rejects(
+    Backup.readPortfolioBackupFile('parent', {}),
+    /fetchFn/,
+  );
+});
+
+// ---- Slice 8: restoreFromSnapshot (cloud-restore path) ----
+
+test('restoreFromSnapshot: takes snapshot data directly without lookup in data.backups', () => {
+  // The cloud-restore path fetches a backup file's content via
+  // readPortfolioBackupFile, then calls restoreFromSnapshot to apply the
+  // snapshot to data. The lookup step in restoreFromBackup is unnecessary
+  // because the snapshot is already in hand. The algorithm matches
+  // restoreFromBackup: pre-restore + self-protection, sorted, FIFO 5.
+  const Backup = require('../lib/backup.js');
+  const currentData = {
+    holdings: [{ id: 'h-current', shares: 99 }],
+    cash_accounts: [],
+    debts: [],
+    backups: [],
+    deletions: [],
+  };
+  // Snapshot is the desired restore target (built by buildBackupSnapshot).
+  const cloudSnapshot = Backup.buildBackupSnapshot({
+    holdings: [{ id: 'h-from-cloud', shares: 5 }],
+    cash_accounts: [],
+    debts: [],
+    backups: [],
+    deletions: [],
+  });
+
+  const result = Backup.restoreFromSnapshot(currentData, cloudSnapshot, {
+    genId: (prefix) => `${prefix}-test`,
+    now: () => '2024-06-15T00:00:00Z',
+  });
+
+  // Restored data has the cloud snapshot's holdings.
+  assert.deepEqual(result.data.holdings, [{ id: 'h-from-cloud', shares: 5 }]);
+  // Self-protection entry IS the returned entry.
+  assert.equal(result.selfProtectionEntry.id, 'bp-test');
+  assert.equal(result.selfProtectionEntry.saved_at, '2024-06-15T00:00:00Z');
+  // Self-protection entry's data has the CURRENT (pre-restore) state.
+  assert.equal(result.selfProtectionEntry.data.holdings[0].shares, 99);
+  // Restored data has the self-protection entry in its backups array.
+  assert.equal(result.data.backups.length, 1);
+  assert.equal(result.data.backups[0].id, 'bp-test');
+});
+
+test('restoreFromSnapshot: with existing backups → merged with self-protection, FIFO 5', () => {
+  const Backup = require('../lib/backup.js');
+  const currentData = {
+    holdings: [{ id: 'h-current', shares: 99 }],
+    backups: [
+      { id: 'b1', saved_at: '2024-01-01T00:00:00Z', data: { holdings: [] } },
+      { id: 'b2', saved_at: '2024-02-01T00:00:00Z', data: { holdings: [] } },
+    ],
+    deletions: [],
+  };
+  const cloudSnapshot = Backup.buildBackupSnapshot({
+    holdings: [{ id: 'h-cloud', shares: 5 }],
+    backups: [],
+    deletions: [],
+  });
+
+  const result = Backup.restoreFromSnapshot(currentData, cloudSnapshot, {
+    genId: () => 'sp',
+    now: () => '2024-06-15T00:00:00Z',
+  });
+
+  // 2 existing + 1 self-protection = 3 (under FIFO 5).
+  assert.equal(result.data.backups.length, 3);
+  // Self-protection entry is the latest by saved_at.
+  assert.equal(result.data.backups[result.data.backups.length - 1].id, 'sp');
+});
+
+test('restoreFromSnapshot: cloud backup preserves its data.deletions', () => {
+  // When restoring from a cloud snapshot, the snapshot's deletion log is
+  // preserved (not the current state's). Per spec: "the backup's deletion
+  // log is what was true at backup-time".
+  const Backup = require('../lib/backup.js');
+  const currentData = {
+    holdings: [],
+    cash_accounts: [],
+    debts: [],
+    backups: [],
+    deletions: [
+      { id: 'del-current', target_id: 'x', type: 'holdings', deleted_at: '2024-07-01T00:00:00Z', device_id: 'this' },
+    ],
+  };
+  const cloudSnapshot = Backup.buildBackupSnapshot({
+    holdings: [],
+    backups: [],
+    deletions: [
+      { id: 'del-cloud', target_id: 'y', type: 'holdings', deleted_at: '2024-05-01T00:00:00Z', device_id: 'cloud' },
+    ],
+  });
+
+  const result = Backup.restoreFromSnapshot(currentData, cloudSnapshot, {
+    genId: () => 'sp',
+    now: () => '2024-06-15T00:00:00Z',
+  });
+
+  // Restored deletions come from the cloud snapshot, not the current state.
+  assert.equal(result.data.deletions.length, 1);
+  assert.equal(result.data.deletions[0].id, 'del-cloud');
+  // The current deletion log entries are preserved in the self-protection entry.
+  assert.equal(result.selfProtectionEntry.data.deletions[0].id, 'del-current');
+});

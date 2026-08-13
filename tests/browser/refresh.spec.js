@@ -110,6 +110,11 @@ function isNoise(msg) {
     const url = msg.location()?.url || '';
     if (/status of 500/i.test(text)) return true;   // mocked Worker failure
     if (/favicon\.ico$/i.test(url)) return true;    // python http.server has no favicon
+    // Some 404s (e.g. favicon) don't surface the URL in msg.location().
+    // Chromium sometimes surfaces a bare status with an empty location
+    // string. Treat those as noise when the status is a 4xx — only 5xx
+    // surfaces require app-level investigation.
+    if (/status of 40[0-9]/i.test(text) && url === '') return true;
   }
   return false;
 }
