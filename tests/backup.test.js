@@ -296,7 +296,7 @@ test('writePortfolioBackupFile: URL includes ?backup=1&device_id=...&ts=...', as
     return { ok: true, json: async () => ({ id: 'new-file-id', name: 'portfolio-backup-mydevice-2024-06-15T00:00:00Z.json' }) };
   };
 
-  const res = await Backup.writePortfolioBackupFile('parent-file-id', '{"backups":[]}', {
+  const res = await Backup.writePortfolioBackupFile('{"backups":[]}', {
     fetchFn,
     deviceId: 'mydevice',
     timestamp: '2024-06-15T00:00:00Z',
@@ -318,7 +318,7 @@ test('writePortfolioBackupFile: URL includes ?backup=1&device_id=...&ts=...', as
 test('writePortfolioBackupFile: missing fetchFn → throws', async () => {
   const Backup = require('../lib/backup.js');
   await assert.rejects(
-    Backup.writePortfolioBackupFile('p', '{}', {
+    Backup.writePortfolioBackupFile('{}', {
       deviceId: 'd',
       timestamp: '2024-01-01T00:00:00Z',
       // no fetchFn
@@ -334,13 +334,27 @@ test('writePortfolioBackupFile: special characters in deviceId are URL-encoded',
     captured = { url, opts };
     return { json: async () => ({}) };
   };
-  await Backup.writePortfolioBackupFile('p', '{}', {
+  await Backup.writePortfolioBackupFile('{}', {
     fetchFn,
     deviceId: 'device with spaces & special/chars',
     timestamp: '2024-01-01',
   });
   assert.ok(captured.url.includes('device_id=device%20with%20spaces%20%26%20special%2Fchars'),
     `URL must encode deviceId; got: ${captured.url}`);
+});
+
+test('buildMultipartBody: produces the multipart/related shape used by Google Drive uploads', () => {
+  const Backup = require('../lib/backup.js');
+  const body = Backup.buildMultipartBody({
+    meta: { name: 'foo.json', mimeType: 'application/json' },
+    content: '{"x":1}',
+    boundary: 'B',
+  });
+  // Structure: metadata part + content part + closing boundary.
+  assert.match(body, /^--B\r\n/);
+  assert.match(body, /Content-Type: application\/json; charset=UTF-8\r\n\r\n\{"name":"foo\.json","mimeType":"application\/json"\}\r\n/);
+  assert.match(body, /--B\r\nContent-Type: application\/json\r\n\r\n\{"x":1\}\r\n/);
+  assert.match(body, /--B--\r\n$/);
 });
 
 // ---- Slice 5: listPortfolioBackupFiles ----
@@ -360,7 +374,7 @@ test('listPortfolioBackupFiles: queries Drive with name contains portfolio-backu
     };
   };
 
-  const out = await Backup.listPortfolioBackupFiles('parent-file-id', { fetchFn });
+  const out = await Backup.listPortfolioBackupFiles({ fetchFn });
 
   // URL filters by `portfolio-backup-` and trashed=false.
   assert.match(captured.url, /[?&]q=/);
@@ -377,21 +391,21 @@ test('listPortfolioBackupFiles: queries Drive with name contains portfolio-backu
 test('listPortfolioBackupFiles: empty Drive folder → returns []', async () => {
   const Backup = require('../lib/backup.js');
   const fetchFn = async () => ({ json: async () => ({ files: [] }) });
-  const out = await Backup.listPortfolioBackupFiles('parent', { fetchFn });
+  const out = await Backup.listPortfolioBackupFiles({ fetchFn });
   assert.deepEqual(out, []);
 });
 
 test('listPortfolioBackupFiles: missing files field → returns []', async () => {
   const Backup = require('../lib/backup.js');
   const fetchFn = async () => ({ json: async () => ({}) });
-  const out = await Backup.listPortfolioBackupFiles('parent', { fetchFn });
+  const out = await Backup.listPortfolioBackupFiles({ fetchFn });
   assert.deepEqual(out, []);
 });
 
 test('listPortfolioBackupFiles: missing fetchFn → throws', async () => {
   const Backup = require('../lib/backup.js');
   await assert.rejects(
-    Backup.listPortfolioBackupFiles('parent', {}),
+    Backup.listPortfolioBackupFiles({}),
     /fetchFn/,
   );
 });
@@ -425,12 +439,12 @@ test('cleanupOldBackups: deletes oldest until count == keep - 1 (so the upcoming
   };
 
   // keep=5; 4 existing + 1 upcoming = 5, so NO deletes.
-  await Backup.cleanupOldBackups('parent', 5, { fetchFn });
+  await Backup.cleanupOldBackups(5, { fetchFn });
   assert.equal(deletes.length, 0, 'with 4 existing + 1 upcoming = keep, no deletes');
 
   // keep=3; 4 existing + 1 upcoming = 5, should be 3, so delete 2 oldest.
   deletes.length = 0;
-  await Backup.cleanupOldBackups('parent', 3, { fetchFn });
+  await Backup.cleanupOldBackups(3, { fetchFn });
   assert.deepEqual(deletes, ['oldest', 'mid'], 'delete oldest until count == keep - 1');
 });
 
@@ -457,7 +471,7 @@ test('cleanupOldBackups: default keep=5 → with 6 existing + 1 upcoming = 7, de
     };
   };
 
-  await Backup.cleanupOldBackups('parent', /* keep */ 5, { fetchFn });
+  await Backup.cleanupOldBackups(/* keep */ 5, { fetchFn });
   assert.equal(deletes.length, 2, '6 + 1 = 7, keep 5, delete 2 oldest');
   assert.deepEqual(deletes, ['f1', 'f2']);
 });
@@ -472,14 +486,14 @@ test('cleanupOldBackups: with 0 existing files → no deletes', async () => {
     }
     return { json: async () => ({ files: [] }) };
   };
-  await Backup.cleanupOldBackups('parent', 5, { fetchFn });
+  await Backup.cleanupOldBackups(5, { fetchFn });
   assert.equal(deletes.length, 0);
 });
 
 test('cleanupOldBackups: missing fetchFn → throws', async () => {
   const Backup = require('../lib/backup.js');
   await assert.rejects(
-    Backup.cleanupOldBackups('parent', 5, {}),
+    Backup.cleanupOldBackups(5, {}),
     /fetchFn/,
   );
 });

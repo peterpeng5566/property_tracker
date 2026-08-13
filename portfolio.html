@@ -1793,8 +1793,8 @@
           const snapshot = Backup.buildBackupSnapshot(existingData);
           const content = JSON.stringify(snapshot);
           const timestamp = new Date().toISOString();
-          await Backup.cleanupOldBackups(fileId, 5, { fetchFn });
-          await Backup.writePortfolioBackupFile(fileId, content, {
+          await Backup.cleanupOldBackups(5, { fetchFn });
+          await Backup.writePortfolioBackupFile(content, {
             fetchFn,
             deviceId: DEVICE_ID,
             timestamp,
@@ -1817,16 +1817,13 @@
       async createPortfolioFile(data) {
         const boundary = 'pt_boundary_' + Math.random().toString(36).slice(2);
         const meta = { name: 'property_tracker_portfolio_v1.json', mimeType: 'application/json' };
-        const body =
-          `--${boundary}\r\n` +
-          `Content-Type: application/json; charset=UTF-8\r\n` +
-          `\r\n` +
-          `${JSON.stringify(meta)}\r\n` +
-          `--${boundary}\r\n` +
-          `Content-Type: application/json\r\n` +
-          `\r\n` +
-          `${this.serializeData(data)}\r\n` +
-          `--${boundary}--\r\n`;
+        // Shared multipart body builder (lib/backup.js#buildMultipartBody)
+        // — same shape as `writePortfolioBackupFile`. See ADR 0012 §6.
+        const body = Backup.buildMultipartBody({
+          meta,
+          content: this.serializeData(data),
+          boundary,
+        });
         const url = `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
         const r = await this.driveFetch(url, {
           method: 'POST',
@@ -2034,11 +2031,12 @@
         if (this._cloudBackupsLoaded) return;
         this._cloudBackupsLoading = true;
         try {
-          // We don't have a portfolio file id readily available here, so
-          // pass any string; listPortfolioBackupFiles uses Drive's
-          // name-prefix query and ignores the fileId parameter.
+          // listPortfolioBackupFiles is account-wide (ADR 0012 §6:
+          // "single Drive folder per user"). It used to take a fileId
+          // placeholder; that was misleading because the impl never
+          // read it. Now it's `{fetchFn}` only.
           const fetchFn = (url, opts) => this.driveFetch(url, opts);
-          const files = await Backup.listPortfolioBackupFiles('*', { fetchFn });
+          const files = await Backup.listPortfolioBackupFiles({ fetchFn });
           this._cloudBackups = files.map((f) => ({
             ...f,
             saved_at: f.modifiedTime,
@@ -2093,18 +2091,24 @@
         }
         // Snapshot the original data so we can roll back on Drive failure.
         const originalDataJson = JSON.stringify(this.data);
+        // Keep the self-protection entry as a local var so the catch
+        // block can re-attach it to data.backups even when step 5
+        // (Drive write) fails. Without this, a Drive failure would
+        // discard the pre-restore snapshot the user just authorized
+        // — defeating the self-protection principle (ADR 0012 §3).
+        let selfProtectionEntry = null;
         try {
           // 1. Self-protection push (pre-restore snapshot). FIFO 5
           //    applies via Backup.pushBackup. Build a properly-formed
           //    backup ENTRY (id + saved_at + data envelope); raw
           //    snapshots lack the envelope so the Backups page row
           //    (timestamp + device) would render as dashes.
-          const snap1 = {
+          selfProtectionEntry = {
             id: genId('bp'),
             saved_at: new Date().toISOString(),
             data: Backup.buildBackupSnapshot(this.data),
           };
-          Backup.pushBackup(this.data, snap1);
+          Backup.pushBackup(this.data, selfProtectionEntry);
           // 2. Compute restored data. Two paths:
           //    - local: lookup by id in data.backups (already there)
           //    - cloud: fetch the file content, pass to restoreFromSnapshot
@@ -2133,7 +2137,6 @@
           result.data.snapshots = result.data.snapshots || [];
           result.data.categories = result.data.categories || [];
           result.data.deletions = result.data.deletions || [];
-          if (!result.data.settings) result.data.settings = this.data.settings;
           // Defensive: restoreFromSnapshot returns a `data` object whose
           // shape is derived from the snapshot. If the snapshot (e.g. a
           // Cloud-restore payload or an older local backup) is missing
@@ -2166,12 +2169,18 @@
           // 7. Toast.
           this._showToast(this.t('backups.toastSuccess', { time: timeStr }), 'success');
         } catch (e) {
-          // Roll back the in-memory state to the original. The
-          // self-protection entry that was pushed in step 1 is lost
-          // (acceptable: the user will see the toast error and can
-          // retry; the original data is preserved).
+          // Roll back the in-memory state to the original, but
+          // PRESERVE the self-protection entry from step 1 — it was
+          // a legitimate backup the user authorized, and the rollback
+          // is only here because Drive write failed. ADR 0012 §3
+          // ("self-protection makes restore undoable") would be
+          // violated if we silently discarded it.
           try {
-            this.data = JSON.parse(originalDataJson);
+            const original = JSON.parse(originalDataJson);
+            if (selfProtectionEntry) {
+              Backup.pushBackup(original, selfProtectionEntry);
+            }
+            this.data = original;
             this.save();
           } catch (_) { /* no-op; will be overwritten by next save() */ }
           this._showToast(this.t('backups.toastError', { reason: e?.message || e }), 'error');
@@ -2180,23 +2189,12 @@
       },
 
       _showToast(message, variant = 'success') {
-        // Update the toast state in the separate toast scope (lives
+        // Drive the toast state in the separate toast scope (lives
         // outside the portfolio() component so it persists when async
         // errors are thrown out of restoreFromBackup). window.__toast
         // is the bridge defined in the inline script below.
-        if (window.__toast) {
-          window.__toast.show(message, variant);
-        } else {
-          // Fallback: also reflect on the component scope so a
-          // single-page reload doesn't lose the message.
-          this._restoreToast = message;
-          this._restoreToastVariant = variant;
-          if (this._toastTimer) clearTimeout(this._toastTimer);
-          this._toastTimer = setTimeout(() => {
-            this._restoreToast = null;
-            this._toastTimer = null;
-          }, 5000);
-        }
+        if (!window.__toast) return;
+        window.__toast.show(message, variant);
       },
 
       // ---- i18n ----

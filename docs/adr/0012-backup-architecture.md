@@ -119,9 +119,9 @@ All six functions of the backup architecture live in `lib/backup.js`:
 - `buildBackupSnapshot(data)` — produces the snapshot entry shape above.
 - `pushBackup(data, snapshot, maxKeep = 5)` — in-place Layer 1 push with sort + truncate.
 - `restoreFromBackup(data, backupId)` — returns `{data, selfProtectionEntry}` for the Alpine shim.
-- `writePortfolioBackupFile(fileId, content, {fetchFn, deviceId, timestamp})` — Layer 2 write with `?backup=1` query string.
-- `listPortfolioBackupFiles(fileId, {fetchFn})` — Layer 2 list filtered by `portfolio-backup-*.json`.
-- `cleanupOldBackups(fileId, keep = 5, {fetchFn})` — Layer 2 FIFO enforcement *before* the upcoming write.
+- `writePortfolioBackupFile(content, {fetchFn, deviceId, timestamp})` — Layer 2 write with `?backup=1` query string. (Note: `fileId` was originally a parameter here but was unused — the upload URL is for a new file, not the parent's children — so it was dropped in 2026-08-13 to keep the signature honest. The parent portfolio file's id is conceptually known at the call site but not needed by this function.)
+- `listPortfolioBackupFiles({fetchFn})` — Layer 2 list filtered by `portfolio-backup-*.json`. The query is account-wide (Drive `name contains`), not folder-scoped, because the single Drive folder per user assumption (this ADR's "single source of truth shared by all devices") means a single user's backups all live in one folder anyway. (`fileId` was dropped from this signature in 2026-08-13 for the same honesty reason — the implementation never read it.)
+- `cleanupOldBackups(keep = 5, {fetchFn})` — Layer 2 FIFO enforcement *before* the upcoming write. (`fileId` dropped in 2026-08-13; the function delegates to `listPortfolioBackupFiles` which is now account-wide.)
 
 `fetchFn` is injected (per the `lib/refresh.js` pattern from [ADR 0010 §4](0010-v1.2-testing-safety-net.md)) so Node tests don't depend on a live Drive API. The Alpine shim wires `fetchFn: window.fetch`.
 

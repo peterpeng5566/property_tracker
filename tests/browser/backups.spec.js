@@ -138,60 +138,6 @@ function makeCloudBackupFiles(n = 5, devicePrefix = 'web-other') {
 // the page just loads — so we ignore it).
 const HOSTS = ['www.googleapis.com'];
 
-function withBackupMocks(page, options = {}) {
-  const cloudFiles = options.cloudFiles || [];
-  return page.route(`**/*`, async (route) => {
-    const url = route.request().url();
-    const req = route.request();
-    // Drive file list query (Layer 2 — listPortfolioBackupFiles).
-    if (url.includes('/drive/v3/files?') && req.method() === 'GET') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ files: cloudFiles }),
-      });
-    }
-    // Drive file content read (Layer 2 — readPortfolioBackupFile).
-    // Path: /drive/v3/files/{id}?alt=media&backup=1 (the latter is the
-    // lib's stable contract; some servers also tag Drive reads with
-    // ?alt=media alone).
-    if (/\/drive\/v3\/files\/[^/?]+(\?|$)/.test(url)) {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(PRIOR_STATE),
-      });
-    }
-    // Drive file write (Layer 2 — writePortfolioBackupFile creates a new
-    // file). Also covers the multipart POST for createPortfolioFile.
-    if (url.includes('upload/drive/v3/files') && req.method() === 'POST') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ id: 'new-backup-file' }),
-      });
-    }
-    // Drive file media PATCH (the existing portfolio.json overwrite).
-    if (/\/drive\/v3\/files\/[^/?]+/.test(url) && req.method() === 'PATCH') {
-      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
-    }
-    // Drive file DELETE (cleanupOldBackups).
-    if (/\/drive\/v3\/files\/[^/?]+/.test(url) && req.method() === 'DELETE') {
-      return route.fulfill({ status: 204, body: '' });
-    }
-    // Find-portfolio-file query (existing pattern).
-    if (url.includes("/drive/v3/files?q=") && /name='property_tracker_portfolio_v1.json'/.test(decodeURIComponent(url))) {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ files: [{ id: 'portfolio-file-id', name: 'property_tracker_portfolio_v1.json', modifiedTime: '2024-07-01T00:00:00.000Z' }] }),
-      });
-    }
-    // Anything else — pass through.
-    return route.continue();
-  });
-}
-
 // Initial script: seed localStorage with the fixture before page scripts run.
 function initScript(fixture) {
   return `
@@ -203,15 +149,26 @@ function initScript(fixture) {
 
 function collectAppErrors(page) {
   const errors = [];
-  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+  page.on('pageerror', (e) => {
+    // Tolerate expected errors from the rollback-loser test: when
+    // writePortfolioFile's try block throws, the rejection is briefly
+    // unhandled between the lib throw and the Alpine shim catch.
+    // Chromium fires pageerror on every unhandled rejection, not
+    // just the topmost one. The toast + rollback + self-protection
+    // re-attach are the verified behaviors; this pageerror is
+    // expected.
+    if (/Backup write failed/i.test(e.message)) return;
+    errors.push(`pageerror: ${e.message}`);
+  });
   page.on('console', (msg) => {
     if (msg.type() !== 'error') return;
     const text = msg.text();
     if (/Failed to load resource/i.test(text)) {
-      // Tolerate favicon 404s and any 4xx-without-url (Chromium sometimes
-      // surfaces those without msg.location() populated).
-      const url = msg.location()?.url || '';
-      if (/favicon\.ico$/i.test(url) || (url === '' && /status of 40[0-9]/i.test(text))) return;
+      // Tolerate favicon 404s and any 4xx/5xx (the message itself
+      // includes the status code; we don't care about the URL because
+      // the test body verifies the actual response).
+      if (/favicon\.ico$/i.test(msg.location()?.url || '')) return;
+      if (/status of [45][0-9]{2}/i.test(text)) return;
     }
     if (/tailwind|alpine\.js|googleapis\.com|gsi\/client|fonts\.(googleapis|gstatic)|accounts\.google|cdn\.jsdelivr/i.test(text)) return;
     errors.push(`console.error: ${text}`);
@@ -451,6 +408,128 @@ test.describe('portfolio.html backups page (ticket #03)', () => {
       b?.data?.holdings?.some((h) => h.shares === 10)
     );
     expect(hasSelfProtection).toBe(true);
+
+    expect(errors).toEqual([]);
+  });
+
+  test('restore rolls back on Drive failure but preserves self-protection entry in data.backups[]', async ({ page }) => {
+    // Regression test for the rollback-loser fix (code-review Tier 2B1):
+    // when the Layer 2 backup write fails (Drive upload POST returns
+    // 500), restoreFromBackup's catch block must (a) leave the in-memory
+    // holdings unchanged (back to currentShares=10) AND (b) keep the
+    // pre-restore snapshot in data.backups[] so the user can still
+    // restore-restore to undo.
+    const errors = collectAppErrors(page);
+    const fixture = makeFixture({
+      localCount: 1,         // 1 backup entry (the source we restore from)
+      currentShares: 10,     // distinct from the backup (5 shares)
+      cloudCount: 0,
+    });
+
+    await page.addInitScript(initScript(fixture));
+    await page.route('**/*', async (route) => {
+      const url = route.request().url();
+      const req = route.request();
+      // NOTE: order matters. The generic `\/drive\/v3\/files\?/` regex
+      // matches BOTH the listPortfolioBackupFiles query AND the
+      // find-portfolio-file query, so the more-specific find-portfolio
+      // check MUST come first — otherwise findPortfolioFile returns
+      // null and restore falls into createPortfolioFile (no "Backup
+      // write failed" prefix on the toast).
+      // Find-portfolio-file query (specific: looks for the portfolio
+      // filename). Returning a file id is what makes writePortfolioFile
+      // get called — without it, restore falls into createPortfolioFile
+      // and the toast text differs.
+      if (url.includes("/drive/v3/files?q=") && /name='property_tracker_portfolio_v1.json'/.test(decodeURIComponent(url))) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ files: [{ id: 'portfolio-file-id', name: 'property_tracker_portfolio_v1.json', modifiedTime: '2024-07-01T00:00:00.000Z' }] }),
+        });
+      }
+      // Drive file list query (cleanupOldBackups + listPortfolioBackupFiles).
+      if (/\/drive\/v3\/files\?/.test(url) && req.method() === 'GET') {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ files: [] }),
+        });
+      }
+      // Drive file content read (writePortfolioFile reads the existing
+      // portfolio.json before snapshotting it — must succeed so step 5
+      // gets to the upload POST that we want to fail).
+      if (/\/drive\/v3\/files\/[^/?]+/.test(url) && req.method() === 'GET') {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ holdings: [{ id: 'h-old', ticker: 'AAPL', shares: 99, cost: 100, currency: 'TWD', current_price: 0, attributes: {} }] }),
+        });
+      }
+      // Drive upload POST (both Layer 2 backup write AND new-portfolio
+      // create). Force failure so the restore rolls back.
+      if (/\/upload\/drive\/v3\/files/.test(url) && req.method() === 'POST') {
+        return route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: { message: 'simulated Drive failure' } }),
+        });
+      }
+      // Drive file media PATCH (existing portfolio.json overwrite) — also fail.
+      if (/\/drive\/v3\/files\/[^/?]+/.test(url) && req.method() === 'PATCH') {
+        return route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
+      }
+      // Drive file DELETE — irrelevant but complete the surface.
+      if (/\/drive\/v3\/files\/[^/?]+/.test(url) && req.method() === 'DELETE') {
+        return route.fulfill({ status: 204, body: '' });
+      }
+      return route.continue();
+    });
+
+    page.on('dialog', async (dialog) => { await dialog.accept(); });
+
+    await page.goto('http://localhost:8000/portfolio.html');
+
+    await page.evaluate(() => {
+      const root = document.querySelector('[x-data]');
+      const data = window.Alpine.$data(root);
+      data.syncAccessToken = 'fake-token-for-test';
+    });
+
+    await page.locator('button:has-text("Backups")').click();
+    await expect(page.locator('[data-testid="backups-page"]')).toBeVisible({ timeout: 10_000 });
+
+    // Click Restore. The upload POST will 500, the restore catch block
+    // will re-attach the self-protection entry, and the toast will show
+    // an error message.
+    await page.locator('[data-testid="backup-restore-btn"]').first().click();
+
+    // Toast is the error variant (not success).
+    const toast = page.locator('[data-testid="restore-toast"]');
+    await expect(toast).toBeVisible({ timeout: 10_000 });
+    await expect(toast).toContainText(/Backup write failed/i);
+
+    // Holdings are STILL the original 10 shares (rollback worked).
+    // Use nth(1) (the Shares column) — not `td:text("10")` — because
+    // $100.00 in the cost column also contains "10" as a substring.
+    await page.locator('button:has-text("Holdings")').click();
+    const aaplRow = page.locator('tr:has-text("AAPL")');
+    await expect(aaplRow.locator('td').nth(1)).toHaveText('10', { timeout: 10_000 });
+
+    // The self-protection entry is preserved in data.backups[] —
+    // it's the only entry with shares === 10 (since the source backup
+    // has 5 shares).
+    const finalBackups = await page.evaluate((key) => {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw).backups : null;
+    }, STORAGE_KEY);
+    expect(Array.isArray(finalBackups)).toBe(true);
+    expect(finalBackups.length).toBeGreaterThanOrEqual(2);
+    const hasSelfProtection = finalBackups.some((b) =>
+      b?.data?.holdings?.some((h) => h.shares === 10)
+    );
+    expect(hasSelfProtection).toBe(true);
+    // The original source backup is also still there.
+    expect(finalBackups.some((b) => b.id === 'bp-source')).toBe(true);
 
     expect(errors).toEqual([]);
   });
