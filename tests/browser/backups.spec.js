@@ -609,4 +609,95 @@ test.describe('portfolio.html backups page (ticket #03)', () => {
 
     expect(errors).toEqual([]);
   });
+
+  // Regression — deleting a record pushes a local backup. The user
+  // reported: "after deleting cash data, the local backups list still
+  // shows blank". Root cause investigation: _removeRecord mutates
+  // data.cash_accounts/data.deletions, the deep watcher fires save()
+  // which hashes the new state. If the hash differs from the last
+  // push, pushBackup grows data.backups[]. The dedup _lastBackupHash
+  // guard skips when the state hash matches the previous push.
+  //
+  // This test pins that:
+  //   1. Starting from a fixture with one cash + empty data.backups,
+  //      the load-time save() pushes the initial backup (backups=1).
+  //   2. removeCash(id) mutates data.cash_accounts + data.deletions
+  //      — different state hash → second push (backups=2).
+  //   3. data.backups[1].data has cash_accounts=[] and one deletion
+  //      (the snapshot of the post-delete state).
+  test('local backups list grows when a cash account is deleted (regression: post-delete backup was missing)', async ({ page }) => {
+    const fixture = makeFixture({ localCount: 0, cloudCount: 0, includeSourceBackup: false });
+    fixture.cash_accounts = [{ id: 'cash-1', name: 'Checking', balance: 1000, currency: 'TWD', attributes: {} }];
+
+    page.on('route', async (route) => {
+      const url = route.request().url();
+      if (HOSTS.some((h) => url.includes(h))) {
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ files: [] }) });
+      }
+      return route.continue();
+    });
+
+    page.on('dialog', async (dialog) => { await dialog.accept(); });
+
+    await page.addInitScript(initScript(fixture));
+    await page.goto('http://localhost:8000/portfolio.html');
+
+    // load() does not auto-save — no watcher fires until data mutates.
+    // So backups.length is 0 right after load. The delete below must
+    // trigger the watcher → save → pushBackup chain and grow backups.
+    const before = await page.evaluate((key) => {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw).backups.length : -1;
+    }, STORAGE_KEY);
+    expect(before).toBe(0);
+
+    // Delete the cash account via the shim (same path the delete
+    // button uses). The confirm dialog is auto-accepted above.
+    await page.evaluate(() => {
+      const root = document.querySelector('[x-data]');
+      const data = window.Alpine.$data(root);
+      data.removeCash('cash-1');
+    });
+
+    // Wait for the watcher → save → pushBackup chain. pushBackup is
+    // synchronous; the watcher is debounced microtasks by Alpine.
+    await page.waitForFunction(
+      () => {
+        const raw = localStorage.getItem('property_tracker_portfolio_v1');
+        if (!raw) return false;
+        const data = JSON.parse(raw);
+        return data.backups.length >= 1;
+      },
+      { timeout: 5000 }
+    );
+
+    const final = await page.evaluate((key) => {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    }, STORAGE_KEY);
+
+    // The deletion produced a new backup entry (backups went 0 → 1).
+    expect(final.backups.length).toBe(1);
+
+    // First, the user-visible symptom: after the delete, the Backups
+    // page should render 1 local-backup row (was 0 — empty state).
+    await page.locator('button:has-text("Backups")').click();
+    await expect(page.locator('[data-testid="backups-page"]')).toBeVisible({ timeout: 5000 });
+    const localRows = page.locator('[data-testid="local-backups"] [data-testid="backup-row"]');
+    await expect(localRows).toHaveCount(1, { timeout: 5000 });
+
+    // Then the diagnostic: the new entry must be a properly-formed
+    // ENTRY (id + saved_at + data envelope), not a raw snapshot.
+    // The Backups page row binds :key="b.id" and renders b.saved_at;
+    // raw snapshots lack both fields, which is why the row doesn't
+    // render at all. The self-protection path at portfolio.html:2107
+    // already documents this exact pitfall.
+    const latest = final.backups[final.backups.length - 1];
+    expect(latest.id).toBeTruthy();
+    expect(latest.saved_at).toBeTruthy();
+    expect(latest.data).toBeDefined();
+    expect(latest.data.cash_accounts).toEqual([]);
+    expect(latest.data.deletions.length).toBe(1);
+    expect(latest.data.deletions[0].target_id).toBe('cash-1');
+  });
 });

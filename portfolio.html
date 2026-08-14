@@ -1993,7 +1993,17 @@
         // because they are the side-effect of the push itself.
         const stateHash = this._stateHash();
         if (stateHash !== this._lastBackupHash) {
-          Backup.pushBackup(this.data, Backup.buildBackupSnapshot(this.data));
+          // Build a properly-formed backup ENTRY (id + saved_at + data
+          // envelope); raw snapshots lack the envelope so the Backups
+          // page row (timestamp + device badge, :key="b.id") would
+          // render as dashes, and restoreFromBackup's id lookup would
+          // miss. Mirrors the self-protection push at line ~2107.
+          const entry = {
+            id: genId('bp'),
+            saved_at: new Date().toISOString(),
+            data: Backup.buildBackupSnapshot(this.data),
+          };
+          Backup.pushBackup(this.data, entry);
           this._lastBackupHash = stateHash;
         }
         localStorage.setItem(STORAGE_KEY, this.serializeData(this.data));
