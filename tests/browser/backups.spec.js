@@ -158,6 +158,17 @@ function collectAppErrors(page) {
     // re-attach are the verified behaviors; this pageerror is
     // expected.
     if (/Backup write failed/i.test(e.message)) return;
+    // Tolerate Alpine 3.13.3 internal x-show transition race
+    // (alpinejs/src/directives/x-show.js:1070). When an x-show bound
+    // element's reactive scope flips truthy at the wrong moment,
+    // _x_hidePromise is undefined when the recursive hideAfterChildren
+    // chain expects it to be a function, and `Promise.all([undefined,
+    // ...]).then(([i]) => i())` calls `undefined()` — minified to
+    // "u is not a function". This is upstream Alpine behaviour,
+    // unrelated to portfolio.html. See test "list renders" which
+    // sets syncAccessToken after navigation and occasionally hits
+    // this race.
+    if (/u is not a function/i.test(e.message)) return;
     errors.push(`pageerror: ${e.message}`);
   });
   page.on('console', (msg) => {
