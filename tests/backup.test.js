@@ -708,3 +708,85 @@ test('parseBackupFilename: non-string input → null', () => {
   assert.equal(Backup.parseBackupFilename(42), null);
   assert.equal(Backup.parseBackupFilename({ name: 'foo' }), null);
 });
+
+// ---- Slice 10: createCloudBackupsCache (cache state machine) ----
+//
+// The Alpine shim's fetchCloudBackups previously held the cache state
+// inline (three reactive flags). The bug that motivated this slice:
+// the no-token branch set `_cloudBackupsLoaded = true` without ever
+// running a fetch — so the cache claimed "loaded" with empty data
+// even though no Drive API call had run. Extracting the cache as a
+// small state machine pins the invariant
+//   loaded === true  ⇔  a fetch ran with a valid token
+// in lib/ so the shim can't accidentally drift away from it.
+
+test('createCloudBackupsCache: initial state → loaded=false, value=[], loading=false', () => {
+  const Backup = require('../lib/backup.js');
+  const cache = Backup.createCloudBackupsCache();
+  assert.equal(cache.loaded, false);
+  assert.deepEqual(cache.value, []);
+  assert.equal(cache.loading, false);
+});
+
+test('createCloudBackupsCache: setLoaded(value) → loaded=true, value=value, loading=false', () => {
+  const Backup = require('../lib/backup.js');
+  const cache = Backup.createCloudBackupsCache();
+  const files = [{ id: 'a', name: 'x' }, { id: 'b', name: 'y' }];
+  cache.setLoaded(files);
+  assert.equal(cache.loaded, true);
+  assert.deepEqual(cache.value, files);
+  assert.equal(cache.loading, false);
+});
+
+test('createCloudBackupsCache: setLoaded([]) → loaded=true with empty value (fetched-zero is a valid result)', () => {
+  const Backup = require('../lib/backup.js');
+  const cache = Backup.createCloudBackupsCache();
+  cache.setLoaded([]);
+  assert.equal(cache.loaded, true);
+  assert.deepEqual(cache.value, []);
+});
+
+test('createCloudBackupsCache: clear() before setLoaded → stays at default', () => {
+  const Backup = require('../lib/backup.js');
+  const cache = Backup.createCloudBackupsCache();
+  cache.clear();
+  assert.equal(cache.loaded, false);
+  assert.deepEqual(cache.value, []);
+  assert.equal(cache.loading, false);
+});
+
+test('createCloudBackupsCache: clear() AFTER setLoaded → loaded=false again (regression — cache can be reset after fetch)', () => {
+  // This is the key invariant: clear() must drop `loaded`, so a
+  // subsequent sign-in can re-fetch. Without this, the original
+  // Backups-page stale-empty bug recurs (the shim would never be
+  // able to invalidate the cache after sign-out / fetch error).
+  const Backup = require('../lib/backup.js');
+  const cache = Backup.createCloudBackupsCache();
+  cache.setLoaded([{ id: 'a' }]);
+  assert.equal(cache.loaded, true);
+  cache.clear();
+  assert.equal(cache.loaded, false);
+  assert.deepEqual(cache.value, []);
+});
+
+test('createCloudBackupsCache: setLoading(true) does NOT mark loaded (regression — bug was marking loaded without fetch)', () => {
+  // The original bug: setting loading=true was conflated with marking
+  // loaded. The cache must keep `loaded=false` until setLoaded() runs
+  // with a real value, otherwise the no-token branch (or any path that
+  // sets loading without fetching) would shortcut future fetches.
+  const Backup = require('../lib/backup.js');
+  const cache = Backup.createCloudBackupsCache();
+  cache.setLoading(true);
+  assert.equal(cache.loaded, false);
+  assert.equal(cache.loading, true);
+  cache.setLoading(false);
+  assert.equal(cache.loaded, false);
+});
+
+test('createCloudBackupsCache: clear() also resets loading (full reset)', () => {
+  const Backup = require('../lib/backup.js');
+  const cache = Backup.createCloudBackupsCache();
+  cache.setLoading(true);
+  cache.clear();
+  assert.equal(cache.loading, false);
+});

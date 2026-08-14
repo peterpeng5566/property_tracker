@@ -1436,15 +1436,17 @@
 
       // Backups page state (v1.3 — ticket #03, ADR 0012).
       // _cloudBackups: [{id, name, modifiedTime, saved_at, device_id}]
-      //   mapped from the listPortfolioBackupFiles response. _cloudBackupsLoaded
-      //   gates a refetch; the result is cached for the lifetime of the page
-      //   to avoid re-listing the entire Drive folder on each re-render.
+      //   mapped from the listPortfolioBackupFiles response. The cache
+      //   state machine (loaded/value/loading) lives in _backupCache
+      //   (a lib factory, see lib/backup.js#createCloudBackupsCache);
+      //   _cloudBackups/_cloudBackupsLoading mirror cache.value/loading
+      //   so Alpine templates stay reactive.
       // _restoreToast: transient message shown after a restore attempt.
       // _restoreToastVariant: 'success' or 'error' (sets the color).
       // _toastTimer: setTimeout handle for clearing the toast.
       _cloudBackups: [],
       _cloudBackupsLoading: false,
-      _cloudBackupsLoaded: false,
+      _backupCache: null,        // initialized in init() via Backup.createCloudBackupsCache()
       _restoreToast: null,
       _restoreToastVariant: 'success',
       _toastTimer: null,
@@ -1462,6 +1464,7 @@
         this.syncClientId = localStorage.getItem('property_tracker_sync_client_id') || '';
         this.syncClientIdDraft = this.syncClientId;
         this.autoSyncEnabled = localStorage.getItem('property_tracker_auto_sync') !== 'false';
+        this._backupCache = Backup.createCloudBackupsCache();
         this.$watch('data', () => {
           this.save();
           // Skip auto-push if the change came from our own sync (within 100ms).
@@ -2019,22 +2022,25 @@
       // Backup.restoreFromBackup / restoreFromSnapshot (see lib/backup.js).
       async fetchCloudBackups() {
         // Re-fetch from Drive only when the page is mounted and the
-        // user is signed in. The result is cached in _cloudBackups so
-        // re-renders don't re-list the folder on every dependency
-        // change. Returns silently on failure (offline, no token, etc.)
-        // — the empty state handles the user-visible messaging.
+        // user is signed in. The result is cached so re-renders don't
+        // re-list the folder on every dependency change. Returns
+        // silently on failure (offline, no token, etc.) — the empty
+        // state handles the user-visible messaging.
         //
-        // Cache invariant: _cloudBackupsLoaded is only set to true
-        // AFTER a fetch actually ran (with a token). When there is no
-        // token, we leave the cache invalid so the next sign-in triggers
-        // a fresh fetch — otherwise navigating to Backups before
-        // connecting would stash "loaded with empty" and the cache
-        // guard would short-circuit the fetch after sign-in.
+        // Cache state lives in Backup.createCloudBackupsCache()
+        // (lib/backup.js). The invariant
+        //   loaded === true  ⇔  a fetch ran with a valid token
+        // is enforced by the cache API: setLoaded() is only called
+        // after a successful fetch, and clear() resets `loaded` to
+        // false so the next sign-in triggers a fresh fetch.
         if (!this.syncAccessToken) {
-          this._cloudBackups = [];
+          this._backupCache.clear();
+          this._cloudBackups = this._backupCache.value;
+          this._cloudBackupsLoading = this._backupCache.loading;
           return;
         }
-        if (this._cloudBackupsLoaded) return;
+        if (this._backupCache.loaded) return;
+        this._backupCache.setLoading(true);
         this._cloudBackupsLoading = true;
         try {
           // listPortfolioBackupFiles is account-wide (ADR 0012 §6:
@@ -2043,19 +2049,22 @@
           // read it. Now it's `{fetchFn}` only.
           const fetchFn = (url, opts) => this.driveFetch(url, opts);
           const files = await Backup.listPortfolioBackupFiles({ fetchFn });
-          this._cloudBackups = files.map((f) => ({
+          const mapped = files.map((f) => ({
             ...f,
             saved_at: f.modifiedTime,
             device_id: Backup.parseBackupFilename(f.name)?.deviceId,
           }));
-          this._cloudBackupsLoaded = true;
+          this._cloudBackups = mapped;
+          this._backupCache.setLoaded(mapped);
         } catch (e) {
           // Surface the error to the console; the empty state shows
           // the user-friendly message.
           console.warn('fetchCloudBackups:', e?.message || e);
-          this._cloudBackups = [];
+          this._backupCache.clear();
+          this._cloudBackups = this._backupCache.value;
         } finally {
-          this._cloudBackupsLoading = false;
+          this._backupCache.setLoading(false);
+          this._cloudBackupsLoading = this._backupCache.loading;
         }
       },
 
@@ -2158,9 +2167,9 @@
             await this.createPortfolioFile(this.data);
           }
           // 6. Refresh the cloud backup list (the restore just added a
-          //    new Layer 2 backup). Set _cloudBackupsLoaded = false so
-          //    the next fetchCloudBackups() call actually fetches.
-          this._cloudBackupsLoaded = false;
+          //    new Layer 2 backup). Clear the cache so the next
+          //    fetchCloudBackups() call actually fetches.
+          this._backupCache.clear();
           await this.fetchCloudBackups();
           // 7. Toast.
           this._showToast(this.t('backups.toastSuccess', { time: timeStr }), 'success');
