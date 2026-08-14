@@ -1190,6 +1190,7 @@
       'backups.confirmRestore': "This will replace your current portfolio with the snapshot from {time} by {device}. The current state will be saved as a new backup. Continue?",
       'backups.toastSuccess': "Restored from {time}. Your current state was saved as a new backup.",
       'backups.toastError': 'Restore failed: {reason}',
+      'backups.toastSyncSkipped': 'Cloud sync skipped (restored locally): {reason}',
       'backups.loading': 'Loading cloud backups…',
       'backups.cloudUnavailable': 'Connect to Google Drive to see cloud backups.',
     },
@@ -1334,6 +1335,7 @@
       'backups.confirmRestore': "即將把目前的投資組合替換為 {time} 在 {device} 的快照。目前的狀態會先被儲存為一個新備份。是否繼續?",
       'backups.toastSuccess': "已還原至 {time}。原本的狀態已儲存為新備份。",
       'backups.toastError': '還原失敗:{reason}',
+      'backups.toastSyncSkipped': '雲端同步略過（本機已成功還原）：{reason}',
       'backups.loading': '讀取雲端備份中…',
       'backups.cloudUnavailable': '請連結 Google Drive 以查看雲端備份。',
     },
@@ -2170,17 +2172,44 @@
           // 5. Layer 2 push via writePortfolioFile (or create if first
           //    run). writePortfolioFile snapshots the existing Drive
           //    file BEFORE overwriting, per ticket #02.
-          const file = await this.findPortfolioFile().catch(() => null);
-          if (file && file.id) {
-            await this.writePortfolioFile(file.id, this.data);
-          } else {
-            await this.createPortfolioFile(this.data);
+          //
+          // For LOCAL restore, Drive sync is best-effort cross-device
+          // propagation, not part of the user's restore intent. If
+          // Drive push fails (no token, network, 5xx), keep the
+          // in-memory restore — the localStorage + the pre-restore
+          // snapshot in data.backups[] already satisfy ADR 0012 §3
+          // (self-protection). Surface a soft warning toast instead
+          // of rolling back.
+          //
+          // For CLOUD restore, Drive push is required for consistency
+          // (the user just fetched a backup from Drive; we must
+          // propagate the new state back). Failure rolls back.
+          let driveSyncError = null;
+          try {
+            const file = await this.findPortfolioFile().catch(() => null);
+            if (file && file.id) {
+              await this.writePortfolioFile(file.id, this.data);
+            } else {
+              await this.createPortfolioFile(this.data);
+            }
+            // 6. Refresh the cloud backup list (the restore just added a
+            //    new Layer 2 backup). Clear the cache so the next
+            //    fetchCloudBackups() call actually fetches.
+            this._backupCache.clear();
+            await this.fetchCloudBackups();
+          } catch (driveErr) {
+            driveSyncError = driveErr;
           }
-          // 6. Refresh the cloud backup list (the restore just added a
-          //    new Layer 2 backup). Clear the cache so the next
-          //    fetchCloudBackups() call actually fetches.
-          this._backupCache.clear();
-          await this.fetchCloudBackups();
+          if (driveSyncError) {
+            if (backup.source === 'local') {
+              this._showToast(
+                this.t('backups.toastSyncSkipped', { reason: driveSyncError.message }),
+                'warning'
+              );
+              return; // success — local restore already applied
+            }
+            throw driveSyncError; // cloud restore: propagate to rollback
+          }
           // 7. Toast.
           this._showToast(this.t('backups.toastSuccess', { time: timeStr }), 'success');
         } catch (e) {
@@ -2711,7 +2740,7 @@
   <div x-show="message"
        x-transition.opacity
        data-testid="restore-toast"
-       :class="variant === 'error' ? 'bg-rose-600' : 'bg-emerald-600'"
+       :class="variant === 'error' ? 'bg-rose-600' : variant === 'warning' ? 'bg-amber-500' : 'bg-emerald-600'"
        class="fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg text-white text-sm shadow-lg z-50 max-w-md"
        role="status">
     <p x-text="message"></p>

@@ -230,11 +230,28 @@ test.describe('portfolio.html backups page (ticket #03)', () => {
       if (!data) throw new Error('Alpine.$data is not available');
       data.syncAccessToken = 'fake-token-for-test';
     });
-    // Trigger a re-fetch (cached guard should be reset so we re-fetch).
+    // Trigger a re-fetch (invalidate the cache so fetchCloudBackups
+    // doesn't bail on cache.loaded === true). The cache is exposed
+    // on _backupCache after the 0f5348d refactor that moved the
+    // state machine into lib/backup.js.
     await page.evaluate(() => {
       const root = document.querySelector('[x-data]');
       const data = window.Alpine.$data(root);
-      data._cloudBackupsLoaded = false;
+      // Defensive: init() may run slightly after the page is
+      // navigable; if _backupCache isn't ready yet, wait one tick.
+      if (!data._backupCache) {
+        return new Promise((resolve) => {
+          const i = setInterval(() => {
+            if (data._backupCache) {
+              clearInterval(i);
+              data._backupCache.clear();
+              resolve(data.fetchCloudBackups());
+            }
+          }, 10);
+          setTimeout(() => { clearInterval(i); resolve(null); }, 1000);
+        });
+      }
+      data._backupCache.clear();
       return data.fetchCloudBackups();
     });
 
@@ -488,13 +505,23 @@ test.describe('portfolio.html backups page (ticket #03)', () => {
     expect(errors).toEqual([]);
   });
 
-  test('restore rolls back on Drive failure but preserves self-protection entry in data.backups[]', async ({ page }) => {
-    // Regression test for the rollback-loser fix (code-review Tier 2B1):
-    // when the Layer 2 backup write fails (Drive upload POST returns
-    // 500), restoreFromBackup's catch block must (a) leave the in-memory
-    // holdings unchanged (back to currentShares=10) AND (b) keep the
-    // pre-restore snapshot in data.backups[] so the user can still
-    // restore-restore to undo.
+  test('local restore: Drive sync failure does NOT roll back, but self-protection entry is preserved in data.backups[]', async ({ page }) => {
+    // Local restore's intent is local — Drive sync is best-effort
+    // cross-device propagation. ADR 0012 §3 (self-protection) is
+    // satisfied because step 1 already pushed a pre-restore snapshot
+    // into data.backups[] before the Drive write attempt. Drive
+    // failure on a local restore must NOT roll back the in-memory
+    // restore; it must show a soft warning toast instead.
+    //
+    // This test pins that:
+    //   1. Drive is "connected" (syncAccessToken is set) but the
+    //      Drive upload POST returns 500.
+    //   2. Holdings stay at the restored value (5 shares), NOT the
+    //      pre-restore value (10 shares).
+    //   3. Toast says "skipped", not "failed".
+    //   4. data.backups[] still contains the self-protection entry
+    //      (the pre-restore snapshot with shares===10) — code-review
+    //      Tier 2B1 invariant.
     const errors = collectAppErrors(page);
     const fixture = makeFixture({
       localCount: 1,         // 1 backup entry (the source we restore from)
@@ -542,12 +569,16 @@ test.describe('portfolio.html backups page (ticket #03)', () => {
         });
       }
       // Drive upload POST (both Layer 2 backup write AND new-portfolio
-      // create). Force failure so the restore rolls back.
+      // create). Force an error so the local-restore flow surfaces
+      // its best-effort sync-failure path (warning toast, no
+      // rollback). The error message avoids the word "failed" so
+      // the toast-text assertion (not.toContainText(/failed/i)) is
+      // meaningful.
       if (/\/upload\/drive\/v3\/files/.test(url) && req.method() === 'POST') {
         return route.fulfill({
           status: 500,
           contentType: 'application/json',
-          body: JSON.stringify({ error: { message: 'simulated Drive failure' } }),
+          body: JSON.stringify({ error: { message: 'simulated Drive error' } }),
         });
       }
       // Drive file media PATCH (existing portfolio.json overwrite) — also fail.
@@ -574,22 +605,27 @@ test.describe('portfolio.html backups page (ticket #03)', () => {
     await page.locator('button:has-text("Backups")').click();
     await expect(page.locator('[data-testid="backups-page"]')).toBeVisible({ timeout: 10_000 });
 
-    // Click Restore. The upload POST will 500, the restore catch block
-    // will re-attach the self-protection entry, and the toast will show
-    // an error message.
+    // Click Restore. The upload POST will 500, but for a LOCAL
+    // restore this must NOT roll back the in-memory restore — only
+    // a soft warning toast is surfaced.
     await page.locator('[data-testid="backup-restore-btn"]').first().click();
 
-    // Toast is the error variant (not success).
+    // Toast is the WARNING variant — says "skipped", not the rollback
+    // flow's error variant (the toast's class flips between bg-rose
+    // for error and bg-amber for warning; "failed" appears in the
+    // inner error message regardless, so check the class instead).
     const toast = page.locator('[data-testid="restore-toast"]');
     await expect(toast).toBeVisible({ timeout: 10_000 });
-    await expect(toast).toContainText(/Backup write failed/i);
+    await expect(toast).toContainText(/skipped/i);
+    await expect(toast).toHaveClass(/bg-amber-500/);
 
-    // Holdings are STILL the original 10 shares (rollback worked).
-    // Use nth(1) (the Shares column) — not `td:text("10")` — because
-    // $100.00 in the cost column also contains "10" as a substring.
+    // Holdings stay at the RESTORED state (5 shares), not the pre-
+    // restore state (10 shares). Use nth(1) (Shares column) — not
+    // `td:text("5")` — because $500.00 in the cost column also
+    // contains "5" as a substring.
     await page.locator('button:has-text("Holdings")').click();
     const aaplRow = page.locator('tr:has-text("AAPL")');
-    await expect(aaplRow.locator('td').nth(1)).toHaveText('10', { timeout: 10_000 });
+    await expect(aaplRow.locator('td').nth(1)).toHaveText('5', { timeout: 10_000 });
 
     // The self-protection entry is preserved in data.backups[] —
     // it's the only entry with shares === 10 (since the source backup
@@ -861,5 +897,96 @@ test.describe('portfolio.html backups page (ticket #03)', () => {
     expect(latest.id).toBeTruthy();
     expect(latest.saved_at).toBeTruthy();
     expect(latest.data.cash_accounts[0].balance).toBe(2500);
+  });
+
+  // Regression — local restore must not require Google Drive.
+  // User reported: clicking Restore on a local backup shows
+  // "Restore failed: Not connected to Google Drive" even though the
+  // user wasn't trying to sync to Drive. Root cause: restoreFromBackup
+  // step 5 unconditionally calls findPortfolioFile/createPortfolioFile
+  // to push the restored state to Drive; when no token is present,
+  // createPortfolioFile throws and the catch block rolls back the
+  // in-memory restore, then surfaces a misleading toast.
+  //
+  // Local restore's intent is local — Drive is best-effort
+  // cross-device propagation. ADR 0012 §3 (self-protection) is
+  // satisfied because step 1 already pushed a pre-restore snapshot
+  // into data.backups[] regardless of Drive. Therefore Drive sync
+  // failure on a local restore should NOT roll back; it should show
+  // a soft warning toast and return success.
+  test('local restore succeeds without Drive (regression: misleading "Not connected" toast rolled back the restore)', async ({ page }) => {
+    const errors = collectAppErrors(page);
+    // Start with 1 source backup (shares=5) + current state shares=10.
+    // The source must be a PROPER entry so restoreFromBackup's id
+    // lookup finds it (raw-snapshot entries would never restore).
+    const fixture = makeFixture({
+      localCount: 1,
+      currentShares: 10,
+      cloudCount: 0,
+    });
+
+    page.on('route', async (route) => {
+      const url = route.request().url();
+      // No Drive mock — every Drive call would 404. Importantly we
+      // do NOT set syncAccessToken, so driveFetch throws "Not
+      // connected to Google Drive" on any Drive call.
+      if (HOSTS.some((h) => url.includes(h))) {
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ files: [] }) });
+      }
+      return route.continue();
+    });
+
+    page.on('dialog', async (dialog) => { await dialog.accept(); });
+
+    await page.addInitScript(initScript(fixture));
+    await page.goto('http://localhost:8000/portfolio.html');
+
+    // Confirm the user is NOT signed in to Drive.
+    const isConnected = await page.evaluate(() => {
+      const root = document.querySelector('[x-data]');
+      const data = window.Alpine.$data(root);
+      return !!data.syncAccessToken;
+    });
+    expect(isConnected).toBe(false);
+
+    await page.locator('button:has-text("Backups")').click();
+    await expect(page.locator('[data-testid="backups-page"]')).toBeVisible({ timeout: 10_000 });
+
+    // Click Restore on the first local backup.
+    await page.locator('[data-testid="backup-restore-btn"]').first().click();
+
+    // Toast is the WARNING variant — says "skipped", not "failed".
+    const toast = page.locator('[data-testid="restore-toast"]');
+    await expect(toast).toBeVisible({ timeout: 10_000 });
+    await expect(toast).toContainText(/skipped/i);
+    await expect(toast).not.toContainText(/failed/i);
+
+    // Holdings are now the BACKUP state (5 shares), not the rolled-
+    // back current state (10 shares). Use nth(1) (Shares column) —
+    // not `td:text("5")` — because $500.00 in the cost column also
+    // contains "5" as a substring.
+    await page.locator('button:has-text("Holdings")').click();
+    const aaplRow = page.locator('tr:has-text("AAPL")');
+    await expect(aaplRow.locator('td').nth(1)).toHaveText('5', { timeout: 10_000 });
+
+    // localStorage reflects the restored state (5 shares).
+    const finalBackups = await page.evaluate((key) => {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    }, STORAGE_KEY);
+    expect(finalBackups).not.toBeNull();
+    expect(finalBackups.holdings[0].shares).toBe(5);
+
+    // Self-protection entry is still present (the pre-restore
+    // snapshot of 10 shares — the only entry with shares===10 in
+    // data.backups[] now).
+    expect(Array.isArray(finalBackups.backups)).toBe(true);
+    expect(finalBackups.backups.length).toBeGreaterThanOrEqual(2);
+    const hasSelfProtection = finalBackups.backups.some((b) =>
+      b?.data?.holdings?.some((h) => h.shares === 10)
+    );
+    expect(hasSelfProtection).toBe(true);
+
+    expect(errors).toEqual([]);
   });
 });
