@@ -679,7 +679,7 @@
               x-text="t('backups.localHeading')"></h3>
 
           <ul data-testid="local-backups" class="space-y-2">
-            <template x-for="b in data.backups" :key="b.id">
+            <template x-for="(b, index) in data.backups" :key="b.id ?? index">
               <li data-testid="backup-row"
                   class="flex items-center justify-between gap-3 border border-slate-100 rounded-lg px-3 py-2 hover:bg-slate-50">
                 <div class="flex items-center gap-2 flex-wrap min-w-0">

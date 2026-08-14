@@ -700,4 +700,166 @@ test.describe('portfolio.html backups page (ticket #03)', () => {
     expect(latest.data.deletions.length).toBe(1);
     expect(latest.data.deletions[0].target_id).toBe('cash-1');
   });
+
+  // Regression — modifying a cash field pushes a local backup.
+  // User follow-up: "修改cash 欄位，一樣Local backups 還是空白".
+  // Same pattern as the delete test, but for the EDIT path: saveCash
+  // mutates an array element (this.data.cash_accounts[idx] = record).
+  // The deep watcher must fire; state hash must differ; pushBackup
+  // must wrap in {id, saved_at, data} envelope.
+  test('local backups list grows when a cash account is modified (regression: post-edit backup was missing)', async ({ page }) => {
+    const fixture = makeFixture({ localCount: 0, cloudCount: 0, includeSourceBackup: false });
+    fixture.cash_accounts = [{
+      id: 'cash-1', name: 'Checking', balance: 1000, currency: 'TWD', attributes: {},
+      updated_at: '2024-06-01T00:00:00.000Z', device_id: 'smoke-test-device', inactive: false,
+    }];
+
+    page.on('route', async (route) => {
+      const url = route.request().url();
+      if (HOSTS.some((h) => url.includes(h))) {
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ files: [] }) });
+      }
+      return route.continue();
+    });
+
+    page.on('dialog', async (dialog) => { await dialog.accept(); });
+
+    await page.addInitScript(initScript(fixture));
+    await page.goto('http://localhost:8000/portfolio.html');
+
+    // Simulate the edit path: open edit modal, set form, submit. The
+    // shim's saveCash() does
+    //   this.data.cash_accounts[idx] = record
+    // — an array-element replacement. This is the path that the user
+    // hit; we exercise it via the shim directly.
+    await page.evaluate(() => {
+      const root = document.querySelector('[x-data]');
+      const data = window.Alpine.$data(root);
+      data.editingCash = data.data.cash_accounts[0];
+      data.cashForm = {
+        name: 'Checking (edited)',
+        balance: 2500,
+        currency: 'TWD',
+        attributes: {},
+      };
+      data.saveCash();
+    });
+
+    // Wait for watcher → save → pushBackup.
+    await page.waitForFunction(
+      () => {
+        const raw = localStorage.getItem('property_tracker_portfolio_v1');
+        if (!raw) return false;
+        const d = JSON.parse(raw);
+        return d.backups.length >= 1;
+      },
+      { timeout: 5000 }
+    );
+
+    const final = await page.evaluate((key) => {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    }, STORAGE_KEY);
+
+    expect(final.backups.length).toBe(1);
+    const latest = final.backups[final.backups.length - 1];
+    expect(latest.id).toBeTruthy();
+    expect(latest.saved_at).toBeTruthy();
+    expect(latest.data).toBeDefined();
+    // The edit landed: balance 2500, name 'Checking (edited)'.
+    expect(latest.data.cash_accounts[0].balance).toBe(2500);
+    expect(latest.data.cash_accounts[0].name).toBe('Checking (edited)');
+
+    // The Backups page should render 1 row.
+    await page.locator('button:has-text("Backups")').click();
+    await expect(page.locator('[data-testid="backups-page"]')).toBeVisible({ timeout: 5000 });
+    const localRows = page.locator('[data-testid="local-backups"] [data-testid="backup-row"]');
+    await expect(localRows).toHaveCount(1, { timeout: 5000 });
+  });
+
+  // Regression — old raw-snapshot backups (pushed by the pre-fix save()
+  // that passed buildBackupSnapshot() directly to pushBackup) must not
+  // break the Backups page render. The user's exported portfolio.json
+  // contained 3 raw snapshots + 1 proper entry. The :key="b.id" binding
+  // collides for the raw entries (all have undefined id), which Alpine
+  // handles by failing to render them. User symptom: list looks blank
+  // or near-blank after migrating to the fixed code, even though a new
+  // proper backup is being pushed.
+  //
+  // This test verifies that:
+  //   1. Pre-existing raw snapshots are rendered as rows (even if with
+  //      dash placeholders for missing id/saved_at), AND
+  //   2. After a new push, the page still shows all 4 rows (3 raw + 1
+  //      new proper).
+  test('legacy raw-snapshot entries still render in the Backups list (regression: :key collision hid rows)', async ({ page }) => {
+    const fixture = makeFixture({ localCount: 0, cloudCount: 0, includeSourceBackup: false });
+    fixture.cash_accounts = [{
+      id: 'cash-1', name: 'Checking', balance: 1000, currency: 'TWD', attributes: {},
+      updated_at: '2024-06-01T00:00:00.000Z', device_id: 'smoke-test-device', inactive: false,
+    }];
+    // Simulate the user's mixed state: 3 raw-snapshot entries (the
+    // shape produced by the buggy pre-fix save()) + 1 proper entry
+    // (pushed by the fixed code after they tested).
+    fixture.backups = [
+      // raw snapshots — no id, no saved_at, no data envelope; the
+      // body is just the snapshot shape ({holdings, cash_accounts,
+      // ..., backups: {count, oldest_saved_at, newest_saved_at}}).
+      { holdings: [], cash_accounts: [], debts: [], snapshots: [], meta: fixture.meta, settings: fixture.settings, categories: [], deletions: [], backups: { count: 0, oldest_saved_at: null, newest_saved_at: null } },
+      { holdings: [], cash_accounts: [{ id: 'cash-old', name: 'Old', balance: 1, currency: 'TWD' }], debts: [], snapshots: [], meta: fixture.meta, settings: fixture.settings, categories: [], deletions: [], backups: { count: 0, oldest_saved_at: null, newest_saved_at: null } },
+      { holdings: [], cash_accounts: [{ id: 'cash-old', name: 'Old', balance: 2, currency: 'TWD' }], debts: [], snapshots: [], meta: fixture.meta, settings: fixture.settings, categories: [], deletions: [], backups: { count: 0, oldest_saved_at: null, newest_saved_at: null } },
+    ];
+
+    page.on('route', async (route) => {
+      const url = route.request().url();
+      if (HOSTS.some((h) => url.includes(h))) {
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ files: [] }) });
+      }
+      return route.continue();
+    });
+
+    page.on('dialog', async (dialog) => { await dialog.accept(); });
+
+    await page.addInitScript(initScript(fixture));
+    await page.goto('http://localhost:8000/portfolio.html');
+
+    // Go to Backups. With the pre-existing 3 raw entries, the list
+    // should still render 3 rows (with dash placeholders for missing
+    // fields) — not 0 due to a :key collision.
+    await page.locator('button:has-text("Backups")').click();
+    await expect(page.locator('[data-testid="backups-page"]')).toBeVisible({ timeout: 5000 });
+    const localRows = page.locator('[data-testid="local-backups"] [data-testid="backup-row"]');
+    await expect(localRows).toHaveCount(3, { timeout: 5000 });
+
+    // Now modify a cash field; the post-fix save() should push a new
+    // proper entry (total 4 rows).
+    await page.evaluate(() => {
+      const root = document.querySelector('[x-data]');
+      const data = window.Alpine.$data(root);
+      data.editingCash = data.data.cash_accounts[0];
+      data.cashForm = { name: 'Checking (edited)', balance: 2500, currency: 'TWD', attributes: {} };
+      data.saveCash();
+    });
+
+    await page.waitForFunction(
+      () => {
+        const raw = localStorage.getItem('property_tracker_portfolio_v1');
+        if (!raw) return false;
+        return JSON.parse(raw).backups.length >= 4;
+      },
+      { timeout: 5000 }
+    );
+
+    // All 4 rows render (3 raw + 1 new proper).
+    await expect(localRows).toHaveCount(4, { timeout: 5000 });
+
+    // The latest entry is a proper envelope.
+    const final = await page.evaluate((key) => {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    }, STORAGE_KEY);
+    const latest = final.backups[final.backups.length - 1];
+    expect(latest.id).toBeTruthy();
+    expect(latest.saved_at).toBeTruthy();
+    expect(latest.data.cash_accounts[0].balance).toBe(2500);
+  });
 });
