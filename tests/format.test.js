@@ -146,3 +146,44 @@ test('Round-trip TWD → USD → TWD is identity', () => {
   const twd = fromTWD(toTWD(usd, 'USD', FX), 'TWD', FX);
   assert.ok(Math.abs(twd - amount) < 1e-9, `expected ${amount}, got ${twd}`);
 });
+// ---------------------------------------------------------------------------
+// v1.5 ticket 04 — deltaPercent helper
+// (see .scratch/v1.5-snapshot-ui/issues/04-compare-two-snapshots.md)
+// ---------------------------------------------------------------------------
+// Rules (Q2 = A):
+//   - denom === 0 OR non-finite numerator → '—' (honest signal, no fake ∞)
+//   - sign matches num: '+X.X%' when num ≥ 0, '-X.X%' when num < 0
+//   - 1 decimal place
+
+const { deltaPercent } = require('../lib/format.js');
+
+test('deltaPercent: positive delta with non-zero denom → "+X.X%"', () => {
+  assert.equal(deltaPercent(5, 100), '+5.0%');
+  assert.equal(deltaPercent(123456, 2370000), '+5.2%');
+});
+
+test('deltaPercent: negative delta → "-X.X%"', () => {
+  assert.equal(deltaPercent(-5, 100), '-5.0%');
+  assert.equal(deltaPercent(-50, 100), '-50.0%');
+});
+
+test('deltaPercent: zero delta → "+0.0%"', () => {
+  assert.equal(deltaPercent(0, 100), '+0.0%');
+});
+
+test('deltaPercent: denom === 0 → "—" (honest signal)', () => {
+  assert.equal(deltaPercent(5, 0), '—');
+  assert.equal(deltaPercent(0, 0), '—');
+  assert.equal(deltaPercent(-5, 0), '—');
+});
+
+test('deltaPercent: non-finite numerator → "—"', () => {
+  assert.equal(deltaPercent(NaN, 100), '—');
+  assert.equal(deltaPercent(Infinity, 100), '—');
+  assert.equal(deltaPercent(-Infinity, 100), '—');
+});
+
+test('deltaPercent: non-finite denominator → "—"', () => {
+  assert.equal(deltaPercent(5, NaN), '—');
+  assert.equal(deltaPercent(5, Infinity), '—');
+});

@@ -335,6 +335,58 @@ test('computeDelta: holding absent from prev → not in perHolding', () => {
   assert.equal(d.perHolding.b, undefined);
 });
 
+// --- v1.5 ticket 04: computeDelta must expose all 5 totals deltas
+// (Q1 = A: pure helper is the source of truth; UI is a thin shim) ---
+
+test('computeDelta: returns all 5 totals deltas (value, cost, gainLoss, cash, debts)', () => {
+  const prev = {
+    holdings: [H('a', { shares: 10, current_price: 100, currency: 'TWD' })],
+    cash_accounts: [C('c1', { balance: 500, currency: 'TWD' })],
+    debts: [C('d1', { balance: 1000, currency: 'TWD' })],
+    totals: {
+      holdingsValue: 1000, holdingsCost: 800, holdingsGainLoss: 200,
+      totalCash: 500, totalDebts: 1000, netWorth: 500,
+    },
+  };
+  const cur = {
+    holdings: [H('a', { shares: 10, current_price: 110, currency: 'TWD' })],
+    cash_accounts: [C('c1', { balance: 800, currency: 'TWD' })],
+    debts: [C('d1', { balance: 600, currency: 'TWD' })],
+    totals: {
+      holdingsValue: 1100, holdingsCost: 800, holdingsGainLoss: 300,
+      totalCash: 800, totalDebts: 600, netWorth: 1300,
+    },
+  };
+  const d = computeDelta(prev, cur);
+  assert.equal(d.holdingsValue, 100);     // 1100 - 1000
+  assert.equal(d.holdingsCost, 0);        // 800 - 800
+  assert.equal(d.holdingsGainLoss, 100);  // 300 - 200
+  assert.equal(d.totalCash, 300);         // 800 - 500
+  assert.equal(d.totalDebts, -400);       // 600 - 1000
+  assert.equal(d.netWorth, 800);          // 1300 - 500
+});
+
+test('computeDelta: new totals fields are independent of perHolding (missing price doesn\'t zero totals)', () => {
+  // Inline holdings (don't use H helper, which coerces null → 0).
+  const nullPriceHolding = { id: 'a', shares: 10, cost: 1000, currency: 'TWD', current_price: null, attributes: {} };
+  const prev = {
+    holdings: [nullPriceHolding],
+    cash_accounts: [C('c1', { balance: 500, currency: 'TWD' })],
+    debts: [],
+    totals: { holdingsValue: 0, holdingsCost: 1000, totalCash: 500, totalDebts: 0, netWorth: 500 },
+  };
+  const cur = {
+    holdings: [{ ...nullPriceHolding }],
+    cash_accounts: [C('c1', { balance: 800, currency: 'TWD' })],
+    debts: [],
+    totals: { holdingsValue: 0, holdingsCost: 1000, totalCash: 800, totalDebts: 0, netWorth: 800 },
+  };
+  const d = computeDelta(prev, cur);
+  assert.equal(d.perHolding.a, undefined); // price null on both → skipped
+  assert.equal(d.totalCash, 300);
+  assert.equal(d.netWorth, 300);
+});
+
 // --- v1.5: pushSnapshotWithCap + normalizeSnapshotCap ---
 // T01: snapshot cap is FIFO; cap 0 = unlimited; helper is pure.
 // See .scratch/v1.5-snapshot-ui/issues/01-snapshot-cap-and-gc.md.

@@ -1035,8 +1035,8 @@
           </div>
         </div>
 
-        <!-- List mode (hidden when detail is open) -->
-        <div x-show="!currentSnapshotDetail">
+        <!-- List mode (hidden when detail OR compare view is open) -->
+        <div x-show="!currentSnapshotDetail && !compareIds">
         <!-- Stale nudge (active plan exists, no snapshots yet) -->
         <div x-show="shouldShowStaleNudge()"
              data-testid="snapshot-stale-nudge"
@@ -1048,6 +1048,22 @@
         <div x-show="snapshotListRows.length > 0"
              data-testid="snapshot-list"
              class="space-y-3">
+        <!-- Compare bar (visible when at least 1 snapshot exists). -->
+        <!-- Compare button enabled iff exactly 2 are selected. FIFO -->
+        <!-- trim happens automatically when a 3rd checkbox is clicked. -->
+        <div x-show="snapshotListRows.length > 0"
+             class="flex items-center justify-between mb-3"
+             data-testid="snapshot-compare-bar">
+          <span class="text-xs text-slate-500"
+                x-text="t('snapshots.compare.selectHint', { n: selectedSnapshotIds.length })"></span>
+          <button @click="compareSelected()"
+                  :disabled="!canCompare()"
+                  data-testid="snapshot-compare-button"
+                  class="text-xs px-3 py-1.5 rounded transition-colors"
+                  :class="canCompare() ? 'bg-slate-900 text-white hover:bg-slate-800' : 'bg-slate-100 text-slate-400 cursor-not-allowed'"
+                  x-text="canCompare() ? t('snapshots.compare.button') : t('snapshots.compare.buttonDisabled')"></button>
+        </div>
+
           <template x-for="row in snapshotListRows" :key="row.id">
             <div class="bg-white p-4 rounded-2xl border border-slate-200"
                  data-testid="snapshot-row">
@@ -1066,14 +1082,16 @@
                   </div>
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
+                  <input type="checkbox"
+                         :checked="isSnapshotSelected(row.id)"
+                         @change="toggleSnapshotSelection(row.id)"
+                         :data-testid="'snapshot-row-select-' + row.id"
+                         :aria-label="t('snapshots.row.select')"
+                         class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500" />
                   <button @click="viewSnapshot(row.id)"
                           data-testid="snapshot-row-view"
                           class="text-xs px-2 py-1 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded transition-colors"
                           x-text="t('snapshots.row.view')"></button>
-                  <button @click="compareSnapshotStart(row.id)"
-                          data-testid="snapshot-row-compare"
-                          class="text-xs px-2 py-1 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded transition-colors"
-                          x-text="t('snapshots.row.compare')"></button>
                   <button @click="deleteSnapshot(row.id)"
                           data-testid="snapshot-row-delete"
                           class="text-xs px-2 py-1 border border-slate-200 text-slate-600 hover:bg-rose-50 hover:text-rose-700 rounded transition-colors"
@@ -1098,7 +1116,7 @@
         <!-- /List mode -->
 
         <!-- Detail mode (v1.5 ticket 03) -->
-        <div x-show="currentSnapshotDetail"
+        <div x-show="currentSnapshotDetail && !compareIds"
              data-testid="snapshot-detail"
              x-cloak>
           <button @click="closeSnapshotDetail()"
@@ -1271,6 +1289,218 @@
           </div>
         </div>
         <!-- /Detail mode -->
+
+        <!-- Compare mode (v1.5 ticket 04) -->
+        <div x-show="compareIds"
+             data-testid="snapshot-compare"
+             x-cloak>
+          <button @click="closeCompareView()"
+                  data-testid="snapshot-compare-back"
+                  class="text-xs text-slate-600 hover:text-slate-900 mb-3 inline-flex items-center gap-1"
+                  x-text="'← ' + t('snapshots.compare.back')"></button>
+
+          <h2 class="text-base font-semibold mb-4"
+              data-testid="snapshot-compare-title"
+              x-text="t('snapshots.compare.title')"></h2>
+
+          <!-- Same-snapshot edge case -->
+          <div x-show="compareIsSame()"
+               data-testid="snapshot-compare-same-notice"
+               class="bg-amber-50 border border-amber-200 text-amber-700 text-xs rounded p-3 mb-4"
+               x-text="t('snapshots.compare.sameSelection')"></div>
+
+          <!-- Cross-currency footnote (only shown when the two snapshots -->
+          <!-- were captured under different display_currency settings).   -->
+          <div x-show="compareCurrencyMismatch()"
+               data-testid="snapshot-compare-currency-note"
+               class="text-xs text-slate-500 mb-3"
+               x-text="t('snapshots.compare.currencyNote', { currency: compareRight()?.totals?.displayCurrency })"></div>
+
+          <!-- Two columns side-by-side: left = earlier, right = later -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <template x-for="side in ['left','right']" :key="side">
+              <div class="bg-white p-4 rounded-2xl border border-slate-200"
+                   :data-testid="'snapshot-compare-' + side">
+                <div class="flex items-baseline gap-3 flex-wrap mb-3">
+                  <span class="font-medium text-sm tabular"
+                        :data-testid="'snapshot-compare-' + side + '-date'"
+                        x-text="(side === 'left' ? compareLeft() : compareRight())?.date"></span>
+                  <span class="text-xl font-semibold tabular"
+                        :data-testid="'snapshot-compare-' + side + '-networth'"
+                        x-text="formatAmount((side === 'left' ? compareLeft() : compareRight())?.totals?.netWorth, (side === 'left' ? compareLeft() : compareRight())?.totals?.displayCurrency)"></span>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <div class="text-slate-500" x-text="t('snapshots.row.holdings')"></div>
+                    <div class="font-medium tabular"
+                         :data-testid="'snapshot-compare-' + side + '-holdings-value'"
+                         x-text="formatAmount((side === 'left' ? compareLeft() : compareRight())?.totals?.holdingsValue, (side === 'left' ? compareLeft() : compareRight())?.totals?.displayCurrency)"></div>
+                  </div>
+                  <div>
+                    <div class="text-slate-500" x-text="t('snapshots.row.cost')"></div>
+                    <div class="font-medium tabular text-slate-600"
+                         :data-testid="'snapshot-compare-' + side + '-holdings-cost'"
+                         x-text="formatAmount((side === 'left' ? compareLeft() : compareRight())?.totals?.holdingsCost, (side === 'left' ? compareLeft() : compareRight())?.totals?.displayCurrency)"></div>
+                  </div>
+                  <div>
+                    <div class="text-slate-500"
+                         :class="((side === 'left' ? compareLeft() : compareRight())?.totals?.holdingsGainLoss ?? 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'"
+                         x-text="t('snapshots.row.gainLoss')"></div>
+                    <div class="font-medium tabular"
+                         :class="((side === 'left' ? compareLeft() : compareRight())?.totals?.holdingsGainLoss ?? 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'"
+                         :data-testid="'snapshot-compare-' + side + '-gain-loss'"
+                         x-text="formatAmount((side === 'left' ? compareLeft() : compareRight())?.totals?.holdingsGainLoss, (side === 'left' ? compareLeft() : compareRight())?.totals?.displayCurrency)"></div>
+                  </div>
+                  <div>
+                    <div class="text-slate-500" x-text="t('snapshots.row.cash')"></div>
+                    <div class="font-medium tabular"
+                         :data-testid="'snapshot-compare-' + side + '-cash'"
+                         x-text="formatAmount((side === 'left' ? compareLeft() : compareRight())?.totals?.totalCash, (side === 'left' ? compareLeft() : compareRight())?.totals?.displayCurrency)"></div>
+                  </div>
+                  <div>
+                    <div class="text-slate-500" x-text="t('snapshots.row.debts')"></div>
+                    <div class="font-medium tabular text-rose-600"
+                         :data-testid="'snapshot-compare-' + side + '-debts'"
+                         x-text="formatAmount((side === 'left' ? compareLeft() : compareRight())?.totals?.totalDebts, (side === 'left' ? compareLeft() : compareRight())?.totals?.displayCurrency)"></div>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- Delta summary band (5 totals Δ) -->
+          <div class="bg-white rounded-2xl border border-slate-200 p-4 mb-4"
+               data-testid="snapshot-compare-delta-band">
+            <div class="grid grid-cols-1 sm:grid-cols-5 gap-3 text-xs">
+              <div>
+                <div class="text-slate-500" x-text="t('snapshots.compare.delta.netWorth')"></div>
+                <div class="font-medium tabular"
+                     :data-testid="'snapshot-compare-delta-networth'"
+                     :class="(compareDelta()?.netWorth ?? 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'"
+                     x-text="formatAmount(compareDelta()?.netWorth, compareRight()?.totals?.displayCurrency)"></div>
+                <div class="text-[10px] tabular"
+                     :class="(compareDelta()?.netWorth ?? 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'"
+                     :data-testid="'snapshot-compare-delta-networth-pct'"
+                     x-text="deltaPercent(compareDelta()?.netWorth, compareLeft()?.totals?.netWorth)"></div>
+              </div>
+              <div>
+                <div class="text-slate-500" x-text="t('snapshots.compare.delta.holdings')"></div>
+                <div class="font-medium tabular"
+                     :data-testid="'snapshot-compare-delta-holdings'"
+                     :class="(compareDelta()?.holdingsValue ?? 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'"
+                     x-text="formatAmount(compareDelta()?.holdingsValue, compareRight()?.totals?.displayCurrency)"></div>
+              </div>
+              <div>
+                <div class="text-slate-500" x-text="t('snapshots.compare.delta.gainLoss')"></div>
+                <div class="font-medium tabular"
+                     :data-testid="'snapshot-compare-delta-gainloss'"
+                     :class="(compareDelta()?.holdingsGainLoss ?? 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'"
+                     x-text="formatAmount(compareDelta()?.holdingsGainLoss, compareRight()?.totals?.displayCurrency)"></div>
+              </div>
+              <div>
+                <div class="text-slate-500" x-text="t('snapshots.compare.delta.cash')"></div>
+                <div class="font-medium tabular"
+                     :data-testid="'snapshot-compare-delta-cash'"
+                     :class="(compareDelta()?.totalCash ?? 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'"
+                     x-text="formatAmount(compareDelta()?.totalCash, compareRight()?.totals?.displayCurrency)"></div>
+              </div>
+              <div>
+                <div class="text-slate-500" x-text="t('snapshots.compare.delta.debts')"></div>
+                <div class="font-medium tabular"
+                     :data-testid="'snapshot-compare-delta-debts'"
+                     :class="(compareDelta()?.totalDebts ?? 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'"
+                     x-text="formatAmount(compareDelta()?.totalDebts, compareRight()?.totals?.displayCurrency)"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Per-holding delta table (Q3 = B: abs(totalDelta) desc) -->
+          <div class="bg-white rounded-2xl border border-slate-200 mb-4 overflow-hidden">
+            <h3 class="text-sm font-medium px-4 py-3 border-b border-slate-100"
+                x-text="t('snapshots.detail.holdings') + ' (' + compareRowsBoth().length + ')'"></h3>
+            <table class="w-full text-sm" data-testid="snapshot-compare-holdings-table">
+              <thead class="bg-slate-50 text-xs text-slate-600">
+                <tr>
+                  <th class="text-left px-4 py-2 font-medium"
+                      x-text="t('holdings.col.ticker')"></th>
+                  <th class="text-right px-4 py-2 font-medium"
+                      x-text="t('holdings.col.shares') + ' (l→r)'"></th>
+                  <th class="text-right px-4 py-2 font-medium"
+                      x-text="t('holdings.col.price') + ' (l→r)'"></th>
+                  <th class="text-right px-4 py-2 font-medium"
+                      x-text="t('holdings.col.value') + ' (l→r)'"></th>
+                  <th class="text-right px-4 py-2 font-medium"
+                      x-text="t('snapshots.compare.delta.value')"></th>
+                  <th class="text-right px-4 py-2 font-medium"
+                      x-text="t('snapshots.compare.delta.pct')"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="r in compareRowsBoth()" :key="r.id">
+                  <tr class="border-b border-slate-100 last:border-0"
+                      :data-testid="'snapshot-compare-row-' + r.id">
+                    <td class="px-4 py-3 font-medium" x-text="r.ticker"></td>
+                    <td class="px-4 py-3 text-right tabular text-xs text-slate-600"
+                        x-text="(r.shares_l ?? 0).toLocaleString() + ' → ' + (r.shares_r ?? 0).toLocaleString()"></td>
+                    <td class="px-4 py-3 text-right tabular text-xs text-slate-600"
+                        x-text="(r.price_l != null ? formatAmount(r.price_l, r.currency) : '—') + ' → ' + (r.price_r != null ? formatAmount(r.price_r, r.currency) : '—')"></td>
+                    <td class="px-4 py-3 text-right tabular text-xs text-slate-600"
+                        x-text="(r.value_l != null ? formatAmount(r.value_l, r.currency) : '—') + ' → ' + (r.value_r != null ? formatAmount(r.value_r, r.currency) : '—')"></td>
+                    <td class="px-4 py-3 text-right tabular font-medium"
+                        :class="r.totalDelta >= 0 ? 'text-emerald-600' : 'text-rose-600'"
+                        :data-testid="'snapshot-compare-row-delta-' + r.id"
+                        x-text="r.totalDelta !== 0 ? ((r.totalDelta > 0 ? '+' : '') + formatAmount(r.totalDelta, r.currency)) : '—'"></td>
+                    <td class="px-4 py-3 text-right tabular text-xs"
+                        :class="r.totalDelta >= 0 ? 'text-emerald-600' : 'text-rose-600'"
+                        :data-testid="'snapshot-compare-row-pct-' + r.id"
+                        x-text="r.value_l ? deltaPercent(r.totalDelta, r.value_l) : '—'"></td>
+                  </tr>
+                </template>
+                <tr x-show="compareRowsBoth().length === 0"
+                    data-testid="snapshot-compare-holdings-empty">
+                  <td colspan="6" class="px-4 py-6 text-center text-xs text-slate-400"
+                      x-text="t('snapshots.detail.empty.holdings')"></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Added / Removed sections -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4"
+               data-testid="snapshot-compare-add-remove">
+            <div class="bg-white rounded-2xl border border-emerald-200 p-4">
+              <h3 class="text-sm font-medium mb-2 text-emerald-700"
+                  x-text="t('snapshots.compare.added') + ' (' + compareRowsAdded().length + ')'"></h3>
+              <ul class="text-xs space-y-1">
+                <template x-for="r in compareRowsAdded()" :key="r.id">
+                  <li class="tabular" :data-testid="'snapshot-compare-added-' + r.id">
+                    <span class="font-medium" x-text="r.ticker"></span>
+                    — <span x-text="formatAmount(r.value_r, r.currency)"></span>
+                  </li>
+                </template>
+                <li x-show="compareRowsAdded().length === 0"
+                    data-testid="snapshot-compare-added-empty"
+                    class="text-slate-400" x-text="'—'"></li>
+              </ul>
+            </div>
+            <div class="bg-white rounded-2xl border border-rose-200 p-4">
+              <h3 class="text-sm font-medium mb-2 text-rose-700"
+                  x-text="t('snapshots.compare.removed') + ' (' + compareRowsRemoved().length + ')'"></h3>
+              <ul class="text-xs space-y-1">
+                <template x-for="r in compareRowsRemoved()" :key="r.id">
+                  <li class="tabular" :data-testid="'snapshot-compare-removed-' + r.id">
+                    <span class="font-medium" x-text="r.ticker"></span>
+                    — <span x-text="formatAmount(r.value_l, r.currency)"></span>
+                  </li>
+                </template>
+                <li x-show="compareRowsRemoved().length === 0"
+                    data-testid="snapshot-compare-removed-empty"
+                    class="text-slate-400" x-text="'—'"></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+        <!-- /Compare mode -->
       </section>
     </div>
     <div x-show="currentPage === 'backups'" data-testid="backups-page" x-cloak>
@@ -1926,8 +2156,8 @@
       'snapshots.row.cash': 'Cash',
       'snapshots.row.debts': 'Debts',
       'snapshots.row.view': 'View',
-      'snapshots.row.compare': 'Compare',
       'snapshots.row.delete': 'Delete',
+      'snapshots.row.select': 'Select for compare',
       'snapshots.delete.confirm': 'Delete the snapshot from {date}? This cannot be undone.',
       'snapshots.toast.taken': 'Snapshot taken — {date}',
       // v1.5 ticket 03 — snapshot detail view (drill-in to a single
@@ -1938,6 +2168,7 @@
       // a category-value id that has since been deleted/renamed
       // (ADR 0003).
       'snapshots.row.gainLoss': 'Gain / Loss',
+      'snapshots.row.cost': 'Cost',
       'snapshots.detail.back': 'Back to list',
       'snapshots.detail.holdings': 'Holdings',
       'snapshots.detail.cash': 'Cash accounts',
@@ -1947,6 +2178,31 @@
       'snapshots.detail.empty.debts': 'No debts in this snapshot.',
       'snapshots.detail.orphanValue': 'Attribute value since deleted',
       'snapshots.detail.orphanCategory': 'Attribute category since deleted',
+      // v1.5 ticket 04 — snapshot compare (pick 2 from list, see delta).
+      // Q1 = A: sub-page internal switch via x-show toggling. Q2 = A:
+      // deltaPercent uses '—' when denom is zero (Format.deltaPercent
+      // helper). Q3 = B: per-holding rows sorted by abs(totalDelta) desc.
+      // Q4 = A: entering detail or compare clears pending selection.
+      // Compare button enabled iff exactly 2 selected. Currency is
+      // frozen on both sides; cross-currency footnote surfaces when
+      // display_currency differs between the two captures (ADR 0005
+      // backs/replicas philosophy: never re-FX historical values).
+      'snapshots.compare.selectHint': '{n} selected',
+      'snapshots.compare.button': 'Compare',
+      'snapshots.compare.buttonDisabled': 'Select 2 to compare',
+      'snapshots.compare.title': 'Compare snapshots',
+      'snapshots.compare.back': 'Back to list',
+      'snapshots.compare.sameSelection': 'You selected the same snapshot twice — all deltas are zero.',
+      'snapshots.compare.added': 'Added',
+      'snapshots.compare.removed': 'Sold or removed',
+      'snapshots.compare.delta.netWorth': 'Δ Net Worth',
+      'snapshots.compare.delta.holdings': 'Δ Holdings',
+      'snapshots.compare.delta.gainLoss': 'Δ Gain / Loss',
+      'snapshots.compare.delta.cash': 'Δ Cash',
+      'snapshots.compare.delta.debts': 'Δ Debts',
+      'snapshots.compare.delta.value': 'Δ Value',
+      'snapshots.compare.delta.pct': 'Δ %',
+      'snapshots.compare.currencyNote': 'Computed in {currency} (frozen at capture time; no re-FX).',
     },
     zh: {
       'app.title': 'Property Tracker',
@@ -1968,12 +2224,13 @@
       'snapshots.row.cash': '現金',
       'snapshots.row.debts': '負債',
       'snapshots.row.view': '檢視',
-      'snapshots.row.compare': '比較',
       'snapshots.row.delete': '刪除',
+      'snapshots.row.select': '選為比較對象',
       'snapshots.delete.confirm': '確定刪除 {date} 的快照？此操作無法復原。',
       'snapshots.toast.taken': '已建立 {date} 的快照',
       // v1.5 ticket 03 — snapshot detail view (drill-in)
       'snapshots.row.gainLoss': '損益',
+      'snapshots.row.cost': '成本',
       'snapshots.detail.back': '返回列表',
       'snapshots.detail.holdings': '股票',
       'snapshots.detail.cash': '現金帳戶',
@@ -1983,6 +2240,23 @@
       'snapshots.detail.empty.debts': '此快照沒有負債。',
       'snapshots.detail.orphanValue': '此屬性值已刪除',
       'snapshots.detail.orphanCategory': '此屬性類別已刪除',
+      // v1.5 ticket 04 — compare two snapshots (delta view)
+      'snapshots.compare.selectHint': '已選 {n} 個',
+      'snapshots.compare.button': '比較',
+      'snapshots.compare.buttonDisabled': '選 2 個以比較',
+      'snapshots.compare.title': '比較快照',
+      'snapshots.compare.back': '返回列表',
+      'snapshots.compare.sameSelection': '選了同一個快照，所有差異為零。',
+      'snapshots.compare.added': '新增',
+      'snapshots.compare.removed': '賣出或移除',
+      'snapshots.compare.delta.netWorth': 'Δ 淨值',
+      'snapshots.compare.delta.holdings': 'Δ 持倉',
+      'snapshots.compare.delta.gainLoss': 'Δ 損益',
+      'snapshots.compare.delta.cash': 'Δ 現金',
+      'snapshots.compare.delta.debts': 'Δ 負債',
+      'snapshots.compare.delta.value': 'Δ 金額',
+      'snapshots.compare.delta.pct': 'Δ %',
+      'snapshots.compare.currencyNote': '以 {currency} 計算（凍結於快照建立時；不會重新換算）。',
       'summary.netWorth': '總資產 Net Worth',
       'summary.netWorthSub': '{a} holdings + {c} 現金 − {d} 負債',
       'summary.holdingsValue': 'Holdings 市值',
@@ -2254,6 +2528,15 @@
       // data.snapshots so the template can bind to its frozen fields
       // without us re-implementing snapshot lookup.
       snapshotDetailId: null,
+      // v1.5 ticket 04: compare view state.
+      // selectedSnapshotIds: array of up to 2 snapshot ids the user has
+      // ticked on the list. compareIds: [earlierId, laterId] once the
+      // user clicks "Compare". Getters (compareLeft/Right/Delta/Rows)
+      // resolve the ids against data.snapshots each render — Alpine 3
+      // reactivity tracks the inner snap objects through the outer
+      // array Proxy, so a take / delete re-renders the compare view.
+      selectedSnapshotIds: [],
+      compareIds: null,
 
       // Plans page state (v1.4 — ticket 02). planDraft is the editing
       // buffer; null when showing the plan list. planEditorMode is a
@@ -3410,12 +3693,14 @@
       },
 
       // Open detail view for a snapshot. No-op if id is unknown (defensive
-      // against a stale row click after delete).
+      // against a stale row click after delete). Q4 = A: entering detail
+      // is a different context — clear any pending compare selection.
       viewSnapshot(id) {
         if (!id) return;
         const arr = Array.isArray(this.data?.snapshots) ? this.data.snapshots : [];
         if (!arr.find(s => s.id === id)) return;
         this.snapshotDetailId = id;
+        this.selectedSnapshotIds = [];
       },
 
       // Close detail view, return to list.
@@ -3438,10 +3723,137 @@
         return key ? this.t(key) : '';
       },
 
-      // Compare stub — T04 wires the comparison picker (pick a second
-      // snapshot to diff against). Same as viewSnapshot: silent stub.
-      compareSnapshotStart(_id) {
-        // T04: open comparison picker.
+      // ---- Snapshot compare (v1.5 — ticket 04) ----
+      // Source of truth for delta math: Snapshot.computeDelta (extended
+      // in T04 to include all 5 mini-totals). The UI is a thin shim:
+      // selection state → derive left/right from data.snapshots → wrap
+      // the pure helper → render. Q1-Q4 defaults: A/A/B/A.
+
+      // Toggle selection of a snapshot id for compare. Q4 = A: clearing
+      // happens implicitly when the user enters a different sub-view.
+      toggleSnapshotSelection(id) {
+        if (!id) return;
+        const cur = Array.isArray(this.selectedSnapshotIds) ? this.selectedSnapshotIds : [];
+        if (cur.includes(id)) {
+          // uncheck
+          this.selectedSnapshotIds = cur.filter(x => x !== id);
+          return;
+        }
+        // Adding. If we already have 2, drop the oldest selection
+        // (FIFO — matches the snapshot-cap FIFO pattern from T01).
+        const next = [...cur, id];
+        if (next.length > 2) next.shift();
+        this.selectedSnapshotIds = next;
+      },
+
+      isSnapshotSelected(id) {
+        return Array.isArray(this.selectedSnapshotIds) && this.selectedSnapshotIds.includes(id);
+      },
+
+      canCompare() {
+        return Array.isArray(this.selectedSnapshotIds) && this.selectedSnapshotIds.length === 2;
+      },
+
+      // Open the compare view with the 2 selected ids, sorted earliest
+      // → latest by snap.date so the left column is always earlier.
+      compareSelected() {
+        if (!this.canCompare()) return;
+        const [a, b] = this.selectedSnapshotIds;
+        const arr = this.data?.snapshots || [];
+        const sa = arr.find(s => s.id === a);
+        const sb = arr.find(s => s.id === b);
+        if (!sa || !sb) return; // defensive: one got deleted while selected
+        const ordered = sa.date <= sb.date ? [sa, sb] : [sb, sa];
+        this.compareIds = [ordered[0].id, ordered[1].id];
+      },
+
+      closeCompareView() {
+        this.compareIds = null;
+        this.selectedSnapshotIds = []; // Q4 = A: clear selection on exit
+      },
+
+      // ---- Compare getters (thin shims over Snapshot.computeDelta) ----
+
+      compareLeft() {
+        if (!this.compareIds) return null;
+        const arr = this.data?.snapshots || [];
+        return arr.find(s => s.id === this.compareIds[0]) || null;
+      },
+      compareRight() {
+        if (!this.compareIds) return null;
+        const arr = this.data?.snapshots || [];
+        return arr.find(s => s.id === this.compareIds[1]) || null;
+      },
+      compareIsSame() {
+        const l = this.compareLeft();
+        const r = this.compareRight();
+        return !!(l && r && l.id === r.id);
+      },
+      compareCurrencyMismatch() {
+        const l = this.compareLeft();
+        const r = this.compareRight();
+        if (!l || !r) return false;
+        return l.totals?.displayCurrency !== r.totals?.displayCurrency;
+      },
+      compareDelta() {
+        const l = this.compareLeft();
+        const r = this.compareRight();
+        if (!l || !r) return null;
+        return Snapshot.computeDelta(l, r);
+      },
+
+      // Buckets of compareRows() by kind — used as the source of truth
+      // for the per-holding table and the added/removed lists so the
+      // template doesn't repeat the .filter() inline (which trips on
+      // escaped quotes inside x-attributes).
+      compareRowsBoth() { return this.compareRows().filter(r => r.kind === 'both'); },
+      compareRowsAdded() { return this.compareRows().filter(r => r.kind === 'added'); },
+      compareRowsRemoved() { return this.compareRows().filter(r => r.kind === 'removed'); },
+
+      // Per-holding delta rows: union of earlier + later holding ids,
+      // classified as 'both' / 'added' / 'removed'. Sorted by Q3 = B
+      // (abs(totalDelta) desc for 'both'; ticker asc for 'added'/'removed').
+      compareRows() {
+        const l = this.compareLeft();
+        const r = this.compareRight();
+        if (!l || !r) return [];
+        const lById = new Map((l.holdings || []).map(h => [h.id, h]));
+        const rById = new Map((r.holdings || []).map(h => [h.id, h]));
+        const ids = new Set([...lById.keys(), ...rById.keys()]);
+        const rows = [];
+        for (const id of ids) {
+          const e = lById.get(id);
+          const c = rById.get(id);
+          let kind;
+          if (e && c) kind = 'both';
+          else if (!e && c) kind = 'added';
+          else kind = 'removed';
+          // totalDelta: only for 'both', only when both prices present.
+          let totalDelta = 0;
+          if (kind === 'both' && e.current_price != null && c.current_price != null) {
+            totalDelta = (c.shares * c.current_price) - (e.shares * e.current_price);
+          }
+          rows.push({
+            id,
+            ticker: (c || e).ticker,
+            currency: (c || e).currency,
+            shares_l: e?.shares ?? null,
+            shares_r: c?.shares ?? null,
+            price_l: e?.current_price ?? null,
+            price_r: c?.current_price ?? null,
+            value_l: (e && e.current_price != null) ? e.shares * e.current_price : null,
+            value_r: (c && c.current_price != null) ? c.shares * c.current_price : null,
+            totalDelta,
+            kind,
+          });
+        }
+        const bothSorted = rows.filter(r => r.kind === 'both')
+          .sort((a, b) => Math.abs(b.totalDelta) - Math.abs(a.totalDelta));
+        const addedSorted = rows.filter(r => r.kind === 'added')
+          .sort((a, b) => a.ticker.localeCompare(b.ticker));
+        const removedSorted = rows.filter(r => r.kind === 'removed')
+          .sort((a, b) => a.ticker.localeCompare(b.ticker));
+        return [...bothSorted, ...addedSorted, ...removedSorted];
       },
 
       // Delete a snapshot. Confirms via the localised string with the
