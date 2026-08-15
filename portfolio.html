@@ -771,6 +771,21 @@
                 </div>
               </div>
 
+              <!-- Rule name (v1.4 T04-prep retroactive; required at save time) -->
+              <div class="mb-4">
+                <label class="block text-xs text-slate-500 mb-1"
+                       x-text="t('plan.editor.ruleName')"></label>
+                <input type="text"
+                       x-model="rule.name"
+                       data-testid="plan-rule-name"
+                       placeholder="e.g. Domestic equities"
+                       class="text-sm w-full max-w-md border border-slate-200 focus:border-slate-400 focus:outline-none px-3 py-2 rounded-md">
+                <p x-show="!rule.name || !rule.name.trim()"
+                   class="text-xs text-rose-600 mt-1"
+                   x-text="t('plan.editor.ruleNameRequired')"
+                   data-testid="plan-rule-name-error"></p>
+              </div>
+
               <!-- when -->
               <div class="mb-4">
                 <p class="text-xs text-slate-500 mb-2" x-text="t('plan.editor.ruleWhen')"></p>
@@ -1424,6 +1439,8 @@
       'plan.editor.removeRule': 'Remove rule',
       'plan.editor.moveUp': 'Move up',
       'plan.editor.moveDown': 'Move down',
+      'plan.editor.ruleName': 'Rule name',
+      'plan.editor.ruleNameRequired': 'Rule name required',
       'plan.editor.ruleWhen': 'When (records must match)',
       'plan.editor.ruleDistribute': 'Distribute (target distribution)',
       'plan.editor.weightSum': 'Sum: {sum}%',
@@ -1610,6 +1627,8 @@
       'plan.editor.removeRule': '刪除 rule',
       'plan.editor.moveUp': '上移',
       'plan.editor.moveDown': '下移',
+      'plan.editor.ruleName': 'Rule 名稱',
+      'plan.editor.ruleNameRequired': 'Rule 名稱為必填',
       'plan.editor.ruleWhen': 'When（記錄需符合）',
       'plan.editor.ruleDistribute': 'Distribute（目標分配）',
       'plan.editor.weightSum': '加總:{sum}%',
@@ -2983,6 +3002,14 @@
         // it. We do an extra name-trim check here so the save button
         // doesn't flicker when the user has only typed whitespace.
         if (!this.planDraft.name || this.planDraft.name.trim() === '') return false;
+        // v1.4 T04-prep retroactive: every rule needs a non-empty name.
+        // UI-level check (in addition to validatePlan → validateRule)
+        // so the save button disables pre-emptively as the user clears
+        // a name — matches the existing `sum to 100%` inline-error pattern.
+        const rules = (this.planDraft.rules || []);
+        for (const r of rules) {
+          if (!r || typeof r.name !== 'string' || r.name.trim() === '') return false;
+        }
         return this.planValidationErrors().length === 0;
       },
 

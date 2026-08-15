@@ -118,6 +118,8 @@ test.describe('portfolio.html plans page (ticket #02)', () => {
 
     // Name
     await page.locator('[data-testid="plan-name"]').fill('My Allocation');
+    // v1.4 T04-prep: rule name required at save time.
+    await page.locator('[data-testid="plan-rule-name"]').fill('TW stocks');
     await page.waitForTimeout(100);
 
     // when: add Region, click TW
@@ -163,6 +165,7 @@ test.describe('portfolio.html plans page (ticket #02)', () => {
     await page.locator('[data-testid="plan-create"]').first().click();
     await page.waitForTimeout(200);
     await page.locator('[data-testid="plan-name"]').fill('Test');
+    await page.locator('[data-testid="plan-rule-name"]').fill('TW stock/bond');
     await page.locator('[data-testid="plan-rule-when-add-cat"]').selectOption({ label: 'Region' });
     await page.waitForTimeout(100);
     await page.locator('[data-testid="plan-rule-when-value-add"]').first().click();
@@ -208,6 +211,7 @@ test.describe('portfolio.html plans page (ticket #02)', () => {
     await page.locator('[data-testid="plan-create"]').first().click();
     await page.waitForTimeout(200);
     await page.locator('[data-testid="plan-name"]').fill('Original');
+    await page.locator('[data-testid="plan-rule-name"]').fill('Domestic equities');
     await page.locator('[data-testid="plan-rule-when-add-cat"]').selectOption({ label: 'Region' });
     await page.waitForTimeout(100);
     await page.locator('[data-testid="plan-rule-when-value-add"]').first().click();
@@ -255,6 +259,7 @@ test.describe('portfolio.html plans page (ticket #02)', () => {
     await page.locator('[data-testid="plan-create"]').first().click();
     await page.waitForTimeout(200);
     await page.locator('[data-testid="plan-name"]').fill('To Delete');
+    await page.locator('[data-testid="plan-rule-name"]').fill('TW only');
     await page.locator('[data-testid="plan-rule-when-add-cat"]').selectOption({ label: 'Region' });
     await page.waitForTimeout(100);
     await page.locator('[data-testid="plan-rule-when-value-add"]').first().click();
@@ -296,6 +301,8 @@ test.describe('portfolio.html plans page (ticket #02)', () => {
     await page.locator('[data-testid="plan-create"]').first().click();
     await page.waitForTimeout(200);
     await page.locator('[data-testid="plan-name"]').fill('Rules test');
+    // v1.4 T04-prep: rule name is required at save time.
+    await page.locator('[data-testid="plan-rule-name"]').fill('TW stock/bond');
     await page.locator('[data-testid="plan-rule-when-add-cat"]').selectOption({ label: 'Region' });
     await page.waitForTimeout(100);
     await page.locator('[data-testid="plan-rule-when-value-add"]').first().click();
@@ -329,6 +336,54 @@ test.describe('portfolio.html plans page (ticket #02)', () => {
     await page.locator('[data-testid="plan-save"]').click();
     await page.waitForTimeout(300);
     await expect(page.locator('[data-testid="plan-row"]')).toHaveCount(1);
+
+    expect(errors).toEqual([]);
+  });
+
+  // v1.4 T04-prep retroactive: rule name is required at save time. The
+  // Save button must disable while any rule name is empty; inline red
+  // text shows under the rule; filling the name re-enables Save (once
+  // the rest of the rule is also valid).
+  test('rule name required — empty blocks save, inline error shows, filling unblocks', async ({ page }) => {
+    const errors = collectAppErrors(page);
+    page.on('dialog', async (d) => { await d.accept(); });
+    await page.addInitScript(initScript(makeFixture()));
+    await page.goto('/portfolio.html', { waitUntil: 'networkidle' });
+    await page.waitForTimeout(300);
+
+    await page.locator('button:has-text("Plans")').first().click();
+    await page.waitForTimeout(200);
+    await page.locator('[data-testid="plan-create"]').first().click();
+    await page.waitForTimeout(200);
+    await page.locator('[data-testid="plan-name"]').fill('Required Names');
+
+    // Default rule has name: ''; inline error visible, save disabled.
+    await expect(page.locator('[data-testid="plan-rule-name-error"]')).toBeVisible();
+    await expect(page.locator('[data-testid="plan-save"]')).toBeDisabled();
+
+    // Fill in the name — inline error hides. Save is still disabled
+    // because the rule has no when/distribute yet, but the *name*
+    // blocker is gone (different inline indicator).
+    await page.locator('[data-testid="plan-rule-name"]').fill('TW sleeve');
+    await page.waitForTimeout(100);
+    await expect(page.locator('[data-testid="plan-rule-name-error"]')).not.toBeVisible();
+
+    // Finish the rule so save can enable — proves the name fill was
+    // the unblocking step, not just the rest of the validation.
+    await page.locator('[data-testid="plan-rule-when-add-cat"]').selectOption({ label: 'Region' });
+    await page.waitForTimeout(100);
+    await page.locator('[data-testid="plan-rule-when-value-add"]').first().click();
+    await page.waitForTimeout(100);
+    await page.locator('[data-testid="plan-rule-distribute-cat"]').selectOption({ label: 'Type' });
+    await page.waitForTimeout(100);
+    await page.locator('[data-testid="plan-rule-distribute-add"]').selectOption({ label: 'Stock' });
+    await page.locator('[data-testid="plan-rule-distribute-add"]').selectOption({ label: 'Bond' });
+    await page.waitForTimeout(100);
+    const ws = await page.locator('[data-testid="plan-rule-distribute-weight"]').all();
+    await ws[0].fill('60');
+    await ws[1].fill('40');
+    await page.waitForTimeout(200);
+    await expect(page.locator('[data-testid="plan-save"]')).not.toBeDisabled();
 
     expect(errors).toEqual([]);
   });

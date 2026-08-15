@@ -74,6 +74,7 @@ function makeGoodPlan(overrides) {
     rules: [
       {
         id: 'rule-1',
+        name: 'Domestic equities',
         when: { country: ['TW'] },
         distribute: { type: { stock: 60, bond: 40 } },
       },
@@ -91,10 +92,11 @@ test('newPlan: returns an object with id, name, rules: []', () => {
   assert.deepEqual(p.rules, []);
 });
 
-test('newRule: returns an object with id, when: {}, distribute: {}', () => {
+test('newRule: returns an object with id, name: "", when: {}, distribute: {}', () => {
   const r = newRule();
   assert.equal(typeof r.id, 'string');
   assert.ok(r.id.startsWith('rule-'));
+  assert.equal(r.name, '');
   assert.deepEqual(r.when, {});
   assert.deepEqual(r.distribute, {});
 });
@@ -108,7 +110,7 @@ test('newPlan / newRule: each call returns a distinct id', () => {
 // ---- validateRule ----
 
 test('validateRule: good rule with sum=100 → valid', () => {
-  const r = { when: { country: ['TW'] }, distribute: { type: { stock: 60, bond: 40 } } };
+  const r = { name: 'TW stock/bond', when: { country: ['TW'] }, distribute: { type: { stock: 60, bond: 40 } } };
   const out = validateRule(r, ALL_CATEGORIES);
   assert.equal(out.valid, true);
   assert.deepEqual(out.errors, []);
@@ -122,9 +124,45 @@ test('validateRule: weights sum != 100 → invalid', () => {
 });
 
 test('validateRule: weights sum 99.99 accepted (FP epsilon)', () => {
-  const r = { when: {}, distribute: { type: { stock: 59.99, bond: 40.01 } } };
+  const r = { name: 'Some rule', when: {}, distribute: { type: { stock: 59.99, bond: 40.01 } } };
   const out = validateRule(r, ALL_CATEGORIES);
   assert.equal(out.valid, true);
+});
+
+// ---- name (T04-prep retroactive; rule name is required at save time) ----
+
+test('validateRule: name present and non-empty → valid', () => {
+  const r = { name: 'Domestic equities', when: {}, distribute: { type: { stock: 100 } } };
+  const out = validateRule(r, ALL_CATEGORIES);
+  assert.equal(out.valid, true);
+});
+
+test('validateRule: name missing → invalid', () => {
+  const r = { when: {}, distribute: { type: { stock: 100 } } };
+  const out = validateRule(r, ALL_CATEGORIES);
+  assert.equal(out.valid, false);
+  assert.ok(out.errors.some(e => /name/.test(e)), 'should have a name-related error');
+});
+
+test('validateRule: name === "" → invalid', () => {
+  const r = { name: '', when: {}, distribute: { type: { stock: 100 } } };
+  const out = validateRule(r, ALL_CATEGORIES);
+  assert.equal(out.valid, false);
+  assert.ok(out.errors.some(e => /name/.test(e)), 'should have a name-related error');
+});
+
+test('validateRule: name whitespace-only → invalid', () => {
+  const r = { name: '   ', when: {}, distribute: { type: { stock: 100 } } };
+  const out = validateRule(r, ALL_CATEGORIES);
+  assert.equal(out.valid, false);
+  assert.ok(out.errors.some(e => /name/.test(e)), 'should have a name-related error');
+});
+
+test('validateRule: name non-string → invalid', () => {
+  const r = { name: 42, when: {}, distribute: { type: { stock: 100 } } };
+  const out = validateRule(r, ALL_CATEGORIES);
+  assert.equal(out.valid, false);
+  assert.ok(out.errors.some(e => /name/.test(e)), 'should have a name-related error');
 });
 
 test('validateRule: weights sum 100.02 rejected', () => {
@@ -149,7 +187,7 @@ test('validateRule: multi-key distribute → invalid', () => {
 });
 
 test('validateRule: empty when is allowed (matches all records)', () => {
-  const r = { when: {}, distribute: { type: { stock: 100 } } };
+  const r = { name: 'Catch-all', when: {}, distribute: { type: { stock: 100 } } };
   const out = validateRule(r, ALL_CATEGORIES);
   assert.equal(out.valid, true);
 });
@@ -199,7 +237,7 @@ test('validateRule: allCategories is accepted but does not gate validity (curren
   // to exist in allCategories. That check belongs in the UI layer (so the
   // user can save a plan referencing a category they just deleted) — see
   // plansReferencingCategory for the delete-protection path.
-  const r = { when: { ghost: ['x'] }, distribute: { phantom: { y: 100 } } };
+  const r = { name: 'Ghost rule', when: { ghost: ['x'] }, distribute: { phantom: { y: 100 } } };
   const out = validateRule(r, ALL_CATEGORIES);
   assert.equal(out.valid, true);
 });
