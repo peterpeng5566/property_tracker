@@ -1973,6 +1973,14 @@
      tombstone into the deletion-log merge. -->
 <script src="lib/records.js"></script>
 
+<!-- Manual order helpers (lib/order.js) — v1.6 record ordering (ADR 0015).
+     Pure functions: applyOrder / moveItem / appendToOrder / removeFromOrder.
+     Used by the remove / add shims below (to keep *_order arrays in sync
+     with the record arrays) and by the T02/T03 ↑/↓ UI to resolve display
+     order. Loaded after lib/records.js (same pure-helper group). -->
+
+<script src="lib/order.js"></script>
+
 <!-- Backup helpers (lib/backup.js) — two-layer backup safety net for true
      delete (ADR 0012 + ticket #02). Layer 1 (in-portfolio data.backups[]):
      buildBackupSnapshot, pushBackup, restoreFromBackup. Layer 2 (Drive
@@ -3602,6 +3610,14 @@
           if (idx >= 0) this.data.holdings[idx] = record;
         } else {
           this.data.holdings.push(record);
+          // v1.6 — append new id to order array IF it exists. Lazy-write
+          // semantics (ADR 0015 §3): if the array is absent, leave it
+          // absent. applyOrder's leftover-append renders the new record
+          // at the end of the table transparently. (Only the first
+          // reorder click materializes the array.)
+          if (Array.isArray(this.data.holdings_order)) {
+            this.data.holdings_order = Order.appendToOrder(this.data.holdings_order, record.id);
+          }
         }
         this.closeModal();
       },
@@ -3625,6 +3641,15 @@
         if (!out.didDelete) return;
         this.data[collection] = out.records;
         this.data.deletions = out.deletions;
+        // v1.6 — strip the deleted id from the matching order array
+        // (ADR 0015 §9) so sync doesn't carry a stale id reference.
+        // Pure helper returns a new array when the id is present, or
+        // the original reference when absent (lazy-write: absent array
+        // is left absent — no materialization).
+        const orderKey = collection + '_order';
+        if (Array.isArray(this.data[orderKey])) {
+          this.data[orderKey] = Order.removeFromOrder(this.data[orderKey], id);
+        }
       },
       removeHolding(id) { this._removeRecord(id, 'holdings', 'holdings.confirmDelete'); },
       toggleInactive(id) {
@@ -4232,6 +4257,10 @@
           if (idx >= 0) this.data.cash_accounts[idx] = record;
         } else {
           this.data.cash_accounts.push(record);
+          // v1.6 — see holdings saveHolding for the lazy-write rationale.
+          if (Array.isArray(this.data.cash_accounts_order)) {
+            this.data.cash_accounts_order = Order.appendToOrder(this.data.cash_accounts_order, record.id);
+          }
         }
         this.closeCashModal();
       },
@@ -4285,6 +4314,10 @@
           if (idx >= 0) this.data.debts[idx] = record;
         } else {
           this.data.debts.push(record);
+          // v1.6 — see holdings saveHolding for the lazy-write rationale.
+          if (Array.isArray(this.data.debts_order)) {
+            this.data.debts_order = Order.appendToOrder(this.data.debts_order, record.id);
+          }
         }
         this.closeDebtModal();
       },

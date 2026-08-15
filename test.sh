@@ -50,6 +50,7 @@ tests/sync.test.js \
 tests/snapshot.test.js \
 tests/backup.test.js \
 tests/plan.test.js \
+tests/order.test.js \
   tests/format.test.js \
   tests/intraday.test.js \
   tests/market-display.test.js \

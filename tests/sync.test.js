@@ -860,3 +860,74 @@ test('mergePortfolios: active_plan_id may point at a non-existent plan (validate
   const out = mergePortfolios(local, remote, 'd');
   assert.equal(out.active_plan_id, 'gone', 'orphan pointer survives merge by design');
 });
+
+// --- mergePortfolios: data.<collection>_order arrays (v1.6 — ticket 01) ---
+// Manual record ordering. ADR 0015 §4: prefer-remote (same pattern as
+// active_plan_id / settings). Documented limitation: when both devices
+// reorder offline, last-synced wins and the earlier edit is silent.
+
+test('mergePortfolios: holdings_order prefers remote', () => {
+  const local = { holdings_order: ['h1', 'h2'], holdings: [] };
+  const remote = { holdings_order: ['h2', 'h1'], holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.deepEqual(out.holdings_order, ['h2', 'h1']);
+});
+
+test('mergePortfolios: holdings_order falls back to local when remote missing', () => {
+  const local = { holdings_order: ['h1', 'h2'], holdings: [] };
+  const remote = { holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.deepEqual(out.holdings_order, ['h1', 'h2']);
+});
+
+test('mergePortfolios: holdings_order undefined when both missing (lazy-write preserved)', () => {
+  // Pre-v1.6 portfolios have no *_order arrays; the merge must not
+  // materialize empty arrays — that would pollute backups.
+  const out = mergePortfolios({ holdings: [] }, { holdings: [] }, 'd');
+  assert.equal(out.holdings_order, undefined);
+});
+
+test('mergePortfolios: holdings_order preserved as [] when both sides are explicit empty', () => {
+  // Empty array IS meaningful: user reordered and then cleared their
+  // portfolio. Distinct from "never reordered" (undefined).
+  const local = { holdings_order: [], holdings: [] };
+  const remote = { holdings_order: [], holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.deepEqual(out.holdings_order, []);
+});
+
+test('mergePortfolios: cash_accounts_order + debts_order use same pattern as holdings_order', () => {
+  const local = {
+    cash_accounts_order: ['c1', 'c2'],
+    debts_order: ['d1', 'd2'],
+    holdings: [], cash_accounts: [], debts: [],
+  };
+  const remote = {
+    cash_accounts_order: ['c2', 'c1'],
+    debts_order: ['d2', 'd1'],
+    holdings: [], cash_accounts: [], debts: [],
+  };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.deepEqual(out.cash_accounts_order, ['c2', 'c1']);
+  assert.deepEqual(out.debts_order, ['d2', 'd1']);
+});
+
+test('mergePortfolios: each *_order array merges independently (cross-collection leak guard)', () => {
+  const local = {
+    holdings_order: ['h1'],
+    cash_accounts_order: ['c1'],
+    debts_order: ['d1'],
+    holdings: [], cash_accounts: [], debts: [],
+  };
+  const remote = {
+    holdings_order: ['h2'],
+    // cash_accounts_order + debts_order missing on remote
+    holdings: [], cash_accounts: [], debts: [],
+  };
+  const out = mergePortfolios(local, remote, 'd');
+  // remote wins for holdings
+  assert.deepEqual(out.holdings_order, ['h2']);
+  // local preserved for the two missing on remote
+  assert.deepEqual(out.cash_accounts_order, ['c1']);
+  assert.deepEqual(out.debts_order, ['d1']);
+});
