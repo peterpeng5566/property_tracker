@@ -64,7 +64,6 @@ const TYPE_CAT = {
     { id: 'bond', name: 'Bond' },
   ],
 };
-const ALL_CATEGORIES = [COUNTRY_CAT, TYPE_CAT];
 
 // A well-formed single-rule plan used as a positive control.
 function makeGoodPlan(overrides) {
@@ -111,21 +110,21 @@ test('newPlan / newRule: each call returns a distinct id', () => {
 
 test('validateRule: good rule with sum=100 → valid', () => {
   const r = { name: 'TW stock/bond', when: { country: ['TW'] }, distribute: { type: { stock: 60, bond: 40 } } };
-  const out = validateRule(r, ALL_CATEGORIES);
+  const out = validateRule(r);
   assert.equal(out.valid, true);
   assert.deepEqual(out.errors, []);
 });
 
 test('validateRule: weights sum != 100 → invalid', () => {
   const r = { when: {}, distribute: { type: { stock: 50, bond: 30 } } };
-  const out = validateRule(r, ALL_CATEGORIES);
+  const out = validateRule(r);
   assert.equal(out.valid, false);
   assert.ok(out.errors.some(e => /sum to 100/.test(e)));
 });
 
 test('validateRule: weights sum 99.99 accepted (FP epsilon)', () => {
   const r = { name: 'Some rule', when: {}, distribute: { type: { stock: 59.99, bond: 40.01 } } };
-  const out = validateRule(r, ALL_CATEGORIES);
+  const out = validateRule(r);
   assert.equal(out.valid, true);
 });
 
@@ -133,112 +132,112 @@ test('validateRule: weights sum 99.99 accepted (FP epsilon)', () => {
 
 test('validateRule: name present and non-empty → valid', () => {
   const r = { name: 'Domestic equities', when: {}, distribute: { type: { stock: 100 } } };
-  const out = validateRule(r, ALL_CATEGORIES);
+  const out = validateRule(r);
   assert.equal(out.valid, true);
 });
 
 test('validateRule: name missing → invalid', () => {
   const r = { when: {}, distribute: { type: { stock: 100 } } };
-  const out = validateRule(r, ALL_CATEGORIES);
+  const out = validateRule(r);
   assert.equal(out.valid, false);
   assert.ok(out.errors.some(e => /name/.test(e)), 'should have a name-related error');
 });
 
 test('validateRule: name === "" → invalid', () => {
   const r = { name: '', when: {}, distribute: { type: { stock: 100 } } };
-  const out = validateRule(r, ALL_CATEGORIES);
+  const out = validateRule(r);
   assert.equal(out.valid, false);
   assert.ok(out.errors.some(e => /name/.test(e)), 'should have a name-related error');
 });
 
 test('validateRule: name whitespace-only → invalid', () => {
   const r = { name: '   ', when: {}, distribute: { type: { stock: 100 } } };
-  const out = validateRule(r, ALL_CATEGORIES);
+  const out = validateRule(r);
   assert.equal(out.valid, false);
   assert.ok(out.errors.some(e => /name/.test(e)), 'should have a name-related error');
 });
 
 test('validateRule: name non-string → invalid', () => {
   const r = { name: 42, when: {}, distribute: { type: { stock: 100 } } };
-  const out = validateRule(r, ALL_CATEGORIES);
+  const out = validateRule(r);
   assert.equal(out.valid, false);
   assert.ok(out.errors.some(e => /name/.test(e)), 'should have a name-related error');
 });
 
 test('validateRule: weights sum 100.02 rejected', () => {
   const r = { when: {}, distribute: { type: { stock: 60.02, bond: 40 } } };
-  const out = validateRule(r, ALL_CATEGORIES);
+  const out = validateRule(r);
   assert.equal(out.valid, false);
   assert.ok(out.errors.some(e => /sum to 100/.test(e)));
 });
 
 test('validateRule: empty distribute (no key) → invalid', () => {
   const r = { when: {}, distribute: {} };
-  const out = validateRule(r, ALL_CATEGORIES);
+  const out = validateRule(r);
   assert.equal(out.valid, false);
   assert.ok(out.errors.some(e => /exactly 1 key/.test(e)));
 });
 
 test('validateRule: multi-key distribute → invalid', () => {
   const r = { when: {}, distribute: { type: { stock: 100 }, country: { TW: 100 } } };
-  const out = validateRule(r, ALL_CATEGORIES);
+  const out = validateRule(r);
   assert.equal(out.valid, false);
   assert.ok(out.errors.some(e => /exactly 1 key/.test(e)));
 });
 
 test('validateRule: empty when is allowed (matches all records)', () => {
   const r = { name: 'Catch-all', when: {}, distribute: { type: { stock: 100 } } };
-  const out = validateRule(r, ALL_CATEGORIES);
+  const out = validateRule(r);
   assert.equal(out.valid, true);
 });
 
 test('validateRule: when value is not an array → invalid', () => {
   const r = { when: { country: 'TW' }, distribute: { type: { stock: 100 } } };
-  const out = validateRule(r, ALL_CATEGORIES);
+  const out = validateRule(r);
   assert.equal(out.valid, false);
   assert.ok(out.errors.some(e => /when\.country must be an array/.test(e)));
 });
 
 test('validateRule: when value is array of non-strings → invalid', () => {
   const r = { when: { country: [1, 2] }, distribute: { type: { stock: 100 } } };
-  const out = validateRule(r, ALL_CATEGORIES);
+  const out = validateRule(r);
   assert.equal(out.valid, false);
   assert.ok(out.errors.some(e => /non-empty strings/.test(e)));
 });
 
 test('validateRule: when is an Array (not plain object) → invalid', () => {
   const r = { when: ['TW'], distribute: { type: { stock: 100 } } };
-  const out = validateRule(r, ALL_CATEGORIES);
+  const out = validateRule(r);
   assert.equal(out.valid, false);
   assert.ok(out.errors.some(e => /when must be a plain object/.test(e)));
 });
 
 test('validateRule: missing distribute → invalid', () => {
   const r = { when: {} };
-  const out = validateRule(r, ALL_CATEGORIES);
+  const out = validateRule(r);
   assert.equal(out.valid, false);
 });
 
 test('validateRule: negative weight → invalid', () => {
   const r = { when: {}, distribute: { type: { stock: 110, bond: -10 } } };
-  const out = validateRule(r, ALL_CATEGORIES);
+  const out = validateRule(r);
   assert.equal(out.valid, false);
   assert.ok(out.errors.some(e => /non-negative finite number/.test(e)));
 });
 
 test('validateRule: non-numeric weight → invalid', () => {
   const r = { when: {}, distribute: { type: { stock: 'sixty', bond: 40 } } };
-  const out = validateRule(r, ALL_CATEGORIES);
+  const out = validateRule(r);
   assert.equal(out.valid, false);
 });
 
-test('validateRule: allCategories is accepted but does not gate validity (current behaviour)', () => {
-  // The lib does not require the category ids referenced by when / distribute
-  // to exist in allCategories. That check belongs in the UI layer (so the
-  // user can save a plan referencing a category they just deleted) — see
+test('validateRule: rule referencing non-existent category ids is allowed (UI-layer check, not lib)', () => {
+  // The lib does not require category ids referenced by when / distribute
+  // to exist in the category list. That check belongs in the UI layer so
+  // a user can save a plan referencing a category they just deleted — see
   // plansReferencingCategory for the delete-protection path.
   const r = { name: 'Ghost rule', when: { ghost: ['x'] }, distribute: { phantom: { y: 100 } } };
-  const out = validateRule(r, ALL_CATEGORIES);
+  const out = validateRule(r);
   assert.equal(out.valid, true);
 });
 
@@ -488,7 +487,7 @@ test('driftForRule: full match — matching_total = sum of all matching records'
     when: { country: ['TW'] },
     distribute: { type: { stock: 60, bond: 40 } },
   };
-  const out = driftForRule(rule, records, attrs, ALL_CATEGORIES, FX);
+  const out = driftForRule(rule, records, attrs, FX);
   assert.equal(out.matching_total, 1000);
   assert.equal(out.actual.stock, 60);
   assert.equal(out.actual.bond, 40);
@@ -513,7 +512,7 @@ test('driftForRule: partial match — only TW records contribute', () => {
     when: { country: ['TW'] },
     distribute: { type: { stock: 60, bond: 40 } },
   };
-  const out = driftForRule(rule, records, attrs, ALL_CATEGORIES, FX);
+  const out = driftForRule(rule, records, attrs, FX);
   assert.equal(out.matching_total, 500);
   // TW distribution: stock 300 / bond 200 → stock 60%, bond 40%
   assert.equal(out.actual.stock, 60);
@@ -531,7 +530,7 @@ test('driftForRule: no match — empty result with target preserved', () => {
     when: { country: ['TW'] },
     distribute: { type: { stock: 60, bond: 40 } },
   };
-  const out = driftForRule(rule, records, attrs, ALL_CATEGORIES, FX);
+  const out = driftForRule(rule, records, attrs, FX);
   assert.equal(out.matching_total, 0);
   assert.deepEqual(out.actual, {});
   assert.deepEqual(out.drift, {});
@@ -547,7 +546,7 @@ test('driftForRule: single record → 100% actual on its value, full drift on ot
     when: { country: ['TW'] },
     distribute: { type: { stock: 60, bond: 40 } },
   };
-  const out = driftForRule(rule, records, attrs, ALL_CATEGORIES, FX);
+  const out = driftForRule(rule, records, attrs, FX);
   assert.equal(out.matching_total, 1000);
   assert.equal(out.actual.stock, 100);
   assert.equal(out.actual.bond, 0);
@@ -570,7 +569,7 @@ test('driftForRule: _unassigned bucket — some matching records lack target att
     when: { country: ['TW'] },
     distribute: { type: { stock: 60, bond: 40 } },
   };
-  const out = driftForRule(rule, records, attrs, ALL_CATEGORIES, FX);
+  const out = driftForRule(rule, records, attrs, FX);
   assert.equal(out.matching_total, 200);
   // filtered_total = 150 (records with type). Normalized: stock 100/150 = 66.67,
   // bond 50/150 = 33.33. _unassigned = 50/200 = 25%.
@@ -595,7 +594,7 @@ test('driftForRule: all matching records lack target attribute → actual={_unas
     when: { country: ['TW'] },
     distribute: { type: { stock: 60, bond: 40 } },
   };
-  const out = driftForRule(rule, records, attrs, ALL_CATEGORIES, FX);
+  const out = driftForRule(rule, records, attrs, FX);
   assert.equal(out.matching_total, 150);
   assert.deepEqual(out.actual, { _unassigned: 100 });
   assert.deepEqual(out.drift, {});
@@ -606,7 +605,7 @@ test('driftForRule: empty records / null inputs → no throw, empty result', () 
     when: { country: ['TW'] },
     distribute: { type: { stock: 100 } },
   };
-  const out = driftForRule(rule, [], {}, ALL_CATEGORIES, FX);
+  const out = driftForRule(rule, [], {}, FX);
   assert.equal(out.matching_total, 0);
   assert.deepEqual(out.actual, {});
   assert.deepEqual(out.drift, {});
@@ -625,7 +624,7 @@ test('driftForRule: multi-currency — converted to TWD via fxRate', () => {
     when: { country: ['TW'] },
     distribute: { type: { stock: 50, bond: 50 } },
   };
-  const out = driftForRule(rule, records, attrs, ALL_CATEGORIES, FX);
+  const out = driftForRule(rule, records, attrs, FX);
   assert.equal(out.matching_total, 400);
   assert.equal(out.actual.stock, 100);
   assert.equal(out.actual.bond, 0);
@@ -646,7 +645,7 @@ test('driftForRule: debt (negative value) contributes negatively to matching_tot
     when: { country: ['TW'] },
     distribute: { type: { stock: 60, bond: 40 } },
   };
-  const out = driftForRule(rule, records, attrs, ALL_CATEGORIES, FX);
+  const out = driftForRule(rule, records, attrs, FX);
   assert.equal(out.matching_total, 700);
   // stock 1000, bond -300 → stock 142.86%, bond -42.86% (over matching_total)
   // Drift: stock 82.86, bond -82.86 (sum 0).
@@ -679,7 +678,7 @@ test('driftForPlan: maps driftForRule across plan.rules', () => {
     c: { country: 'US', type: 'stock' },
     d: { country: 'US', type: 'bond' },
   };
-  const out = driftForPlan(plan, records, attrs, ALL_CATEGORIES, FX);
+  const out = driftForPlan(plan, records, attrs, FX);
   assert.equal(out.length, 2);
   assert.equal(out[0].matching_total, 1000);
   assert.equal(out[1].matching_total, 1000);
@@ -698,15 +697,15 @@ test('driftForPlan: mix of matches and non-matches → empty rule drifts preserv
   };
   const records = [{ id: 'a', currency: 'TWD', value: 500 }];
   const attrs = { a: { country: 'TW', type: 'stock' } };
-  const out = driftForPlan(plan, records, attrs, ALL_CATEGORIES, FX);
+  const out = driftForPlan(plan, records, attrs, FX);
   assert.equal(out.length, 2);
   assert.equal(out[0].matching_total, 500);
   assert.equal(out[1].matching_total, 0);
 });
 
 test('driftForPlan: empty plan / null plan → []', () => {
-  assert.deepEqual(driftForPlan(null, [], {}, ALL_CATEGORIES, FX), []);
-  assert.deepEqual(driftForPlan({ rules: [] }, [], {}, ALL_CATEGORIES, FX), []);
+  assert.deepEqual(driftForPlan(null, [], {}, FX), []);
+  assert.deepEqual(driftForPlan({ rules: [] }, [], {}, FX), []);
 });
 
 // ---- validatePlans ----

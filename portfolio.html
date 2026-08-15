@@ -858,7 +858,6 @@
                 <div class="flex items-center gap-1">
                   <button @click="moveRuleInDraft(rIdx, -1)"
                           :disabled="rIdx === 0" data-testid="plan-rule-up"
-                          data-testid="plan-rule-up"
                           class="text-xs px-2 py-1 text-slate-400 hover:text-slate-900 disabled:opacity-30 disabled:cursor-not-allowed"
                           :title="t('plan.editor.moveUp')">↑</button>
                   <button @click="moveRuleInDraft(rIdx, 1)"
@@ -3468,7 +3467,7 @@
         const cats = this.data.categories || [];
         return plan.rules.map(rule => {
           const matching = Plan.recordsMatchingRule(rule, records, attrs);
-          const drift = Plan.driftForRule(rule, records, attrs, cats, this.fxRate());
+          const drift = Plan.driftForRule(rule, records, attrs, this.fxRate());
           const card = {
             rule,
             drift,
