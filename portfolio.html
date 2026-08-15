@@ -429,7 +429,11 @@
                x-text="t('plan.drift.oneRecordWarning')"></p>
 
             <!-- Values table (variant B; side-by-side columns) -->
-            <table class="w-full text-sm">
+            <!-- Spec Q7: target rows greyed out when no records match (the
+                 user's target distribution looks inert because there's no
+                 data to drift against). Declarative fade via opacity-40 on
+                 the wrapper keeps the markup free of per-row booleans. -->
+            <table class="w-full text-sm" :class="card.hasNoMatching ? 'opacity-40' : ''">
               <thead>
                 <tr class="text-xs uppercase tracking-wide text-slate-500 border-b border-slate-100">
                   <th class="text-left py-2 font-medium" x-text="t('plan.drift.value')"></th>

@@ -248,6 +248,11 @@ test.describe('portfolio.html drift report (ticket #04)', () => {
     const cards = page.locator('[data-testid=drift-card]');
     await expect(cards).toHaveCount(4);
     await expect(cards.nth(3).locator('[data-testid=drift-card-no-matching]')).toBeVisible();
+    // Spec Q7: target row (the whole values table on the card) is greyed
+    // out via opacity-40 when no records match. Verify the class is
+    // applied to the 4th card's table and not the first.
+    await expect(cards.nth(3).locator('table').first()).toHaveClass(/opacity-40/);
+    await expect(cards.nth(0).locator('table').first()).not.toHaveClass(/opacity-40/);
     await expect(cards.nth(0).locator('[data-testid=drift-card-no-matching]')).not.toBeVisible();
 
     expect(errors).toEqual([]);
