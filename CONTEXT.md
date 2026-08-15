@@ -101,7 +101,7 @@ A user-defined set of target allocations across categories, expressed as flat ru
 _Avoid_: Strategy, allocation (overloaded), target
 
 **Plan rule**:
-A single target distribution in a plan. Filters records by category attributes (`when`) and specifies how those records should be distributed across the values of one target category (`distribute`). Independent — a record can fall in multiple rules' actuals.
+A single target distribution in a plan. Filters records by category attributes (`when`) and specifies how those records should be distributed across the values of exactly one target category (`distribute`). Independent — a record can fall in multiple rules' actuals; a plan with two independent slices ("TW sleeve" and "stock sleeve") is two rules with the same / overlapping `when` filters and different `distribute` axes. The `name` field is required (per `Plan.validateRule`) and surfaces as the card header on Home's drift report.
 _Avoid_: Constraint, condition (overloaded), rule of thumb
 
 **Target distribution**:
@@ -152,7 +152,7 @@ When the local and remote copies have diverged. Resolved per-record using timest
 _Avoid_: Merge conflict (technical), edit conflict
 
 **Deletion log**:
-`data.deletions[]` — an additive array of `{id, target_id, type, deleted_at, device_id}` entries that records "this record was hard-deleted; do not resurrect from remote." Combined with `mergeById` to filter out deleted IDs after every merge. Conflict resolution: *delete always wins* — a stale edit on another device after a delete is lost. The log grows unbounded; recovery from a bad delete is via the *Backup* layer, not via deletion-log edits. See `docs/adr/0011-true-delete-deletion-log.md`.
+`data.deletions[]` — an additive array of `{id, target_id, type, deleted_at, device_id}` entries that records "this record was hard-deleted; do not resurrect from remote." Combined with `mergeById` to filter out deleted IDs after every merge. Conflict resolution: *delete always wins* — a stale edit on another device after a delete is lost. The log grows unbounded; recovery from a bad delete is via the *Backup* layer, not via deletion-log edits. The `type` field discriminates the four record-bearing collections: `'holdings'` / `'cash_accounts'` / `'debts'` / `'plans'`. See `docs/adr/0011-true-delete-deletion-log.md` and `docs/adr/0013-target-allocation-plans.md` §8 for the plans adoption.
 _Avoid_: tombstone list (overloaded), delete log (too generic)
 
 ## Safety net
