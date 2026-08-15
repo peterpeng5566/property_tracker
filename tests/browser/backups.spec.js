@@ -633,10 +633,11 @@ test.describe('portfolio.html backups page (ticket #03)', () => {
     // Holdings stay at the RESTORED state (5 shares), not the pre-
     // restore state (10 shares). Use nth(1) (Shares column) — not
     // `td:text("5")` — because $500.00 in the cost column also
-    // contains "5" as a substring.
+    // contains "5" as a substring. Note: the v1.6 Order column
+    // (leftmost) shifts the Shares column from nth(1) to nth(2).
     await page.locator('button:has-text("Holdings")').click();
     const aaplRow = page.locator('tr:has-text("AAPL")');
-    await expect(aaplRow.locator('td').nth(1)).toHaveText('5', { timeout: 10_000 });
+    await expect(aaplRow.locator('td').nth(2)).toHaveText('5', { timeout: 10_000 });
 
     // The self-protection entry is preserved in data.backups[] —
     // it's the only entry with shares === 10 (since the source backup
@@ -973,12 +974,13 @@ test.describe('portfolio.html backups page (ticket #03)', () => {
     await expect(toast).not.toContainText(/failed/i);
 
     // Holdings are now the BACKUP state (5 shares), not the rolled-
-    // back current state (10 shares). Use nth(1) (Shares column) —
+    // back current state (10 shares). Use nth(2) (Shares column;
+    // the v1.6 Order column shifts Shares from nth(1) to nth(2)) —
     // not `td:text("5")` — because $500.00 in the cost column also
     // contains "5" as a substring.
     await page.locator('button:has-text("Holdings")').click();
     const aaplRow = page.locator('tr:has-text("AAPL")');
-    await expect(aaplRow.locator('td').nth(1)).toHaveText('5', { timeout: 10_000 });
+    await expect(aaplRow.locator('td').nth(2)).toHaveText('5', { timeout: 10_000 });
 
     // localStorage reflects the restored state (5 shares).
     const finalBackups = await page.evaluate((key) => {

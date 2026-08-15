@@ -1,28 +1,33 @@
 // tests/browser/ordering.spec.js — Playwright browser smoke for the
-// v1.6 record-ordering data model + mechanical wiring (ticket 01).
-// Run via stage 4 of ./scripts/safety-net.sh.
+// v1.6 record-ordering feature. Run via stage 4 of
+// ./scripts/safety-net.sh.
 //
-// What it covers (ticket 01 / spec §Mechanical wiring):
-//   - Pre-existing holdings_order: delete a holding via the shim strips
-//     its id from the matching order array.
-//   - Pre-existing holdings_order: refresh the page after delete → order
-//     array still clean (no stale id).
-//   - Pre-existing cash_accounts_order + debts_order: same coverage
-//     (cross-collection independence — reordering one collection does
-//     not affect the others).
-//   - Add a new holding when order array absent → order array stays
-//     absent (lazy-write preserved).
-//
-// Non-goals (covered by T02 / T03):
-//   - ↑/↓ button rendering, disabled states, lazy-write materialize
-//     on first click.
+// What it covers:
+//   - Ticket 01 / spec §Mechanical wiring:
+//       * Pre-existing holdings_order: delete a holding via the shim
+//         strips its id from the matching order array.
+//       * Refresh the page after delete → order array still clean
+//         (no stale id).
+//       * Cross-collection independence (cash + debts).
+//       * Add a new holding when order array absent → order array
+//         stays absent (lazy-write preserved).
+//   - Ticket 02 / spec §Holdings UI:
+//       * No order array → click ↑ on row 2 → row 2 swaps with row 1,
+//         array materializes.
+//       * Existing order array → click ↓ on row 2 → row 2 swaps with
+//         row 3.
+//       * Top row ↑ button is disabled; bottom row ↓ button is disabled.
+//       * Single holding → both ↑ and ↓ are disabled.
+//       * Add a new holding → it appears at the bottom of the table
+//         (manual order not violated).
+//       * Delete a middle holding → table re-renders without it.
 //
 // Wiring:
 //   - Fixture is injected via page.addInitScript into localStorage
 //     under the key 'property_tracker_portfolio_v1'.
-//   - The delete / add paths use Alpine shim methods
-//     (window.Alpine.$data(root).removeHolding / saveHolding etc.) to
-//     avoid depending on the T02/T03 button selectors.
+//   - T01 scenarios use Alpine shim methods (removeHolding / saveHolding
+//     etc.) to avoid depending on the T02 button selectors.
+//   - T02 scenarios use the actual buttons via data-testid.
 
 'use strict';
 
@@ -109,6 +114,8 @@ function readStoredOrder(page, key) {
     return data[args.key];
   }, { storageKey: STORAGE_KEY, key });
 }
+
+// --- T01 scenarios --------------------------------------------------------
 
 test('holdings_order: delete a holding strips its id from the matching order array', async ({ page }) => {
   await page.addInitScript(INIT_SCRIPT);
@@ -277,4 +284,207 @@ test('holdings_order: absent array stays absent when adding a new holding (lazy-
   // Lazy-write preserved: holdings_order is still absent.
   const after = await readStoredOrder(page, 'holdings_order');
   expect(after).toBeUndefined();
+});
+
+// --- T02 scenarios --------------------------------------------------------
+
+// Helper: navigate to the Holdings page so the data-testid selectors attach.
+async function gotoHoldingsPage(page) {
+  await page.goto('http://localhost:8000/portfolio.html');
+  // The Holdings page is hidden by default (x-show). Flip currentPage via
+  // the Alpine shim rather than clicking the nav button (the nav button
+  // has no testid, but the page-render reactivity does).
+  await page.waitForFunction(() => !!window.Alpine);
+  await page.evaluate(() => {
+    const root = document.querySelector('[x-data]');
+    const data = window.Alpine.$data(root);
+    data.currentPage = 'holdings';
+  });
+  // Wait for Alpine to render the row buttons. We use `state: 'attached'`
+  // so we don't depend on the section becoming visible (x-show toggles
+  // display:none but the DOM stays attached).
+  await page.waitForSelector('[data-testid^="holdings-move-up-"]', { state: 'attached' });
+}
+
+// Helper: read the current ticker order as rendered in the Holdings table.
+async function readRenderedHoldingsOrder(page) {
+  return page.evaluate(() => {
+    const rows = document.querySelectorAll('[data-testid^="holdings-move-up-"]');
+    const tickers = [];
+    for (const btn of rows) {
+      const tr = btn.closest('tr');
+      // The new "Order" column is leftmost; ticker is now in the 2nd cell.
+      const tickerEl = tr.querySelector('td:nth-child(2) .font-medium');
+      if (tickerEl) tickers.push(tickerEl.textContent.trim());
+    }
+    return tickers;
+  });
+}
+
+test('Holdings UI: no order array → click ↑ on row 2 → row 2 swaps with row 1, array materializes', async ({ page }) => {
+  // User has 3 holdings, has never reordered → holdings_order is absent.
+  const fixture = { ...PORTFOLIO_FIXTURE };
+  delete fixture.holdings_order;
+  await page.addInitScript(`
+    localStorage.setItem(${JSON.stringify(STORAGE_KEY)}, JSON.stringify(${JSON.stringify(fixture)}));
+  `);
+  await gotoHoldingsPage(page);
+
+  // Confirm initial state: array absent, table renders in insertion order.
+  expect(await readStoredOrder(page, 'holdings_order')).toBeUndefined();
+  expect(await readRenderedHoldingsOrder(page)).toEqual(['AAPL', 'GOOG', 'MSFT']);
+
+  // Click ↑ on row 2 (GOOG / h-2).
+  await page.click('[data-testid="holdings-move-up-h-2"]');
+
+  // Wait for save to localStorage.
+  await page.waitForFunction(
+    () => {
+      const raw = localStorage.getItem('property_tracker_portfolio_v1');
+      if (!raw) return false;
+      const d = JSON.parse(raw);
+      return Array.isArray(d.holdings_order) && d.holdings_order[0] === 'h-2';
+    },
+    { timeout: 5000 }
+  );
+
+  // Order array materialized with h-2 at the top.
+  const order = await readStoredOrder(page, 'holdings_order');
+  expect(order).toEqual(['h-2', 'h-1', 'h-3']);
+
+  // Table re-renders with GOOG at the top.
+  expect(await readRenderedHoldingsOrder(page)).toEqual(['GOOG', 'AAPL', 'MSFT']);
+});
+
+test('Holdings UI: existing order array → click ↓ on row 2 → row 2 swaps with row 3', async ({ page }) => {
+  // Order array pre-materialized in insertion order.
+  await page.addInitScript(INIT_SCRIPT);
+  await gotoHoldingsPage(page);
+
+  // Click ↓ on row 2 (GOOG / h-2).
+  await page.click('[data-testid="holdings-move-down-h-2"]');
+
+  await page.waitForFunction(
+    () => {
+      const raw = localStorage.getItem('property_tracker_portfolio_v1');
+      if (!raw) return false;
+      const d = JSON.parse(raw);
+      return d.holdings_order && d.holdings_order[1] === 'h-3';
+    },
+    { timeout: 5000 }
+  );
+
+  const order = await readStoredOrder(page, 'holdings_order');
+  expect(order).toEqual(['h-1', 'h-3', 'h-2']);
+
+  // Table reflects the swap.
+  expect(await readRenderedHoldingsOrder(page)).toEqual(['AAPL', 'MSFT', 'GOOG']);
+});
+
+test('Holdings UI: top row ↑ button is disabled, bottom row ↓ button is disabled', async ({ page }) => {
+  await page.addInitScript(INIT_SCRIPT);
+  await gotoHoldingsPage(page);
+
+  // Top row (h-1): ↑ disabled, ↓ enabled.
+  await expect(page.locator('[data-testid="holdings-move-up-h-1"]')).toBeDisabled();
+  await expect(page.locator('[data-testid="holdings-move-down-h-1"]')).toBeEnabled();
+
+  // Middle row (h-2): both enabled.
+  await expect(page.locator('[data-testid="holdings-move-up-h-2"]')).toBeEnabled();
+  await expect(page.locator('[data-testid="holdings-move-down-h-2"]')).toBeEnabled();
+
+  // Bottom row (h-3): ↑ enabled, ↓ disabled.
+  await expect(page.locator('[data-testid="holdings-move-up-h-3"]')).toBeEnabled();
+  await expect(page.locator('[data-testid="holdings-move-down-h-3"]')).toBeDisabled();
+});
+
+test('Holdings UI: single holding → both ↑ and ↓ are disabled', async ({ page }) => {
+  const singleFixture = {
+    ...PORTFOLIO_FIXTURE,
+    holdings: [PORTFOLIO_FIXTURE.holdings[0]],
+    holdings_order: ['h-1'],
+  };
+  await page.addInitScript(`
+    localStorage.setItem(${JSON.stringify(STORAGE_KEY)}, JSON.stringify(${JSON.stringify(singleFixture)}));
+  `);
+  await gotoHoldingsPage(page);
+
+  await expect(page.locator('[data-testid="holdings-move-up-h-1"]')).toBeDisabled();
+  await expect(page.locator('[data-testid="holdings-move-down-h-1"]')).toBeDisabled();
+});
+
+test('Holdings UI: add a new holding → it appears at the bottom of the table (manual order not violated)', async ({ page }) => {
+  // Order array present. The add shim appends to the array (T01 wiring).
+  await page.addInitScript(INIT_SCRIPT);
+  await gotoHoldingsPage(page);
+
+  // Add a new holding via the saveHolding shim.
+  await page.evaluate(() => {
+    const root = document.querySelector('[x-data]');
+    const data = window.Alpine.$data(root);
+    data.editing = null;
+    data.form = {
+      ticker: 'NEW', shares: 1, cost: 10, currency: 'TWD', current_price: 10,
+      attributes: {},
+    };
+    data.saveHolding();
+  });
+
+  // Wait for the holdings list to grow to 4.
+  await page.waitForFunction(
+    () => {
+      const raw = localStorage.getItem('property_tracker_portfolio_v1');
+      if (!raw) return false;
+      const d = JSON.parse(raw);
+      return d.holdings.length === 4 && Array.isArray(d.holdings_order)
+          && d.holdings_order.length === 4;
+    },
+    { timeout: 5000 }
+  );
+
+  // The new id is appended to the order array (the T01 save shim appends).
+  const order = await readStoredOrder(page, 'holdings_order');
+  expect(order.slice(0, 3)).toEqual(['h-1', 'h-2', 'h-3']);
+  const newId = order[3];
+
+  // The new ticker 'NEW' is rendered at the bottom of the table.
+  const rendered = await readRenderedHoldingsOrder(page);
+  expect(rendered).toEqual(['AAPL', 'GOOG', 'MSFT', 'NEW']);
+
+  // The new row has its own ↑/↓ buttons with the correct testid.
+  await expect(page.locator(`[data-testid="holdings-move-up-${newId}"]`)).toBeEnabled();
+  await expect(page.locator(`[data-testid="holdings-move-down-${newId}"]`)).toBeDisabled();
+});
+
+test('Holdings UI: delete a middle holding → table re-renders without it; array no longer references its id', async ({ page }) => {
+  // Pre-materialized order array.
+  await page.addInitScript(INIT_SCRIPT);
+  await gotoHoldingsPage(page);
+
+  // Auto-accept the confirm dialog for the delete.
+  autoAcceptDialogs(page);
+
+  // Delete h-2 via the shim (the per-row delete button uses the same shim).
+  await page.evaluate(() => {
+    const root = document.querySelector('[x-data]');
+    const data = window.Alpine.$data(root);
+    data.removeHolding('h-2');
+  });
+
+  await page.waitForFunction(
+    () => {
+      const raw = localStorage.getItem('property_tracker_portfolio_v1');
+      if (!raw) return false;
+      const d = JSON.parse(raw);
+      return d.holdings_order && d.holdings_order.indexOf('h-2') === -1
+          && d.holdings.length === 2;
+    },
+    { timeout: 5000 }
+  );
+
+  const order = await readStoredOrder(page, 'holdings_order');
+  expect(order).toEqual(['h-1', 'h-3']);
+
+  // Table re-renders without GOOG.
+  expect(await readRenderedHoldingsOrder(page)).toEqual(['AAPL', 'MSFT']);
 });

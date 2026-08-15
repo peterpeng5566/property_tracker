@@ -501,6 +501,14 @@
         <table class="w-full text-sm">
           <thead class="bg-slate-50 border-b border-slate-200">
             <tr>
+              <!-- v1.6 — manual record ordering (ADR 0015). New "Order"
+                   column on the leftmost position so the reorder controls
+                   don't shift when the action column grows. Width ~64px.
+                   ↑/↓ buttons in each row are disabled at the boundaries
+                   (top ↑ disabled, bottom ↓ disabled, single row both
+                   disabled). Lazy-write: first click materializes the
+                   holdings_order array; see ADR 0015 §3. -->
+              <th class="text-center px-2 py-3 font-medium text-slate-600 w-16" x-text="t('holdings.col.order')"></th>
               <th class="text-left px-4 py-3 font-medium text-slate-600" x-text="t('holdings.col.ticker')"></th>
               <th class="text-right px-4 py-3 font-medium text-slate-600" x-text="t('holdings.col.shares')"></th>
               <th class="text-right px-4 py-3 font-medium text-slate-600" x-text="t('holdings.col.costPerShare')"></th>
@@ -513,12 +521,26 @@
             </tr>
           </thead>
           <tbody>
-            <template x-for="h in holdings" :key="h.id">
+            <template x-for="(h, idx) in getOrderedHoldings()" :key="h.id">
               <tr class="border-b border-slate-100 last:border-0 hover:bg-slate-50"
                   :class="{
                     'opacity-50': h.inactive,
                     'refresh-failed': h._refresh_failed
                   }">
+                <td class="px-2 py-3 text-center">
+                  <div class="flex items-center justify-center gap-1">
+                    <button @click="moveHoldingUp(h.id)"
+                            :disabled="idx === 0"
+                            :data-testid="'holdings-move-up-' + h.id"
+                            :title="idx === 0 ? t('holdings.moveUpDisabled') : t('holdings.moveUp')"
+                            class="text-slate-400 hover:text-slate-900 disabled:opacity-40 disabled:cursor-not-allowed text-sm leading-none">↑</button>
+                    <button @click="moveHoldingDown(h.id)"
+                            :disabled="idx === getOrderedHoldings().length - 1"
+                            :data-testid="'holdings-move-down-' + h.id"
+                            :title="idx === getOrderedHoldings().length - 1 ? t('holdings.moveDownDisabled') : t('holdings.moveDown')"
+                            class="text-slate-400 hover:text-slate-900 disabled:opacity-40 disabled:cursor-not-allowed text-sm leading-none">↓</button>
+                  </div>
+                </td>
                 <td class="px-4 py-3">
                   <div class="font-medium" x-text="h.ticker"></div>
                   <div class="flex flex-wrap gap-1 mt-1" x-show="h.attributes && Object.keys(h.attributes).length > 0">
@@ -568,7 +590,7 @@
               </tr>
             </template>
             <tr x-show="holdings.length === 0">
-              <td colspan="9" class="px-4 py-12 text-center text-slate-400" x-text="t('holdings.empty')"></td>
+              <td colspan="10" class="px-4 py-12 text-center text-slate-400" x-text="t('holdings.empty')"></td>
             </tr>
           </tbody>
         </table>
@@ -2052,6 +2074,11 @@
       'holdings.col.week52': '52W Range',
       'holdings.col.value': 'Value',
       'holdings.col.gainLoss': 'Gain / Loss',
+      'holdings.col.order': 'Order',
+      'holdings.moveUp': 'Move up',
+      'holdings.moveDown': 'Move down',
+      'holdings.moveUpDisabled': 'Already at the top',
+      'holdings.moveDownDisabled': 'Already at the bottom',
       'holdings.tooltip.refreshToPopulate': 'Click ↻ Refresh to populate',
       'holdings.tooltip.refreshFailed': 'Last refresh failed for this holding',
       'holdings.active': 'Active',
@@ -2393,6 +2420,11 @@
       'holdings.col.week52': '52週區間',
       'holdings.col.value': '市值',
       'holdings.col.gainLoss': '損益',
+      'holdings.col.order': '順序',
+      'holdings.moveUp': '上移',
+      'holdings.moveDown': '下移',
+      'holdings.moveUpDisabled': '已在最頂端',
+      'holdings.moveDownDisabled': '已在最底端',
       'holdings.tooltip.refreshToPopulate': '按 ↻ 重新整理以更新',
       'holdings.tooltip.refreshFailed': '上次重新整理失敗',
       'holdings.active': 'Active',
@@ -3660,6 +3692,35 @@
           h.device_id = DEVICE_ID;
         }
       },
+
+      // ---- v1.6 — Manual record ordering (ADR 0015) ----
+      // Reordered view (template x-for iterates getter). Lazy-write: when
+      // data.<collection>_order is undefined, applyOrder returns a clone
+      // of records in insertion order (defensive behavior of lib/order.js).
+      getOrderedHoldings() {
+        return Order.applyOrder(this.data.holdings, this.data.holdings_order);
+      },
+      _moveHolding(id, direction) {
+        // Resolve the index in the *ordered* array (not raw data.holdings),
+        // then materialize the order array if absent, then swap.
+        const ordered = this.getOrderedHoldings();
+        const idx = ordered.findIndex(h => h.id === id);
+        if (idx === -1) return;
+        const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+        if (targetIdx < 0 || targetIdx >= ordered.length) return; // boundary guard
+        const targetId = ordered[targetIdx].id;
+        // Materialize the order array if absent (ADR 0015 §3 — first click).
+        const currentOrder = Array.isArray(this.data.holdings_order)
+          ? this.data.holdings_order
+          : this.data.holdings.map(h => h.id);
+        const fromIndex = currentOrder.indexOf(id);
+        const toIndex = currentOrder.indexOf(targetId);
+        if (fromIndex === -1 || toIndex === -1) return;
+        this.data.holdings_order = Order.moveItem(currentOrder, fromIndex, toIndex);
+        this.save();
+      },
+      moveHoldingUp(id) { this._moveHolding(id, 'up'); },
+      moveHoldingDown(id) { this._moveHolding(id, 'down'); },
 
       // ---- Cash CRUD ----
       openAddCash() {
