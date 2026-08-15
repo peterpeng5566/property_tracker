@@ -259,6 +259,10 @@
               :class="currentPage === 'categories' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
               class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
               x-text="t('nav.categories')"></button>
+      <button @click="currentPage = 'plans'"
+              :class="currentPage === 'plans' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
+              class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
+              x-text="t('nav.plans')"></button>
       <button @click="currentPage = 'backups'; fetchCloudBackups().catch(() => {})"
               :class="currentPage === 'backups' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
               class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
@@ -621,6 +625,249 @@
       <div x-show="categories.length === 0" class="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-400"
            x-text="t('categories.empty')"></div>
     </section>
+    </div>
+
+    <!-- Plans page (v1.4 — ticket 02). Source of truth for validation,
+         rule matching, distribution, and drift lives in lib/plan.js
+         (Plan.*); the Alpine shims below mutate this.data.plans[] /
+         this.data.active_plan_id and the deep $watch fires save() +
+         Drive auto-push. Two views: (1) plan list (rows + active badge
+         + Set Active / Edit / Delete); (2) plan editor (name + rules
+         list with when / distribute sub-editors). planDraft is the
+         editing buffer; it points at either a fresh Plan.newPlan() or
+         a deep clone of an existing plan. On Save, the draft is
+         validated and merged into data.plans[] by id. On Cancel, the
+         draft is discarded. -->
+    <div x-show="currentPage === 'plans'" data-testid="plans-page" x-cloak>
+
+      <!-- Plan list -->
+      <section x-show="planDraft === null" class="mb-8">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-semibold" x-text="t('nav.plans')"></h2>
+          <button @click="addPlan()"
+                  data-testid="plan-create"
+                  class="text-sm bg-slate-900 text-white px-4 py-2 rounded-md hover:bg-slate-800 transition-colors"
+                  x-text="t('plan.actions.create')"></button>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="plan-list" x-show="(data.plans || []).length > 0">
+          <template x-for="plan in (data.plans || [])" :key="plan.id">
+            <div class="bg-white p-4 rounded-2xl border border-slate-200" data-testid="plan-row">
+              <div class="flex items-center justify-between mb-3 gap-2">
+                <div class="flex items-center gap-2 min-w-0">
+                  <span class="font-medium text-sm truncate" x-text="plan.name"></span>
+                  <span class="text-xs text-slate-500 tabular"
+                        x-text="t('plan.editor.rules', { n: (plan.rules || []).length })"></span>
+                  <span x-show="data.active_plan_id === plan.id"
+                        data-testid="plan-active-badge"
+                        class="text-xs px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700"
+                        x-text="t('plan.active.badge')"></span>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <button x-show="data.active_plan_id !== plan.id"
+                        @click="setActivePlan(plan.id)"
+                        data-testid="plan-set-active"
+                        class="text-xs px-2 py-1 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded transition-colors"
+                        x-text="t('plan.actions.setActive')"></button>
+                <button x-show="data.active_plan_id === plan.id"
+                        @click="clearActivePlan()"
+                        data-testid="plan-unset-active"
+                        class="text-xs px-2 py-1 border border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded transition-colors"
+                        x-text="t('plan.actions.unsetActive')"></button>
+                <button @click="editPlan(plan.id)"
+                        data-testid="plan-edit"
+                        class="text-xs px-2 py-1 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded transition-colors"
+                        x-text="t('plan.actions.edit')"></button>
+                <button @click="deletePlan(plan.id)"
+                        data-testid="plan-delete"
+                        class="text-xs px-2 py-1 border border-slate-200 text-slate-600 hover:bg-rose-50 hover:text-rose-700 rounded transition-colors"
+                        x-text="t('plan.actions.delete')"></button>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <div x-show="(data.plans || []).length === 0"
+             class="bg-white rounded-2xl border border-slate-200 p-8 text-center"
+             data-testid="plan-empty">
+          <p class="text-sm text-slate-400 mb-4" x-text="t('plan.empty.noPlans')"></p>
+          <button @click="addPlan()"
+                  class="text-sm bg-slate-900 text-white px-4 py-2 rounded-md hover:bg-slate-800 transition-colors"
+                  x-text="t('plan.actions.create')"></button>
+        </div>
+      </section>
+
+      <!-- Plan editor -->
+      <template x-if="planDraft !== null">
+        <section class="mb-8" data-testid="plan-editor">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-semibold"
+              x-text="planEditorMode === 'create' ? t('plan.actions.create') : t('plan.actions.edit')"></h2>
+          <div class="flex items-center gap-2">
+            <button @click="cancelPlanEdit()"
+                    data-testid="plan-cancel"
+                    class="text-xs px-3 py-1.5 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded transition-colors"
+                    x-text="t('plan.actions.cancel')"></button>
+            <button @click="savePlanDraft()"
+                    :disabled="!canSavePlanDraft()"
+                    data-testid="plan-save"
+                    class="text-xs px-3 py-1.5 bg-slate-900 text-white rounded transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed"
+                    x-text="canSavePlanDraft() ? t('plan.actions.save') : t('plan.editor.saveDisabled')"></button>
+          </div>
+        </div>
+
+        <!-- Inline error summary -->
+        <div data-testid="plan-errors"
+             x-show="planValidationErrors().length > 0"
+             class="bg-rose-50 border border-rose-200 rounded-lg p-3 mb-4 text-xs text-rose-700">
+          <ul class="list-disc list-inside space-y-0.5">
+            <template x-for="err in planValidationErrors()" :key="err">
+              <li x-text="err"></li>
+            </template>
+          </ul>
+        </div>
+
+        <!-- Name -->
+        <div class="mb-6">
+          <label class="block text-xs text-slate-500 mb-1" x-text="t('plan.editor.name')"></label>
+          <input type="text"
+                 x-model="planDraft.name"
+                 data-testid="plan-name"
+                 class="text-sm w-full max-w-md border border-slate-200 focus:border-slate-400 focus:outline-none px-3 py-2 rounded-md">
+        </div>
+
+        <!-- Rules -->
+        <div class="mb-4">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-semibold text-slate-700"
+                x-text="t('plan.editor.rules', { n: draftRules().length })"></h3>
+            <button @click="addRuleToDraft()"
+                    data-testid="plan-add-rule"
+                    class="text-xs px-3 py-1.5 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded transition-colors"
+                    x-text="t('plan.editor.addRule')"></button>
+          </div>
+
+          <template x-for="(rule, rIdx) in draftRules()" :key="rule.id">
+            <div class="bg-white border border-slate-200 rounded-2xl p-4 mb-3" data-testid="plan-rule">
+              <div class="flex items-center justify-between mb-3">
+                <span class="text-xs font-semibold text-slate-500"
+                      x-text="'Rule ' + (rIdx + 1)"></span>
+                <div class="flex items-center gap-1">
+                  <button @click="moveRuleInDraft(rIdx, -1)"
+                          :disabled="rIdx === 0" data-testid="plan-rule-up"
+                          data-testid="plan-rule-up"
+                          class="text-xs px-2 py-1 text-slate-400 hover:text-slate-900 disabled:opacity-30 disabled:cursor-not-allowed"
+                          :title="t('plan.editor.moveUp')">↑</button>
+                  <button @click="moveRuleInDraft(rIdx, 1)"
+                          :disabled="rIdx >= (draftRules().length - 1)"
+                          data-testid="plan-rule-down"
+                          class="text-xs px-2 py-1 text-slate-400 hover:text-slate-900 disabled:opacity-30 disabled:cursor-not-allowed"
+                          :title="t('plan.editor.moveDown')">↓</button>
+                  <button @click="removeRuleFromDraft(rIdx)"
+                          data-testid="plan-rule-remove"
+                          class="text-xs px-2 py-1 text-slate-400 hover:text-rose-600"
+                          :title="t('plan.editor.removeRule')">×</button>
+                </div>
+              </div>
+
+              <!-- when -->
+              <div class="mb-4">
+                <p class="text-xs text-slate-500 mb-2" x-text="t('plan.editor.ruleWhen')"></p>
+                <div class="space-y-2">
+                  <template x-for="(vals, catId) in rule.when" :key="catId">
+                    <div class="flex items-start gap-2 flex-wrap">
+                      <span class="text-xs font-medium px-2 py-1 bg-slate-100 text-slate-700 rounded"
+                            x-text="getCategoryName(catId)"></span>
+                      <div class="flex items-center gap-1 flex-wrap">
+                        <template x-for="vId in vals" :key="vId">
+                          <button @click="toggleValueInWhen(catId, vId, rIdx)"
+                                  data-testid="plan-rule-when-value"
+                                  class="text-xs px-2 py-1 bg-slate-900 text-white rounded hover:bg-slate-700 transition-colors"
+                                  x-text="getCategoryValueName(catId, vId)"></button>
+                        </template>
+                        <template x-for="v in getCategoryUnusedValues(catId, vals)" :key="v.id">
+                          <button @click="toggleValueInWhen(catId, v.id, rIdx)"
+                                  data-testid="plan-rule-when-value-add"
+                                  class="text-xs px-2 py-1 border border-slate-200 text-slate-500 hover:border-slate-400 hover:text-slate-900 rounded transition-colors"
+                                  x-text="v.name"></button>
+                        </template>
+                      </div>
+                      <button @click="removeCategoryFromWhen(catId, rIdx)"
+                              data-testid="plan-rule-when-remove-cat"
+                              class="text-xs text-slate-400 hover:text-rose-600 ml-auto"
+                              :title="t('plan.editor.removeCategory')">×</button>
+                    </div>
+                  </template>
+                </div>
+                <select @change="addCategoryToWhen($event.target.value, rIdx); $event.target.value = ''"
+                        data-testid="plan-rule-when-add-cat"
+                        class="mt-2 text-xs border border-slate-200 focus:border-slate-400 focus:outline-none px-2 py-1 rounded">
+                  <option value="" x-text="t('plan.editor.addCategoryToWhen')"></option>
+                  <template x-for="cat in getUnusedCategoriesForWhen(rIdx)" :key="cat.id">
+                    <option :value="cat.id" x-text="cat.name"></option>
+                  </template>
+                </select>
+              </div>
+
+              <!-- distribute -->
+              <div>
+                <p class="text-xs text-slate-500 mb-2" x-text="t('plan.editor.ruleDistribute')"></p>
+                <div class="flex items-center gap-2 mb-2">
+                  <label class="text-xs text-slate-500" x-text="t('plan.editor.targetCategory')"></label>
+                  <select :value="getRuleDistributeCategory(rIdx)"
+                          @change="setRuleDistributeCategory(rIdx, $event.target.value)"
+                          data-testid="plan-rule-distribute-cat"
+                          class="text-xs border border-slate-200 focus:border-slate-400 focus:outline-none px-2 py-1 rounded">
+                    <option value="">—</option>
+                    <template x-for="cat in data.categories" :key="cat.id">
+                      <option :value="cat.id" x-text="cat.name"></option>
+                    </template>
+                  </select>
+                </div>
+                <div x-show="getRuleDistributeCategory(rIdx)">
+                  <div class="space-y-1 mb-2">
+                    <template x-for="(weight, vId) in getRuleDistributeWeights(rIdx)" :key="vId">
+                      <div class="flex items-center gap-2">
+                        <span class="text-xs flex-1" x-text="getCategoryValueName(getRuleDistributeCategory(rIdx), vId)"></span>
+                        <input type="number"
+                               :value="weight"
+                               @input="setRuleDistributeWeight(rIdx, vId, $event.target.value)"
+                               data-testid="plan-rule-distribute-weight"
+                               min="0" max="100" step="0.1"
+                               class="text-xs w-20 border border-slate-200 focus:border-slate-400 focus:outline-none px-2 py-1 rounded tabular text-right">
+                        <span class="text-xs text-slate-400">%</span>
+                        <button @click="removeRuleDistributeValue(rIdx, vId)"
+                                data-testid="plan-rule-distribute-remove"
+                                class="text-xs text-slate-400 hover:text-rose-600"
+                                :title="t('plan.editor.removeValue')">×</button>
+                      </div>
+                    </template>
+                  </div>
+                  <select x-show="getUnusedValuesForDistribute(rIdx).length > 0"
+                          @change="addRuleDistributeValue(rIdx, $event.target.value); $event.target.value = ''"
+                          data-testid="plan-rule-distribute-add"
+                          class="text-xs border border-slate-200 focus:border-slate-400 focus:outline-none px-2 py-1 rounded">
+                    <option value="" x-text="t('plan.editor.addValue')"></option>
+                    <template x-for="v in getUnusedValuesForDistribute(rIdx)" :key="v.id">
+                      <option :value="v.id" x-text="v.name"></option>
+                    </template>
+                  </select>
+                  <p class="text-xs mt-2 tabular"
+                     data-testid="plan-rule-distribute-sum"
+                     :class="Math.abs(ruleDistributeSum(rIdx) - 100) < 0.01 ? 'text-emerald-600' : 'text-rose-600'"
+                     x-text="Math.abs(ruleDistributeSum(rIdx) - 100) < 0.01 ? t('plan.editor.weightSumOk') : t('plan.editor.weightSum', { sum: ruleDistributeSum(rIdx).toFixed(1) })"></p>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <div x-show="draftRules().length === 0"
+               class="text-xs text-slate-400 italic"
+               x-text="t('plan.editor.addRule')"></div>
+        </div>
+      </section>
+      </template>
     </div>
 
     <!-- Backups page (v1.3 — ADR 0012, ticket #03).
@@ -1146,6 +1393,42 @@
       'categories.appliesToCash': 'Cash',
       'categories.appliesToDebt': 'Debts',
       'categories.appliesToEmpty': 'This category won\'t appear in any modal',
+
+      // v1.4 — Plan page (ticket 02). Plan list, editor, rule editor,
+      // active switcher, delete confirmation. The Plan page section
+      // (template x-if=currentPage === 'plans') uses these strings;
+      // the data-shape wiring lives in the page section. Plan list
+      // summary uses {n} placeholder for the # rules count.
+      'nav.plans': 'Plans',
+      'plan.empty.noPlans': 'No plans yet. Click "Create your first plan" to set up target allocations.',
+      'plan.actions.create': '+ New Plan',
+      'plan.actions.setActive': 'Set Active',
+      'plan.actions.unsetActive': 'Unset Active',
+      'plan.actions.edit': 'Edit',
+      'plan.actions.delete': 'Delete',
+      'plan.actions.cancel': 'Cancel',
+      'plan.actions.save': 'Save',
+      'plan.active.badge': 'Active',
+      'plan.editor.name': 'Plan name',
+      'plan.editor.name.duplicate': 'A plan with this name already exists.',
+      'plan.editor.rules': 'Rules ({n})',
+      'plan.editor.addRule': '+ Add Rule',
+      'plan.editor.removeRule': 'Remove rule',
+      'plan.editor.moveUp': 'Move up',
+      'plan.editor.moveDown': 'Move down',
+      'plan.editor.ruleWhen': 'When (records must match)',
+      'plan.editor.ruleDistribute': 'Distribute (target distribution)',
+      'plan.editor.weightSum': 'Sum: {sum}%',
+      'plan.editor.weightSumOk': 'Sum: 100% ✓',
+      'plan.editor.addCategoryToWhen': '+ Add Category',
+      'plan.editor.removeCategory': 'Remove category',
+      'plan.editor.targetCategory': 'Target category',
+      'plan.editor.addValue': '+ Add Value',
+      'plan.editor.removeValue': 'Remove value',
+      'plan.editor.weightLabel': 'Weight (%)',
+      'plan.editor.saveDisabled': 'Save (fix errors first)',
+      'plan.delete.confirm': 'Delete this plan?',
+      'plan.delete.confirmActive': 'This is the active plan. Delete anyway? The Home drift report will hide until another plan is active.',
       'groupBy.title': 'Group by Category',
       'groupBy.holdingsSub': 'Holdings',
       'groupBy.cashSub': 'Cash',
@@ -1295,6 +1578,38 @@
       'categories.appliesToCash': '現金',
       'categories.appliesToDebt': '負債',
       'categories.appliesToEmpty': '此 category 不會出現在任何 modal',
+
+      // v1.4 — Plan page (ticket 02)
+      'nav.plans': 'Plans',
+      'plan.empty.noPlans': '還沒有任何 plan。按「建立第一個 plan」設定目標配置。',
+      'plan.actions.create': '+ 新增 Plan',
+      'plan.actions.setActive': '設為 Active',
+      'plan.actions.unsetActive': '取消 Active',
+      'plan.actions.edit': '編輯',
+      'plan.actions.delete': '刪除',
+      'plan.actions.cancel': '取消',
+      'plan.actions.save': '儲存',
+      'plan.active.badge': 'Active',
+      'plan.editor.name': 'Plan 名稱',
+      'plan.editor.name.duplicate': '已有同名 plan。',
+      'plan.editor.rules': 'Rules ({n})',
+      'plan.editor.addRule': '+ 新增 Rule',
+      'plan.editor.removeRule': '刪除 rule',
+      'plan.editor.moveUp': '上移',
+      'plan.editor.moveDown': '下移',
+      'plan.editor.ruleWhen': 'When（記錄需符合）',
+      'plan.editor.ruleDistribute': 'Distribute（目標分配）',
+      'plan.editor.weightSum': '加總:{sum}%',
+      'plan.editor.weightSumOk': '加總:100% ✓',
+      'plan.editor.addCategoryToWhen': '+ 新增 Category',
+      'plan.editor.removeCategory': '移除 category',
+      'plan.editor.targetCategory': '目標 category',
+      'plan.editor.addValue': '+ 新增值',
+      'plan.editor.removeValue': '移除值',
+      'plan.editor.weightLabel': '權重 (%)',
+      'plan.editor.saveDisabled': '儲存（請先修正錯誤）',
+      'plan.delete.confirm': '確定刪除此 plan？',
+      'plan.delete.confirmActive': '此 plan 目前為 Active。仍要刪除嗎？刪除後 Home 的 drift 報表會隱藏，直到啟用其他 plan。',
       'groupBy.title': '依類別分組',
       'groupBy.holdingsSub': 'Holdings',
       'groupBy.cashSub': '現金',
@@ -1414,6 +1729,15 @@
       displayCurrency: 'TWD',
       language: 'en',
       currentPage: 'home',
+
+      // Plans page state (v1.4 — ticket 02). planDraft is the editing
+      // buffer; null when showing the plan list. planEditorMode is a
+      // label hint for the page header (it doesn't gate logic). The
+      // draft's id either matches an existing data.plans[] entry (edit)
+      // or is a fresh Plan.newPlan() id (create). Save merges by id;
+      // cancel discards the draft.
+      planDraft: null,
+      planEditorMode: 'list', // 'list' | 'create' | 'edit'
 
       // Holdings modal state
       showModal: false,
@@ -2176,6 +2500,13 @@
           result.data.snapshots = result.data.snapshots || [];
           result.data.categories = result.data.categories || [];
           result.data.deletions = result.data.deletions || [];
+          // v1.4 additive fields (lib/plan.js): old backups (pre-v1.4)
+          // lack the plans list and the active-plan pointer. Backfill
+          // both so the Plans page (rendered as x-show=currentPage ===
+          // 'plans', so its expressions still evaluate even when hidden)
+          // doesn't throw on data.plans.length.
+          result.data.plans = result.data.plans || [];
+          if (result.data.active_plan_id === undefined) result.data.active_plan_id = null;
           // Defensive: restoreFromSnapshot returns a `data` object whose
           // shape is derived from the snapshot. If the snapshot (e.g. a
           // Cloud-restore payload or an older local backup) is missing
@@ -2567,6 +2898,251 @@
         clean(this.data.debts);
       },
 
+      // ---- Plans (v1.4 — ticket 02) ----
+      // Thin shims wrapping Plan.* (lib/plan.js). All validation, rule
+      // matching, distribution, and drift math lives in the lib; these
+      // methods only (a) build / mutate the editing buffer (planDraft),
+      // (b) call into Plan.validatePlan to compute save-disabled state,
+      // (c) commit the draft to this.data.plans[] on save (which the
+      // deep $watch persists via save()). Set / clear the active-plan
+      // pointer directly — it has no validation, just a sync flag.
+      getCategoryName(catId) {
+        const cat = this.data.categories.find(c => c.id === catId);
+        return cat ? cat.name : '?';
+      },
+
+      addPlan() {
+        this.planDraft = Plan.newPlan('');
+        this.planDraft.rules = [Plan.newRule()];
+        this.planEditorMode = 'create';
+      },
+
+      editPlan(planId) {
+        const plan = this.data.plans.find(p => p.id === planId);
+        if (!plan) return;
+        // Deep clone so cancelling doesn't mutate the persisted plan.
+        // JSON clone is fine: plans are plain data (no functions, dates,
+        // or cyclic refs); maps and arrays round-trip cleanly.
+        this.planDraft = JSON.parse(JSON.stringify(plan));
+        this.planEditorMode = 'edit';
+      },
+
+      cancelPlanEdit() {
+        this.planDraft = null;
+        this.planEditorMode = 'list';
+      },
+
+      // Validation result for the draft. Empty array = OK. The plan
+      // page's save button reads canSavePlanDraft(); the inline error
+      // summary reads planValidationErrors().
+      planValidationErrors() {
+        if (!this.planDraft) return [];
+        const r = Plan.validatePlan(this.planDraft, this.data.plans);
+        return r.errors || [];
+      },
+
+      canSavePlanDraft() {
+        if (!this.planDraft) return false;
+        // Empty name is a UI-level blocker (no plan.newPlan(name='') would
+        // be saved anyway) but the validation surface should also fail
+        // it. We do an extra name-trim check here so the save button
+        // doesn't flicker when the user has only typed whitespace.
+        if (!this.planDraft.name || this.planDraft.name.trim() === '') return false;
+        return this.planValidationErrors().length === 0;
+      },
+
+      savePlanDraft() {
+        if (!this.canSavePlanDraft()) return;
+        const draft = this.planDraft;
+        const idx = this.data.plans.findIndex(p => p.id === draft.id);
+        if (idx >= 0) {
+          // Edit — replace in place so reactive bindings stay intact.
+          this.data.plans[idx] = draft;
+        } else {
+          // Create — push.
+          this.data.plans.push(draft);
+        }
+        // If the saved plan was previously the active one, no change;
+        // if not, leave active_plan_id alone (user must opt in via
+        // Set Active). This matches the spec ("Set Active" is a
+        // separate action from save).
+        this.cancelPlanEdit();
+      },
+
+      setActivePlan(planId) {
+        if (!this.data.plans.some(p => p.id === planId)) return;
+        this.data.active_plan_id = planId;
+      },
+
+      clearActivePlan() {
+        this.data.active_plan_id = null;
+      },
+
+      deletePlan(planId) {
+        const plan = this.data.plans.find(p => p.id === planId);
+        if (!plan) return;
+        const isActive = this.data.active_plan_id === planId;
+        const confirmKey = isActive ? 'plan.delete.confirmActive' : 'plan.delete.confirm';
+        if (!confirm(this.t(confirmKey))) return;
+        this.data.plans = this.data.plans.filter(p => p.id !== planId);
+        if (isActive) this.data.active_plan_id = null;
+      },
+
+      // ---- Rule-level mutations on planDraft ----
+      addRuleToDraft() {
+        if (!this.planDraft) return;
+        if (!this.planDraft.rules) this.planDraft.rules = [];
+        this.planDraft.rules.push(Plan.newRule());
+      },
+
+      removeRuleFromDraft(idx) {
+        if (!this.planDraft || !this.planDraft.rules) return;
+        this.planDraft.rules.splice(idx, 1);
+      },
+
+      moveRuleInDraft(idx, dir) {
+        if (!this.planDraft || !this.planDraft.rules) return;
+        const newIdx = idx + dir;
+        if (newIdx < 0 || newIdx >= this.planDraft.rules.length) return;
+        const [moved] = this.planDraft.rules.splice(idx, 1);
+        this.planDraft.rules.splice(newIdx, 0, moved);
+      },
+
+      addCategoryToWhen(catId, ruleIdx) {
+        if (!catId || !this.planDraft) return;
+        const rule = this.planDraft.rules[ruleIdx];
+        if (!rule) return;
+        if (!rule.when) rule.when = {};
+        if (catId in rule.when) return; // already present
+        rule.when[catId] = [];
+      },
+
+      removeCategoryFromWhen(catId, ruleIdx) {
+        if (!this.planDraft) return;
+        const rule = this.planDraft.rules[ruleIdx];
+        if (!rule || !rule.when) return;
+        delete rule.when[catId];
+      },
+
+      toggleValueInWhen(catId, valId, ruleIdx) {
+        if (!this.planDraft) return;
+        const rule = this.planDraft.rules[ruleIdx];
+        if (!rule || !rule.when) return;
+        const arr = rule.when[catId];
+        if (!Array.isArray(arr)) return;
+        const idx = arr.indexOf(valId);
+        if (idx >= 0) arr.splice(idx, 1);
+        else arr.push(valId);
+      },
+
+      // Categories not yet used in this rule's when. Sorted by name.
+      getUnusedCategoriesForWhen(ruleIdx) {
+        if (!this.planDraft) return [];
+        const rule = this.planDraft.rules[ruleIdx];
+        if (!rule || !rule.when) return [...this.data.categories];
+        const used = new Set(Object.keys(rule.when));
+        return this.data.categories.filter(c => !used.has(c.id));
+      },
+
+      // Values in catId that are NOT in rule.when[catId] — used to
+      // render the "add value" chips next to each category pill.
+      getCategoryUnusedValues(catId, currentVals) {
+        const cat = this.data.categories.find(c => c.id === catId);
+        if (!cat || !cat.values) return [];
+        const used = new Set(currentVals || []);
+        return cat.values.filter(v => !used.has(v.id));
+      },
+
+      // ---- distribute-level mutations on planDraft ----
+      // The lib expects distribute: { [targetCatId]: { [valueId]: weight } }
+      // so we read / write through that exact shape.
+      getRuleDistributeCategory(ruleIdx) {
+        if (!this.planDraft) return '';
+        const rule = this.planDraft.rules[ruleIdx];
+        if (!rule || !rule.distribute) return '';
+        const keys = Object.keys(rule.distribute);
+        return keys.length > 0 ? keys[0] : '';
+      },
+
+      setRuleDistributeCategory(ruleIdx, catId) {
+        if (!this.planDraft) return;
+        const rule = this.planDraft.rules[ruleIdx];
+        if (!rule) return;
+        if (!catId) {
+          rule.distribute = {};
+          return;
+        }
+        // Switching categories — reset weights to {} so the new target
+        // starts clean. The user re-picks values from the new category.
+        rule.distribute = { [catId]: {} };
+      },
+
+      getRuleDistributeWeights(ruleIdx) {
+        if (!this.planDraft) return {};
+        const rule = this.planDraft.rules[ruleIdx];
+        if (!rule || !rule.distribute) return {};
+        const keys = Object.keys(rule.distribute);
+        if (keys.length === 0) return {};
+        return rule.distribute[keys[0]] || {};
+      },
+
+      setRuleDistributeWeight(ruleIdx, vId, weight) {
+        if (!this.planDraft) return;
+        const rule = this.planDraft.rules[ruleIdx];
+        if (!rule || !rule.distribute) return;
+        const keys = Object.keys(rule.distribute);
+        if (keys.length === 0) return;
+        const w = parseFloat(weight);
+        rule.distribute[keys[0]][vId] = isNaN(w) ? 0 : w;
+      },
+
+      removeRuleDistributeValue(ruleIdx, vId) {
+        if (!this.planDraft) return;
+        const rule = this.planDraft.rules[ruleIdx];
+        if (!rule || !rule.distribute) return;
+        const keys = Object.keys(rule.distribute);
+        if (keys.length === 0) return;
+        delete rule.distribute[keys[0]][vId];
+      },
+
+      addRuleDistributeValue(ruleIdx, vId) {
+        if (!this.planDraft || !vId) return;
+        const rule = this.planDraft.rules[ruleIdx];
+        if (!rule || !rule.distribute) return;
+        const keys = Object.keys(rule.distribute);
+        if (keys.length === 0) return;
+        const targetCatId = keys[0];
+        const cat = this.data.categories.find(c => c.id === targetCatId);
+        if (!cat || !cat.values.some(v => v.id === vId)) return;
+        if (!(vId in rule.distribute[targetCatId])) {
+          rule.distribute[targetCatId][vId] = 0;
+        }
+      },
+
+      // Values of the distribute target category NOT yet in the
+      // distribute map — used for the "+ Add Value" dropdown.
+      getUnusedValuesForDistribute(ruleIdx) {
+        const targetCatId = this.getRuleDistributeCategory(ruleIdx);
+        if (!targetCatId) return [];
+        const cat = this.data.categories.find(c => c.id === targetCatId);
+        if (!cat || !cat.values) return [];
+        const used = new Set(Object.keys(this.getRuleDistributeWeights(ruleIdx)));
+        return cat.values.filter(v => !used.has(v.id));
+      },
+
+      ruleDistributeSum(ruleIdx) {
+        const weights = this.getRuleDistributeWeights(ruleIdx);
+        return Object.values(weights).reduce((s, w) => s + (Number(w) || 0), 0);
+      },
+
+      // Safe accessor for the rules array. The editor's <template x-for>
+      // uses this so a brief planDraft → null transition (after Save or
+      // Cancel) doesn't throw on `null.rules` before the outer x-if
+      // removes the DOM. Returns [] when planDraft is null.
+      draftRules() {
+        return (this.planDraft && this.planDraft.rules) || [];
+      },
+
       // ---- Display helpers ----
       getCategoryValueName(catId, valId) {
         const cat = this.data.categories.find(c => c.id === catId);
@@ -2703,6 +3279,9 @@
         // v1.3 additive fields: see load() for the same lazy-init.
         if (!this.data.deletions) this.data.deletions = [];
         if (!this.data.backups) this.data.backups = [];
+        // v1.4 additive fields: see load() for the same lazy-init.
+        if (!this.data.plans) this.data.plans = [];
+        if (this.data.active_plan_id === undefined) this.data.active_plan_id = null;
         this.data.holdings.forEach(h => { if (!h.attributes) h.attributes = {}; });
         // Strip in-memory flags defensively (ADR 0009 §4).
         Serialize.stripInMemoryFields(this.data.holdings);
