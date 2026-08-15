@@ -371,6 +371,104 @@
       </div>
     </section>
 
+    <!-- Drift report (v1.4 ticket 04) — per-rule cards for active plan.
+         Source of truth: lib/plan.js driftForRule / driftForPlan; this
+         section is thin wiring + variant B markup. Section hides
+         entirely when no active plan, so when the user hasn't yet
+         picked a plan the Home page stays clean. -->
+    <section class="mb-8" x-show="activePlan()" data-testid="drift-section">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold" x-text="t('plan.drift.sectionTitle')"></h2>
+        <div class="flex items-center gap-2">
+          <span class="text-xs text-slate-500" x-text="t('plan.drift.activePlanLabel')"></span>
+          <select @change="setActivePlan($event.target.value)"
+                  :value="data.active_plan_id"
+                  data-testid="drift-active-plan-select"
+                  class="text-xs border border-slate-200 focus:border-slate-400 focus:outline-none px-2 py-1 rounded">
+            <template x-for="p in data.plans" :key="p.id">
+              <option :value="p.id" x-text="p.name"></option>
+            </template>
+          </select>
+          <button @click="clearActivePlan()" data-testid="drift-unset-active"
+                  class="text-xs text-slate-400 hover:text-rose-600 px-2"
+                  x-text="t('plan.drift.unsetActive')"></button>
+        </div>
+      </div>
+
+      <!-- "Plan has no rules" defensive placeholder -->
+      <div x-show="activePlan() && activePlan().rules.length === 0"
+           class="bg-white rounded-2xl border border-slate-200 p-6 text-sm text-slate-500 italic"
+           data-testid="drift-empty-no-rules"
+           x-text="t('plan.drift.emptyNoRules')"></div>
+
+      <!-- Per-rule cards -->
+      <div class="grid grid-cols-1 gap-4" x-show="activePlan() && activePlan().rules.length > 0">
+        <template x-for="(card, idx) in driftCards()" :key="card.rule.id">
+          <article class="bg-white rounded-2xl border border-slate-200 p-5"
+                   data-testid="drift-card">
+            <header class="flex items-start justify-between gap-3 mb-3">
+              <div class="min-w-0">
+                <!-- v1.4 T04-prep: rule.name is required (validateRule), so it
+                     always has a non-empty value. No fallback to condition. -->
+                <h3 class="text-base font-medium text-slate-900 truncate"
+                    x-text="card.rule.name"
+                    data-testid="drift-card-name"></h3>
+              </div>
+              <p class="text-sm text-slate-700 whitespace-nowrap shrink-0 tabular"
+                 data-testid="drift-card-matching">
+                <span class="text-xs text-slate-500 mr-1" x-text="t('plan.drift.matching')"></span>
+                <span class="font-semibold"
+                      x-text="formatAmount(card.drift.matching_total, 'TWD')"></span>
+              </p>
+            </header>
+
+            <!-- 1-record edge case warning (Q8 = a) -->
+            <p x-show="card.isOneRecord"
+               class="text-xs text-amber-700 mb-2"
+               data-testid="drift-card-one-record-warning"
+               x-text="t('plan.drift.oneRecordWarning')"></p>
+
+            <!-- Values table (variant B; side-by-side columns) -->
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-xs uppercase tracking-wide text-slate-500 border-b border-slate-100">
+                  <th class="text-left py-2 font-medium" x-text="t('plan.drift.value')"></th>
+                  <th class="text-right py-2 font-medium w-16" x-text="t('plan.drift.target')"></th>
+                  <th class="text-right py-2 font-medium w-16" x-text="t('plan.drift.actual')"></th>
+                  <th class="text-right py-2 font-medium w-16" x-text="t('plan.drift.delta')"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="row in card.valueRows" :key="row.value_id">
+                  <tr class="border-b border-slate-100 last:border-0"
+                      :class="row.is_grey ? 'opacity-40' : ''"
+                      :data-testid="'drift-row-' + row.value_id">
+                    <td class="py-1.5"
+                        :class="row.value_id === '_unassigned' ? 'text-xs italic text-slate-500' : ''"
+                        x-text="row.value_name"></td>
+                    <td class="py-1.5 text-right tabular text-slate-600"
+                        x-text="row.target_str"></td>
+                    <td class="py-1.5 text-right tabular font-medium"
+                        x-text="row.actual_str"></td>
+                    <td class="py-1.5 text-right tabular font-medium"
+                        :class="row.drift_class"
+                        :data-testid="'drift-delta-' + row.value_id"
+                        x-text="row.drift_str"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+
+            <!-- 0-matching footer (Q7 = a) -->
+            <p x-show="card.hasNoMatching"
+               class="text-xs text-slate-500 mt-3 italic"
+               data-testid="drift-card-no-matching"
+               x-text="t('plan.drift.emptyNoMatching')"></p>
+          </article>
+        </template>
+      </div>
+    </section>
+
     <!-- Debug -->
     <section class="mt-8">
       <details class="bg-white rounded-2xl border border-slate-200 p-4">
@@ -1454,6 +1552,23 @@
       'plan.editor.saveDisabled': 'Save (fix errors first)',
       'plan.delete.confirm': 'Delete this plan?',
       'plan.delete.confirmActive': 'This is the active plan. Delete anyway? The Home drift report will hide until another plan is active.',
+
+      // v1.4 ticket 04 — drift report on Home. Section title, header
+      // labels, empty-state copy, edge-case warnings, and the active-
+      // plan switcher text. Drift math lives in lib/plan.js; these
+      // strings are the only locale surface.
+      'plan.drift.sectionTitle': 'Plan vs Actual',
+      'plan.drift.activePlanLabel': 'Active plan',
+      'plan.drift.unsetActive': 'Unset',
+      'plan.drift.value': 'Value',
+      'plan.drift.target': 'Target',
+      'plan.drift.actual': 'Actual',
+      'plan.drift.delta': 'Δ',
+      'plan.drift.matching': 'matching',
+      'plan.drift.unassigned': 'no category',
+      'plan.drift.emptyNoRules': 'This plan has no rules yet.',
+      'plan.drift.emptyNoMatching': '0 records match this rule.',
+      'plan.drift.oneRecordWarning': '⚠ Only 1 matching record — drift is extreme but not actionable.',
       'groupBy.title': 'Group by Category',
       'groupBy.holdingsSub': 'Holdings',
       'groupBy.cashSub': 'Cash',
@@ -1642,6 +1757,20 @@
       'plan.editor.saveDisabled': '儲存（請先修正錯誤）',
       'plan.delete.confirm': '確定刪除此 plan？',
       'plan.delete.confirmActive': '此 plan 目前為 Active。仍要刪除嗎？刪除後 Home 的 drift 報表會隱藏，直到啟用其他 plan。',
+
+      // v1.4 ticket 04 — drift report on Home
+      'plan.drift.sectionTitle': 'Plan vs Actual',
+      'plan.drift.activePlanLabel': 'Active plan',
+      'plan.drift.unsetActive': '取消設定',
+      'plan.drift.value': 'Value',
+      'plan.drift.target': '目標',
+      'plan.drift.actual': '實際',
+      'plan.drift.delta': 'Δ',
+      'plan.drift.matching': '符合記錄',
+      'plan.drift.unassigned': '未分類',
+      'plan.drift.emptyNoRules': '此 plan 尚未設定任何 rule。',
+      'plan.drift.emptyNoMatching': '0 筆記錄符合此 rule。',
+      'plan.drift.oneRecordWarning': '⚠ 只有 1 筆符合記錄 — drift 看起來極端但無法採取行動。',
       'groupBy.title': '依類別分組',
       'groupBy.holdingsSub': 'Holdings',
       'groupBy.cashSub': '現金',
@@ -3267,6 +3396,134 @@
         return this._localizeUnassigned(
           Group.debtsGroupedBy(this.data.debts, this.data.categories, catId, this.fxRate())
         );
+      },
+
+      // ---- Drift report (v1.4 ticket 04) ----
+      // Source of truth: lib/plan.js (driftForRule / driftForPlan /
+      // recordsMatchingRule). The Alpine methods below are thin shims
+      // that close over this.data.* and this.fxRate(); the math +
+      // matching logic lives in the lib so it stays unit-testable.
+      //
+      // The shim builds a unified records list once per render:
+      //   holdings  → share * current_price in native currency
+      //   cash       → balance in native currency
+      //   debts      → -balance in native currency (subtracts from net worth)
+      // and a parallel `recordsAttributes` lookup so Plan.recordsMatchingRule
+      // can filter / group by category without coupling to holdings/cash/
+      // debts shape.
+
+      // Returns the active plan object, or null if no active plan or the
+      // pointer is stale (doesn't match any plan). Drives the x-show on
+      // the drift section.
+      activePlan() {
+        const id = this.data.active_plan_id;
+        if (!id) return null;
+        const p = (this.data.plans || []).find(p => p.id === id);
+        return p || null;
+      },
+
+      // Build the generic {id, currency, value} record list + attribute
+      // lookup. Memoised via a local var so back-to-back calls (driftCards
+      // calls driftForRule which internally calls recordsMatchingRule)
+      // don't rebuild twice for the same render. The Alpine getter
+      // pattern is fine for personal-scale data (N plans × M records, M
+      // is small).
+      _buildDriftRecords() {
+        const records = [];
+        const attrs = {};
+        for (const h of (this.data.holdings || [])) {
+          if (h.inactive) continue;
+          const v = (typeof h.shares === 'number' && typeof h.current_price === 'number')
+            ? h.shares * h.current_price : 0;
+          records.push({ id: h.id, currency: h.currency, value: v });
+          if (h.attributes && Object.keys(h.attributes).length > 0) attrs[h.id] = h.attributes;
+        }
+        for (const c of (this.data.cash_accounts || [])) {
+          if (c.inactive) continue;
+          records.push({ id: c.id, currency: c.currency, value: c.balance });
+          if (c.attributes && Object.keys(c.attributes).length > 0) attrs[c.id] = c.attributes;
+        }
+        for (const d of (this.data.debts || [])) {
+          if (d.inactive) continue;
+          records.push({ id: d.id, currency: d.currency, value: -d.balance });
+          if (d.attributes && Object.keys(d.attributes).length > 0) attrs[d.id] = d.attributes;
+        }
+        return { records, attrs };
+      },
+
+      // Returns an array of drift cards, one per active-plan rule, in
+      // saved rule order (Q5 = a). Each card carries the raw drift
+      // object from the lib plus derived display rows so the markup
+      // doesn't have to compute drift/cents/sign in the template.
+      // Hidden when no active plan or 0 rules.
+      driftCards() {
+        const plan = this.activePlan();
+        if (!plan) return [];
+        if (!Array.isArray(plan.rules) || plan.rules.length === 0) return [];
+        const { records, attrs } = this._buildDriftRecords();
+        const cats = this.data.categories || [];
+        return plan.rules.map(rule => {
+          const matching = Plan.recordsMatchingRule(rule, records, attrs);
+          const drift = Plan.driftForRule(rule, records, attrs, cats, this.fxRate());
+          const card = {
+            rule,
+            drift,
+            valueRows: this._driftCardRows(rule, drift, cats),
+            matchingCount: matching.length,
+            isOneRecord: matching.length === 1,
+            hasNoMatching: matching.length === 0,
+          };
+          return card;
+        });
+      },
+
+      // Build the value-row list for one card, sorted by value_id
+      // ascending (Q4 = a). Each row carries:
+      //   value_id, value_name, target_str, actual_str, drift_str,
+      //   drift_class, is_grey
+      // The _unassigned row is appended last (after sorting); its
+      // drift is '—' (Q6 = a). The greyed-target row in the 0-match
+      // case is handled by hasNoMatching on the card (the entire card
+      // table greys via opacity-40 on the <tr>) — individual rows
+      // keep their normal colour so absolute numbers stay readable.
+      _driftCardRows(rule, drift, cats) {
+        const targetCatId = Object.keys(rule.distribute)[0];
+        const cat = cats.find(c => c.id === targetCatId);
+        const valueById = {};
+        if (cat && Array.isArray(cat.values)) {
+          for (const v of cat.values) valueById[v.id] = v.name;
+        }
+        const rows = [];
+        // value_ids present in target (the rule's distribution keys)
+        // — these get sorted alphabetically and rendered normally.
+        const targetIds = Object.keys(rule.distribute[targetCatId] || {}).sort();
+        for (const vid of targetIds) {
+          const target = rule.distribute[targetCatId][vid];
+          const actual = drift.actual[vid];
+          const d = drift.drift[vid];
+          rows.push({
+            value_id: vid,
+            value_name: valueById[vid] || vid,
+            target_str: target.toFixed(1) + '%',
+            actual_str: actual === undefined ? '—' : actual.toFixed(1) + '%',
+            drift_str: d === undefined || Number.isNaN(d) ? '—' : (d > 0 ? '+' : '') + d.toFixed(1) + '%',
+            drift_class: d === undefined || Number.isNaN(d) || Math.abs(d) <= 5 ? 'text-emerald-600' : 'text-red-600 font-semibold',
+            is_grey: false,
+          });
+        }
+        // _unassigned row (if present); never grey, label localised.
+        if (typeof drift.actual._unassigned === 'number') {
+          rows.push({
+            value_id: '_unassigned',
+            value_name: this.t('plan.drift.unassigned'),
+            target_str: '—',
+            actual_str: drift.actual._unassigned.toFixed(1) + '%',
+            drift_str: '—',
+            drift_class: 'text-slate-400',
+            is_grey: false,
+          });
+        }
+        return rows;
       },
 
       // ---- Calculations ----
