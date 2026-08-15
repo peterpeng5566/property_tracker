@@ -482,3 +482,56 @@ test('normalizeSnapshotCap: non-number → 365 (reject)', () => {
   assert.equal(normalizeSnapshotCap(null), 365);
   assert.equal(normalizeSnapshotCap({}), 365);
 });
+
+// ---------------------------------------------------------------------------
+// resolveAttributeRef (v1.5 ticket 03)
+// Pure helper that maps (catId, valId) to a renderable label + a 'kind' that
+// the UI uses to pick a glyph (ADR 0003 — category values are live, but old
+// snapshots may reference ids that have since been deleted).
+// ---------------------------------------------------------------------------
+
+test('resolveAttributeRef: valid cat + valid val → ok with value name', () => {
+  const cats = [{ id: 'c-country', values: [{ id: 'v-us', name: 'US' }, { id: 'v-tw', name: 'TW' }] }];
+  const out = Snapshot.resolveAttributeRef(cats, 'c-country', 'v-us');
+  assert.equal(out.kind, 'ok');
+  assert.equal(out.label, 'US');
+  assert.equal(out.hintKey, null);
+});
+
+test('resolveAttributeRef: valid cat + missing val → orphanValue with "?"', () => {
+  const cats = [{ id: 'c-country', values: [{ id: 'v-us', name: 'US' }] }];
+  const out = Snapshot.resolveAttributeRef(cats, 'c-country', 'v-deleted');
+  assert.equal(out.kind, 'orphanValue');
+  assert.equal(out.label, '?');
+  assert.equal(out.hintKey, 'snapshots.detail.orphanValue');
+});
+
+test('resolveAttributeRef: missing cat → orphanCategory with "—"', () => {
+  const cats = [{ id: 'c-country', values: [{ id: 'v-us', name: 'US' }] }];
+  const out = Snapshot.resolveAttributeRef(cats, 'c-deleted-cat', 'v-us');
+  assert.equal(out.kind, 'orphanCategory');
+  assert.equal(out.label, '—');
+  assert.equal(out.hintKey, 'snapshots.detail.orphanCategory');
+});
+
+test('resolveAttributeRef: empty categories array → orphanCategory', () => {
+  const out = Snapshot.resolveAttributeRef([], 'c-country', 'v-us');
+  assert.equal(out.kind, 'orphanCategory');
+  assert.equal(out.label, '—');
+});
+
+test('resolveAttributeRef: category with empty values array → orphanValue', () => {
+  const cats = [{ id: 'c-country', values: [] }];
+  const out = Snapshot.resolveAttributeRef(cats, 'c-country', 'v-us');
+  assert.equal(out.kind, 'orphanValue');
+  assert.equal(out.label, '?');
+});
+
+test('resolveAttributeRef: returns a fresh object each call (no shared mutable state)', () => {
+  const cats = [{ id: 'c-country', values: [{ id: 'v-us', name: 'US' }] }];
+  const a = Snapshot.resolveAttributeRef(cats, 'c-country', 'v-us');
+  const b = Snapshot.resolveAttributeRef(cats, 'c-country', 'v-us');
+  assert.notEqual(a, b);
+  a.kind = 'tampered';
+  assert.equal(b.kind, 'ok');
+});

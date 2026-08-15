@@ -251,3 +251,274 @@ test.describe('portfolio.html snapshots page (ticket #02)', () => {
     expect(errors).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// v1.5 ticket 03 — snapshot detail view
+// ---------------------------------------------------------------------------
+
+// Detail-view happy-path fixture: 2 holdings (one with attributes), a country
+// category with US/TW values, cash, debts. The Take button captures this
+// state into `data.snapshots[0]` so the detail tests can open it.
+const DETAIL_FIXTURE = {
+  version: '1.1',
+  holdings: [
+    {
+      id: 'h-det-1',
+      ticker: 'AAPL',
+      shares: 10,
+      cost: 800,
+      currency: 'TWD',
+      current_price: 150,
+      high_52w: null, low_52w: null, prev_close: null,
+      inactive: false,
+      attributes: { 'cat-country': 'val-us' },
+    },
+    {
+      id: 'h-det-2',
+      ticker: '2330.TW',
+      shares: 5,
+      cost: 25000,
+      currency: 'TWD',
+      current_price: 30000,
+      high_52w: null, low_52w: null, prev_close: null,
+      inactive: false,
+      attributes: {},
+    },
+  ],
+  cash_accounts: [{ id: 'c-det-1', name: 'Checking', balance: 5000, currency: 'TWD', attributes: {} }],
+  debts: [{ id: 'd-det-1', name: 'Credit Card', balance: 1000, currency: 'TWD', attributes: {} }],
+  categories: [
+    {
+      id: 'cat-country',
+      name: 'Country',
+      applies_to: ['holdings', 'cash', 'debt'],
+      values: [
+        { id: 'val-us', name: 'US' },
+        { id: 'val-tw', name: 'TW' },
+      ],
+    },
+  ],
+  snapshots: [],
+  plans: [],
+  settings: {
+    display_currency: 'TWD',
+    language: 'en',
+    cost_format: 'per_share',
+    fx_source: 'manual',
+    fx_rate: 32.2,
+    snapshot_cap: 365,
+  },
+  meta: { device_id: 'detail-test', last_synced_at: null, created_at: '2025-01-01T00:00:00.000Z' },
+};
+
+const DETAIL_INIT = `
+localStorage.setItem(${JSON.stringify(STORAGE_KEY)}, JSON.stringify(${JSON.stringify(DETAIL_FIXTURE)}));
+`;
+
+// Orphan-value fixture: the snapshot's holding attributes a 'cat-country' id
+// (which IS in categories) to a value id 'val-gone' that is NOT in the
+// category's values. The pure resolver should return kind='orphanValue',
+// label='?' (per ADR 0003).
+const ORPHAN_VALUE_FIXTURE = {
+  ...DETAIL_FIXTURE,
+  categories: [
+    {
+      id: 'cat-country',
+      name: 'Country',
+      applies_to: ['holdings'],
+      values: [
+        { id: 'val-tw', name: 'TW' },  // val-us intentionally absent
+      ],
+    },
+  ],
+  snapshots: [
+    {
+      id: 'snap-orphan-value',
+      date: '2025-01-15',
+      holdings: [
+        {
+          id: 'h-det-1',
+          ticker: 'AAPL',
+          shares: 10,
+          cost: 800,
+          currency: 'TWD',
+          current_price: 150,
+          high_52w: null, low_52w: null, prev_close: null,
+          inactive: false,
+          attributes: { 'cat-country': 'val-us' },  // val-us no longer in cat
+        },
+      ],
+      cash_accounts: [],
+      debts: [],
+      fx_rate: 32.2,
+      totals: {
+        displayCurrency: 'TWD',
+        holdingsValue: 1500,
+        holdingsCost: 800,
+        holdingsGainLoss: 700,
+        totalCash: 0,
+        totalDebts: 0,
+        netWorth: 1500,
+      },
+    },
+  ],
+};
+
+const ORPHAN_VALUE_INIT = `
+localStorage.setItem(${JSON.stringify(STORAGE_KEY)}, JSON.stringify(${JSON.stringify(ORPHAN_VALUE_FIXTURE)}));
+`;
+
+// Orphan-category fixture: the snapshot's holding attributes a 'cat-deleted'
+// id (which is NOT in categories) to any value id. The pure resolver should
+// return kind='orphanCategory', label='—'.
+const ORPHAN_CATEGORY_FIXTURE = {
+  ...DETAIL_FIXTURE,
+  categories: [],  // cat-country intentionally absent
+  snapshots: [
+    {
+      id: 'snap-orphan-category',
+      date: '2025-01-15',
+      holdings: [
+        {
+          id: 'h-det-1',
+          ticker: 'AAPL',
+          shares: 10,
+          cost: 800,
+          currency: 'TWD',
+          current_price: 150,
+          high_52w: null, low_52w: null, prev_close: null,
+          inactive: false,
+          attributes: { 'cat-country': 'val-us' },  // cat-country no longer exists
+        },
+      ],
+      cash_accounts: [],
+      debts: [],
+      fx_rate: 32.2,
+      totals: {
+        displayCurrency: 'TWD',
+        holdingsValue: 1500,
+        holdingsCost: 800,
+        holdingsGainLoss: 700,
+        totalCash: 0,
+        totalDebts: 0,
+        netWorth: 1500,
+      },
+    },
+  ],
+};
+
+const ORPHAN_CATEGORY_INIT = `
+localStorage.setItem(${JSON.stringify(STORAGE_KEY)}, JSON.stringify(${JSON.stringify(ORPHAN_CATEGORY_FIXTURE)}));
+`;
+
+test.describe('portfolio.html snapshots page (ticket #03 — detail view)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(DETAIL_INIT);
+    page.__dlg = await autoAcceptDialogs(page);
+  });
+
+  test('View snapshot: detail opens with date, frozen net worth, mini-totals, holdings table, cash, debts', async ({ page }) => {
+    const errors = collectAppErrors(page);
+    await page.goto('http://localhost:8000/portfolio.html');
+    await page.locator('[data-testid="nav-snapshots"]').click();
+
+    // Take one snapshot via the empty-state CTA.
+    await expect(page.locator('[data-testid="snapshot-empty"]')).toBeVisible({ timeout: 10_000 });
+    await page.locator('[data-testid="snapshot-empty-take"]').click();
+    await expect(page.locator('[data-testid="snapshot-row"]')).toHaveCount(1);
+
+    // List mode hides; click View → detail mode shows.
+    await page.locator('[data-testid="snapshot-row-view"]').first().click();
+    await expect(page.locator('[data-testid="snapshot-detail"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="snapshot-list"]')).toBeHidden();
+
+    // Header: date is today's local date; net worth = 10*150 + 5*30000 + 5000 - 1000 = 155500.
+    const todayLocal = await page.evaluate(() => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    });
+    await expect(page.locator('[data-testid="snapshot-detail-date"]')).toHaveText(todayLocal);
+
+    // Mini-totals: holdingsValue = 10*150 + 5*30000 = 151500; totalCash = 5000; totalDebts = 1000.
+    // Note: formatAmount abbreviates 萬 as 'W' for amounts ≥10K (see lib/format.js).
+    await expect(page.locator('[data-testid="snapshot-detail-holdings-value"]')).toContainText('15.15W');
+    await expect(page.locator('[data-testid="snapshot-detail-total-cash"]')).toContainText('5,000');
+    await expect(page.locator('[data-testid="snapshot-detail-total-debts"]')).toContainText('1,000');
+
+    // Holdings table has 2 data rows (empty-placeholder excluded by data-testid).
+    const holdingsRows = page.locator('[data-testid="snapshot-detail-holdings-table"] tbody tr:not([data-testid])');
+    await expect(holdingsRows).toHaveCount(2);
+
+    // Cash table has 1 row.
+    await expect(page.locator('[data-testid="snapshot-detail-cash-table"] tbody tr:not([data-testid])')).toHaveCount(1);
+
+    // Debts table has 1 row.
+    await expect(page.locator('[data-testid="snapshot-detail-debts-table"] tbody tr:not([data-testid])')).toHaveCount(1);
+
+    // Attribute badge for h-det-1's 'cat-country' → 'val-us' resolves to 'US'.
+    await expect(page.locator('[data-testid="snapshot-detail-badge-ok"]').first()).toHaveText('US');
+
+    expect(errors).toEqual([]);
+  });
+
+  test('Back button returns to the list with the same row order', async ({ page }) => {
+    const errors = collectAppErrors(page);
+    await page.goto('http://localhost:8000/portfolio.html');
+    await page.locator('[data-testid="nav-snapshots"]').click();
+
+    await expect(page.locator('[data-testid="snapshot-empty"]')).toBeVisible({ timeout: 10_000 });
+    await page.locator('[data-testid="snapshot-empty-take"]').click();
+    await expect(page.locator('[data-testid="snapshot-row"]')).toHaveCount(1);
+
+    // Open detail, then Back.
+    await page.locator('[data-testid="snapshot-row-view"]').first().click();
+    await expect(page.locator('[data-testid="snapshot-detail"]')).toBeVisible({ timeout: 5_000 });
+
+    await page.locator('[data-testid="snapshot-detail-back"]').click();
+    await expect(page.locator('[data-testid="snapshot-detail"]')).toBeHidden({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="snapshot-list"]')).toBeVisible();
+    await expect(page.locator('[data-testid="snapshot-row"]')).toHaveCount(1);
+
+    expect(errors).toEqual([]);
+  });
+
+  test('Orphan value-id: snapshot referencing a since-deleted category value renders "?" glyph with hint', async ({ page }) => {
+    // Replace the default init script with the orphan-value fixture so
+    // the pre-seeded snapshot already references the orphan value id.
+    await page.addInitScript(ORPHAN_VALUE_INIT);
+    const errors = collectAppErrors(page);
+    await page.goto('http://localhost:8000/portfolio.html');
+    await page.locator('[data-testid="nav-snapshots"]').click();
+
+    await expect(page.locator('[data-testid="snapshot-row"]')).toHaveCount(1, { timeout: 10_000 });
+    await page.locator('[data-testid="snapshot-row-view"]').first().click();
+    await expect(page.locator('[data-testid="snapshot-detail"]')).toBeVisible({ timeout: 5_000 });
+
+    // Orphan-value badge rendered.
+    const orphanValueBadge = page.locator('[data-testid="snapshot-detail-badge-orphanValue"]');
+    await expect(orphanValueBadge).toBeVisible();
+    await expect(orphanValueBadge).toHaveText('?');
+    await expect(orphanValueBadge).toHaveAttribute('title', /deleted/i);
+
+    expect(errors).toEqual([]);
+  });
+
+  test('Orphan category-id: snapshot referencing a since-deleted category renders "—" with hint', async ({ page }) => {
+    await page.addInitScript(ORPHAN_CATEGORY_INIT);
+    const errors = collectAppErrors(page);
+    await page.goto('http://localhost:8000/portfolio.html');
+    await page.locator('[data-testid="nav-snapshots"]').click();
+
+    await expect(page.locator('[data-testid="snapshot-row"]')).toHaveCount(1, { timeout: 10_000 });
+    await page.locator('[data-testid="snapshot-row-view"]').first().click();
+    await expect(page.locator('[data-testid="snapshot-detail"]')).toBeVisible({ timeout: 5_000 });
+
+    // Orphan-category badge rendered.
+    const orphanCatBadge = page.locator('[data-testid="snapshot-detail-badge-orphanCategory"]');
+    await expect(orphanCatBadge).toBeVisible();
+    await expect(orphanCatBadge).toHaveText('—');
+    await expect(orphanCatBadge).toHaveAttribute('title', /deleted/i);
+
+    expect(errors).toEqual([]);
+  });
+});

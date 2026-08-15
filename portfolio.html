@@ -1035,6 +1035,8 @@
           </div>
         </div>
 
+        <!-- List mode (hidden when detail is open) -->
+        <div x-show="!currentSnapshotDetail">
         <!-- Stale nudge (active plan exists, no snapshots yet) -->
         <div x-show="shouldShowStaleNudge()"
              data-testid="snapshot-stale-nudge"
@@ -1092,6 +1094,183 @@
                   class="text-sm bg-slate-900 text-white px-4 py-2 rounded-md hover:bg-slate-800 transition-colors"
                   x-text="t('snapshots.empty.take')"></button>
         </div>
+        </div>
+        <!-- /List mode -->
+
+        <!-- Detail mode (v1.5 ticket 03) -->
+        <div x-show="currentSnapshotDetail"
+             data-testid="snapshot-detail"
+             x-cloak>
+          <button @click="closeSnapshotDetail()"
+                  data-testid="snapshot-detail-back"
+                  class="text-xs text-slate-600 hover:text-slate-900 mb-3 inline-flex items-center gap-1"
+                  x-text="'← ' + t('snapshots.detail.back')"></button>
+
+          <!-- Header: date + large net worth -->
+          <div class="bg-white p-4 rounded-2xl border border-slate-200 mb-4">
+            <div class="flex items-baseline gap-3 flex-wrap">
+              <span class="font-medium text-sm tabular"
+                    data-testid="snapshot-detail-date"
+                    x-text="currentSnapshotDetail?.date"></span>
+              <span class="text-2xl font-semibold tabular"
+                    data-testid="snapshot-detail-networth"
+                    x-text="formatAmount(currentSnapshotDetail?.totals.netWorth, currentSnapshotDetail?.totals.displayCurrency)"></span>
+            </div>
+            <!-- Mini-totals (4): holdingsValue, holdingsGainLoss, totalCash, totalDebts -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 text-xs">
+              <div>
+                <div class="text-slate-500" x-text="t('snapshots.row.holdings')"></div>
+                <div class="font-medium tabular"
+                     data-testid="snapshot-detail-holdings-value"
+                     x-text="formatAmount(currentSnapshotDetail?.totals.holdingsValue, currentSnapshotDetail?.totals.displayCurrency)"></div>
+              </div>
+              <div>
+                <div class="text-slate-500"
+                     :class="(currentSnapshotDetail?.totals.holdingsGainLoss ?? 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'"
+                     x-text="t('snapshots.row.gainLoss')"></div>
+                <div class="font-medium tabular"
+                     :class="(currentSnapshotDetail?.totals.holdingsGainLoss ?? 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'"
+                     data-testid="snapshot-detail-gain-loss"
+                     x-text="formatAmount(currentSnapshotDetail?.totals.holdingsGainLoss, currentSnapshotDetail?.totals.displayCurrency)"></div>
+              </div>
+              <div>
+                <div class="text-slate-500" x-text="t('snapshots.row.cash')"></div>
+                <div class="font-medium tabular"
+                     data-testid="snapshot-detail-total-cash"
+                     x-text="formatAmount(currentSnapshotDetail?.totals.totalCash, currentSnapshotDetail?.totals.displayCurrency)"></div>
+              </div>
+              <div>
+                <div class="text-slate-500" x-text="t('snapshots.row.debts')"></div>
+                <div class="font-medium tabular text-rose-600"
+                     data-testid="snapshot-detail-total-debts"
+                     x-text="formatAmount(currentSnapshotDetail?.totals.totalDebts, currentSnapshotDetail?.totals.displayCurrency)"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Holdings table (read-only, frozen prices) -->
+          <div class="bg-white rounded-2xl border border-slate-200 mb-4 overflow-hidden">
+            <h3 class="text-sm font-medium px-4 py-3 border-b border-slate-100"
+                x-text="t('snapshots.detail.holdings') + ' (' + (currentSnapshotDetail?.holdings || []).length + ')'"></h3>
+            <table class="w-full text-sm" data-testid="snapshot-detail-holdings-table">
+              <thead class="bg-slate-50 text-xs text-slate-600">
+                <tr>
+                  <th class="text-left px-4 py-2 font-medium"
+                      x-text="t('holdings.col.ticker')"></th>
+                  <th class="text-right px-4 py-2 font-medium"
+                      x-text="t('holdings.col.shares')"></th>
+                  <th class="text-right px-4 py-2 font-medium text-slate-600"
+                      x-text="t('holdings.col.costPerShare')"></th>
+                  <th class="text-right px-4 py-2 font-medium"
+                      x-text="t('holdings.col.price')"></th>
+                  <th class="text-right px-4 py-2 font-medium"
+                      x-text="t('holdings.col.value')"></th>
+                  <th class="text-right px-4 py-2 font-medium"
+                      x-text="t('holdings.col.gainLoss')"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="h in (currentSnapshotDetail?.holdings || [])" :key="h.id">
+                  <tr class="border-b border-slate-100 last:border-0">
+                    <td class="px-4 py-3">
+                      <div class="font-medium" x-text="h.ticker"></div>
+                      <div class="flex flex-wrap gap-1 mt-1"
+                           x-show="h.attributes && Object.keys(h.attributes).length > 0">
+                        <template x-for="(valId, catId) in (h.attributes || {})" :key="catId + '-' + valId">
+                          <span class="text-xs px-2 py-0.5 rounded"
+                                :class="getAttrBadgeKind(catId, valId) === 'ok' ? 'bg-slate-100 text-slate-600' : 'bg-amber-50 text-amber-700 border border-amber-200'"
+                                :title="getAttrBadgeHint(catId, valId)"
+                                :data-testid="'snapshot-detail-badge-' + getAttrBadgeKind(catId, valId)"
+                                x-text="getAttrBadgeLabel(catId, valId)"></span>
+                        </template>
+                      </div>
+                    </td>
+                    <td class="px-4 py-3 text-right tabular"
+                        x-text="(h.shares || 0).toLocaleString()"></td>
+                    <td class="px-4 py-3 text-right tabular text-slate-600"
+                        x-text="formatAmount(h.cost, h.currency)"></td>
+                    <td class="px-4 py-3 text-right tabular"
+                        x-text="formatAmount(h.current_price, h.currency)"></td>
+                    <td class="px-4 py-3 text-right tabular font-medium"
+                        x-text="formatAmount((h.shares || 0) * (h.current_price || 0), h.currency)"></td>
+                    <td class="px-4 py-3 text-right tabular font-medium"
+                        :class="(((h.shares || 0) * (h.current_price || 0)) - (h.cost || 0)) >= 0 ? 'text-emerald-600' : 'text-rose-600'"
+                        x-text="formatAmount(((h.shares || 0) * (h.current_price || 0)) - (h.cost || 0), h.currency)"></td>
+                  </tr>
+                </template>
+                <tr x-show="!(currentSnapshotDetail?.holdings || []).length" data-testid="snapshot-detail-holdings-empty">
+                  <td colspan="6" class="px-4 py-6 text-center text-xs text-slate-400"
+                      x-text="t('snapshots.detail.empty.holdings')"></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Cash accounts (read-only) -->
+          <div class="bg-white rounded-2xl border border-slate-200 mb-4 overflow-hidden">
+            <h3 class="text-sm font-medium px-4 py-3 border-b border-slate-100"
+                x-text="t('snapshots.detail.cash') + ' (' + (currentSnapshotDetail?.cash_accounts || []).length + ')'"></h3>
+            <table class="w-full text-sm" data-testid="snapshot-detail-cash-table">
+              <thead class="bg-slate-50 text-xs text-slate-600">
+                <tr>
+                  <th class="text-left px-4 py-2 font-medium"
+                      x-text="t('cash.col.name')"></th>
+                  <th class="text-right px-4 py-2 font-medium"
+                      x-text="t('cash.col.balance')"></th>
+                  <th class="text-left px-4 py-2 font-medium"
+                      x-text="t('cash.col.currency')"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="c in (currentSnapshotDetail?.cash_accounts || [])" :key="c.id">
+                  <tr class="border-b border-slate-100 last:border-0">
+                    <td class="px-4 py-3" x-text="c.name"></td>
+                    <td class="px-4 py-3 text-right tabular font-medium"
+                        x-text="formatAmount(c.balance, c.currency)"></td>
+                    <td class="px-4 py-3" x-text="c.currency"></td>
+                  </tr>
+                </template>
+                <tr x-show="!(currentSnapshotDetail?.cash_accounts || []).length" data-testid="snapshot-detail-cash-empty">
+                  <td colspan="3" class="px-4 py-6 text-center text-xs text-slate-400"
+                      x-text="t('snapshots.detail.empty.cash')"></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Debts (read-only) -->
+          <div class="bg-white rounded-2xl border border-slate-200 mb-4 overflow-hidden">
+            <h3 class="text-sm font-medium px-4 py-3 border-b border-slate-100"
+                x-text="t('snapshots.detail.debts') + ' (' + (currentSnapshotDetail?.debts || []).length + ')'"></h3>
+            <table class="w-full text-sm" data-testid="snapshot-detail-debts-table">
+              <thead class="bg-slate-50 text-xs text-slate-600">
+                <tr>
+                  <th class="text-left px-4 py-2 font-medium"
+                      x-text="t('debts.col.name')"></th>
+                  <th class="text-right px-4 py-2 font-medium"
+                      x-text="t('debts.col.balance')"></th>
+                  <th class="text-left px-4 py-2 font-medium"
+                      x-text="t('debts.col.currency')"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="d in (currentSnapshotDetail?.debts || [])" :key="d.id">
+                  <tr class="border-b border-slate-100 last:border-0">
+                    <td class="px-4 py-3" x-text="d.name"></td>
+                    <td class="px-4 py-3 text-right tabular font-medium text-rose-600"
+                        x-text="formatAmount(-d.balance, d.currency)"></td>
+                    <td class="px-4 py-3" x-text="d.currency"></td>
+                  </tr>
+                </template>
+                <tr x-show="!(currentSnapshotDetail?.debts || []).length" data-testid="snapshot-detail-debts-empty">
+                  <td colspan="3" class="px-4 py-6 text-center text-xs text-slate-400"
+                      x-text="t('snapshots.detail.empty.debts')"></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <!-- /Detail mode -->
       </section>
     </div>
     <div x-show="currentPage === 'backups'" data-testid="backups-page" x-cloak>
@@ -1751,6 +1930,23 @@
       'snapshots.row.delete': 'Delete',
       'snapshots.delete.confirm': 'Delete the snapshot from {date}? This cannot be undone.',
       'snapshots.toast.taken': 'Snapshot taken — {date}',
+      // v1.5 ticket 03 — snapshot detail view (drill-in to a single
+      // historical snapshot). Currency is frozen at capture time per
+      // snapshot.totals.displayCurrency; mini-totals are holdingsValue /
+      // holdingsGainLoss / totalCash / totalDebts (holdingsCost is
+      // implicit). Orphan hints surface when an old snapshot references
+      // a category-value id that has since been deleted/renamed
+      // (ADR 0003).
+      'snapshots.row.gainLoss': 'Gain / Loss',
+      'snapshots.detail.back': 'Back to list',
+      'snapshots.detail.holdings': 'Holdings',
+      'snapshots.detail.cash': 'Cash accounts',
+      'snapshots.detail.debts': 'Debts',
+      'snapshots.detail.empty.holdings': 'No holdings in this snapshot.',
+      'snapshots.detail.empty.cash': 'No cash accounts in this snapshot.',
+      'snapshots.detail.empty.debts': 'No debts in this snapshot.',
+      'snapshots.detail.orphanValue': 'Attribute value since deleted',
+      'snapshots.detail.orphanCategory': 'Attribute category since deleted',
     },
     zh: {
       'app.title': 'Property Tracker',
@@ -1776,6 +1972,17 @@
       'snapshots.row.delete': '刪除',
       'snapshots.delete.confirm': '確定刪除 {date} 的快照？此操作無法復原。',
       'snapshots.toast.taken': '已建立 {date} 的快照',
+      // v1.5 ticket 03 — snapshot detail view (drill-in)
+      'snapshots.row.gainLoss': '損益',
+      'snapshots.detail.back': '返回列表',
+      'snapshots.detail.holdings': '股票',
+      'snapshots.detail.cash': '現金帳戶',
+      'snapshots.detail.debts': '負債',
+      'snapshots.detail.empty.holdings': '此快照沒有股票資料。',
+      'snapshots.detail.empty.cash': '此快照沒有現金帳戶。',
+      'snapshots.detail.empty.debts': '此快照沒有負債。',
+      'snapshots.detail.orphanValue': '此屬性值已刪除',
+      'snapshots.detail.orphanCategory': '此屬性類別已刪除',
       'summary.netWorth': '總資產 Net Worth',
       'summary.netWorthSub': '{a} holdings + {c} 現金 − {d} 負債',
       'summary.holdingsValue': 'Holdings 市值',
@@ -2040,6 +2247,13 @@
       displayCurrency: 'TWD',
       language: 'en',
       currentPage: 'home',
+
+      // Snapshot detail view state (v1.5 — ticket 03). null when the
+      // Snapshots page is showing the list; an id when showing detail.
+      // The currentSnapshotDetail getter below resolves the id against
+      // data.snapshots so the template can bind to its frozen fields
+      // without us re-implementing snapshot lookup.
+      snapshotDetailId: null,
 
       // Plans page state (v1.4 — ticket 02). planDraft is the editing
       // buffer; null when showing the plan list. planEditorMode is a
@@ -3183,12 +3397,45 @@
         this.takeSnapshot();
       },
 
-      // View stub — T03 wires the detail view (drill-in to holdings /
-      // cash / debts for a single snapshot). Today the row's View
-      // button is inert but already rendered; surfacing "coming soon"
-      // would be noisy.
-      viewSnapshot(_id) {
-        // T03: navigate to / open detail view.
+      // Computed: returns the snapshot object for the open detail
+      // view, or null when the list is showing. Source of truth for
+      // the snapshot is still data.snapshots — we just resolve the id
+      // here. Alpine reactivity tracks the getter, so deleting a
+      // snapshot while detail is open naturally returns null and the
+      // page falls back to the list view.
+      get currentSnapshotDetail() {
+        if (!this.snapshotDetailId) return null;
+        const arr = Array.isArray(this.data?.snapshots) ? this.data.snapshots : [];
+        return arr.find(s => s.id === this.snapshotDetailId) || null;
+      },
+
+      // Open detail view for a snapshot. No-op if id is unknown (defensive
+      // against a stale row click after delete).
+      viewSnapshot(id) {
+        if (!id) return;
+        const arr = Array.isArray(this.data?.snapshots) ? this.data.snapshots : [];
+        if (!arr.find(s => s.id === id)) return;
+        this.snapshotDetailId = id;
+      },
+
+      // Close detail view, return to list.
+      closeSnapshotDetail() {
+        this.snapshotDetailId = null;
+      },
+
+      // ---- Attribute badge helpers (T03) ----
+      // Source of truth: Snapshot.resolveAttributeRef (lib/snapshot.js).
+      // The UI is a thin shim that maps the pure result to label / class
+      // / title so the template stays declarative.
+      getAttrBadgeLabel(catId, valId) {
+        return Snapshot.resolveAttributeRef(this.data.categories, catId, valId).label;
+      },
+      getAttrBadgeKind(catId, valId) {
+        return Snapshot.resolveAttributeRef(this.data.categories, catId, valId).kind;
+      },
+      getAttrBadgeHint(catId, valId) {
+        const key = Snapshot.resolveAttributeRef(this.data.categories, catId, valId).hintKey;
+        return key ? this.t(key) : '';
       },
 
       // Compare stub — T04 wires the comparison picker (pick a second
