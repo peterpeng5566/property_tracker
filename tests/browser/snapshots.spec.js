@@ -1016,3 +1016,118 @@ test.describe('portfolio.html snapshots page (ticket #05 — trend chart)', () =
     expect(errors).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// v1.5 ticket 06 — integration smoke (golden path across T02–T05).
+// These tests exercise the end-to-end user journey, not individual
+// features. The per-feature scenarios above already cover each piece
+// in isolation; this block proves the pieces fit together.
+// ---------------------------------------------------------------------------
+
+// Fixture that simulates a portfolio that has lived through v1.0→v1.4
+// (no `snapshot_cap` key in `settings`). The Take button should still
+// work because `load()` lazily inits via `normalizeSnapshotCap`.
+const PRE_V15_FIXTURE = {
+  ...PORTFOLIO_FIXTURE,
+  settings: {
+    // Note: no snapshot_cap. Snapshot.normalizeSnapshotCap will fill it.
+    display_currency: 'TWD',
+    language: 'en',
+    cost_format: 'per_share',
+    fx_source: 'manual',
+    fx_rate: 32.2,
+  },
+};
+
+const PRE_V15_INIT = `
+localStorage.setItem(${JSON.stringify(STORAGE_KEY)}, JSON.stringify(${JSON.stringify(PRE_V15_FIXTURE)}));
+`;
+
+test.describe('portfolio.html snapshots page (ticket #06 — integration smoke)', () => {
+  test('Golden path: empty → take → list → view → back → take again → compare → back → delete; chart stays consistent', async ({ page }) => {
+    const errors = collectAppErrors(page);
+    await page.addInitScript(INIT_SCRIPT);
+    page.__dlg = await autoAcceptDialogs(page);
+
+    await page.goto('http://localhost:8000/portfolio.html');
+    await page.locator('[data-testid="nav-snapshots"]').click();
+
+    // 1. Empty state.
+    await expect(page.locator('[data-testid="snapshot-empty"]')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('[data-testid="snapshot-chart-card"]')).toBeHidden(); // no chart yet
+
+    // 2. Take → list gains 1 row.
+    await page.locator('[data-testid="snapshot-empty-take"]').click();
+    await expect(page.locator('[data-testid="snapshot-row"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="snapshot-cap-usage"]')).toContainText('1 / 365');
+    await expect(page.locator('[data-testid="snapshot-chart-card"]')).toBeVisible(); // 1-snapshot state
+
+    // 3. View → detail opens, then Back returns to list.
+    await page.locator('[data-testid="snapshot-row-view"]').first().click();
+    await expect(page.locator('[data-testid="snapshot-detail"]')).toBeVisible({ timeout: 5_000 });
+    await page.locator('[data-testid="snapshot-detail-back"]').click();
+    await expect(page.locator('[data-testid="snapshot-detail"]')).toBeHidden({ timeout: 5_000 });
+
+    // 4. Take again → 2 rows.
+    await page.locator('[data-testid="snapshot-take"]').click();
+    await expect(page.locator('[data-testid="snapshot-row"]')).toHaveCount(2);
+    await expect(page.locator('[data-testid="snapshot-cap-usage"]')).toContainText('2 / 365');
+
+    // 5. Select both rows → Compare view opens with delta band.
+    const rows = page.locator('[data-testid="snapshot-row"]');
+    await rows.nth(0).locator('[data-testid^="snapshot-row-select-"]').check();
+    await rows.nth(1).locator('[data-testid^="snapshot-row-select-"]').check();
+    await expect(page.locator('[data-testid="snapshot-compare-button"]')).toBeEnabled();
+    await page.locator('[data-testid="snapshot-compare-button"]').click();
+    await expect(page.locator('[data-testid="snapshot-compare"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="snapshot-compare-delta-networth"]')).toBeVisible();
+
+    // 6. Back from compare returns to list with selection cleared.
+    await page.locator('[data-testid="snapshot-compare-back"]').click();
+    await expect(page.locator('[data-testid="snapshot-compare"]')).toBeHidden({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="snapshot-row"]')).toHaveCount(2);
+
+    // 7. Delete the older snapshot → list drops to 1 row.
+    // The list is newest-first, so the OLDER one is at index 1.
+    // (autoAcceptDialogs is already in place from beforeEach.)
+    await rows.nth(1).locator('[data-testid="snapshot-row-delete"]').click();
+    await expect(page.locator('[data-testid="snapshot-row"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="snapshot-cap-usage"]')).toContainText('1 / 365');
+
+    // 8. Single-snapshot state still works (chart shows 1 dot + caption).
+    const nwDots = await page.locator('[data-testid="snapshot-chart-dots-networth"] [data-snap-id]').count();
+    expect(nwDots).toBe(1);
+    await expect(page.locator('[data-testid="snapshot-chart-single-point"]')).toBeVisible();
+
+    expect(errors).toEqual([]);
+  });
+
+  test('v1.4 backup compatibility: portfolio without snapshot_cap key still works (lazy-init to 365)', async ({ page }) => {
+    const errors = collectAppErrors(page);
+    await page.addInitScript(PRE_V15_INIT);
+    page.__dlg = await autoAcceptDialogs(page);
+
+    await page.goto('http://localhost:8000/portfolio.html');
+    await page.locator('[data-testid="nav-snapshots"]').click();
+
+    // No crash; empty state still renders.
+    await expect(page.locator('[data-testid="snapshot-empty"]')).toBeVisible({ timeout: 10_000 });
+
+    // Cap usage shows the default 365.
+    await expect(page.locator('[data-testid="snapshot-cap-usage"]')).toContainText('0 / 365');
+
+    // Take succeeds (lazy-init did its job).
+    await page.locator('[data-testid="snapshot-empty-take"]').click();
+    await expect(page.locator('[data-testid="snapshot-row"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="snapshot-cap-usage"]')).toContainText('1 / 365');
+
+    // Verify on-disk that the lazy-init actually wrote back 365.
+    const storedCap = await page.evaluate((key) => {
+      const data = JSON.parse(localStorage.getItem(key) || '{}');
+      return data.settings ? data.settings.snapshot_cap : undefined;
+    }, STORAGE_KEY);
+    expect(storedCap).toBe(365);
+
+    expect(errors).toEqual([]);
+  });
+});

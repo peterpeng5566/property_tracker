@@ -5,6 +5,8 @@ A personal net-worth tracker. Tracks stocks, cash, and debts with manual snapsho
 ## Status
 
 - **v1.0** — sync complete. 4 pages (Home, Holdings, Cash & Debts, Categories). Import / Export / Sync I/O. Live as of 2026-08-09 (real client_id + Google Drive smoke test passed).
+- **v1.1–v1.4** — pricing refresh + migration safety net (v1.1–v1.2), true-delete + automatic backups (v1.3), target-allocation plans + drift (v1.4).
+- **v1.5** — Snapshot UI landed. 5th nav page (Snapshots) with list / detail (drill-in to holdings/cash/debts with frozen currency + orphan handling) / compare 2 snapshots (delta view) / trend chart (inline SVG sparkline with 2 polylines). Manual-only; snapshot cap (default 365, FIFO, user-configurable, `0 = unlimited`). See [`docs/adr/0014-snapshot-ui.md`](docs/adr/0014-snapshot-ui.md).
 
 ## Run it
 
@@ -128,12 +130,15 @@ For the on-disk schema (fields, types, migration rules), see [docs/data-file-for
 
 ## Roadmap
 
-- **v1.1** — snapshot UI + comparison view + charts (the `snapshots` field is reserved but unused in v1.0). Includes snapshot creation flow, delta vs previous snapshot, and trend charts.
+_Last updated at v1.5 close-out._ The remaining open items are in the per-version issue trackers under `.scratch/`:
+
+- `.scratch/v1.4-target-allocation-plans/map.md` — leaves "snapshot + active plan drift history" as open fog (a future effort, not on a version).
+- `.scratch/v1.5-snapshot-ui/map.md` — v1.5 close-out ticket (`06`) covers ADR + glossary + smoke. All v1.5 UI work is done.
 
 ## Docs
 
 - [CONTEXT.md](CONTEXT.md) — domain glossary
-- [docs/adr/](docs/adr/) — architectural decisions (0001–0008)
+- [docs/adr/](docs/adr/) — architectural decisions (0001–0014)
 - [docs/data-file-format.md](docs/data-file-format.md) — JSON file format spec
 - [docs/google-oauth-setup.md](docs/google-oauth-setup.md) — Google Cloud Console setup
 - [docs/agents/](docs/agents/) — agent / workflow conventions

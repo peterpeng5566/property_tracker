@@ -87,7 +87,7 @@ _Avoid_: Facet, segment
 ## Navigation (Web)
 
 **Page**:
-A top-level navigation destination in the Web app. The user is on one of: Home, Holdings, Cash & Debts, Categories. State is held in memory; no URL routing.
+A top-level navigation destination in the Web app. The user is on one of: Home, Holdings, Cash & Debts, Categories, **Snapshots** (v1.5). State is held in memory; no URL routing.
 _Avoid_: View (overloaded with chart views), route (implies URL)
 
 **Home page**:
@@ -119,8 +119,13 @@ _Avoid_: Current plan, selected plan
 ## Snapshots
 
 **Snapshot**:
-A point-in-time record of the user's portfolio, captured manually. Stores the full holdings, cash, and debts at that moment, plus prices and FX rate. One per day, with overwrite confirmation.
-_Avoid_: Backup (overloaded), checkpoint (technical)
+A point-in-time record of the user's portfolio, captured manually. Stores the full holdings, cash, and debts at that moment, plus prices and FX rate. One per day, with overwrite confirmation. Read-only history — there is no restore-from-snapshot.
+_Critical_: a **Snapshot** is history (manual, selective, read-only, bounded by `Snapshot cap`). A **Backup** is rollback (automatic, full-state, writeable, double-buffered). The two live in different fields (`data.snapshots[]` vs `data.backups[]`) and are governed by different ADRs (0014 vs 0012); do NOT conflate.
+_Avoid_: Backup (overloaded — see the snapshot-vs-backup caveat above), checkpoint (technical)
+
+**Snapshot cap**:
+The maximum number of snapshots retained per portfolio, stored as `settings.snapshot_cap`. Default `365` (about a year of daily snapshots); user-configurable on the Snapshots page. When a take exceeds the cap, oldest snapshots are dropped (FIFO). The value `0` is the explicit *unlimited* sentinel. A missing / negative / non-number value is lazy-initialised to `365` by `Snapshot.normalizeSnapshotCap` at load time, so v1.0/v1.4 backup files upgrade silently. See ADR 0014.
+_Avoid_: retention policy (sounds enterprise), snapshot limit (overloaded with v1.3 deletion limits)
 
 **Snapshot totals**:
 The stored aggregate numbers (TWD + USD) for assets, liabilities, and net worth at snapshot time.
@@ -135,7 +140,8 @@ A point-in-time snapshot of the full portfolio used as a recovery target for the
 - **Layer 1** — stored inside `data.backups[]` as snapshot entries with `{id, saved_at, device_id, data, deletions}`. Captures every `save()`. Syncs across devices via `mergeById` (global 5 newest across all devices).
 - **Layer 2** — stored as a Drive file named `portfolio-backup-{device-id}-{ISO-timestamp}.json` in the same folder as `portfolio.json`. Captures every `writePortfolioFile()`. List refreshed on Backups page mount.
 Restoring a backup is full-state and self-protected: the current state becomes a new backup before the restore applies, so the user can restore-restore to undo. See `docs/adr/0012-backup-architecture.md`.
-_Avoid_: snapshot (overloaded — see *Snapshot* for manual per-day captures), checkpoint (technical), version (overloaded)
+_Critical_: a **Backup** is rollback (automatic, full-state, writeable, double-buffered). A **Snapshot** is history (manual, selective, read-only, bounded by *Snapshot cap*). The two live in different fields (`data.backups[]` vs `data.snapshots[]`) and are governed by different ADRs (0012 vs 0014); do NOT conflate.
+_Avoid_: snapshot (overloaded — see the backup-vs-snapshot caveat in *Snapshot*), checkpoint (technical), version (overloaded)
 
 ## Sync
 
