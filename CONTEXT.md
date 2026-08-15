@@ -94,6 +94,28 @@ _Avoid_: View (overloaded with chart views), route (implies URL)
 The default landing page. Shows total net worth (across all record types) and grouping by category. Read-only.
 _Avoid_: Dashboard (overloaded), summary page
 
+## Plans
+
+**Plan**:
+A user-defined set of target allocations across categories, expressed as flat rules. Multiple plans can exist; one is active at a time. Stored in `data.plans[]`.
+_Avoid_: Strategy, allocation (overloaded), target
+
+**Plan rule**:
+A single target distribution in a plan. Filters records by category attributes (`when`) and specifies how those records should be distributed across the values of one target category (`distribute`). Independent — a record can fall in multiple rules' actuals.
+_Avoid_: Constraint, condition (overloaded), rule of thumb
+
+**Target distribution**:
+A weighted breakdown of records within a single rule's filter, expressed as percentages summing to 100% across the values of one target category. The `distribute` field of a rule.
+_Avoid_: Target (overloaded), allocation (overloaded)
+
+**Drift**:
+For a single rule, the difference between its target distribution and the actual distribution of matching records' values. Expressed as percentage points per value: `actual_pct - target_pct`. Positive = over-allocated; negative = under-allocated.
+_Avoid_: Deviation, variance (technical), gap
+
+**Active plan**:
+The plan currently selected for drift computation on Home. Stored as `data.active_plan_id`. Synced across devices via the per-record merge pattern.
+_Avoid_: Current plan, selected plan
+
 ## Snapshots
 
 **Snapshot**:

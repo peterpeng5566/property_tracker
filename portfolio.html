@@ -992,6 +992,13 @@
      window.toTWD (lib/format.js), so must load AFTER format.js. -->
 <script src="lib/group.js"></script>
 
+<!-- Plan helpers (lib/plan.js) — Plan data model + validation + rule
+     matching + distribution + drift (v1.4). Pure functions also used
+     by tests/plan.test.js. Depends on window.toTWD (lib/format.js),
+     so must load AFTER format.js. The Alpine shim (Plan page UI,
+     ticket 02 / drift report on Home, ticket 04) wraps these. -->
+<script src="lib/plan.js"></script>
+
 <!-- Refresh state machine (lib/refresh.js) — retry / cancel / partial-success
      workflow. Pure functions used by tests/refresh.test.js. Self-contained —
      no deps on other lib globals (Yahoo/Format are injected at call site). -->
@@ -1385,6 +1392,13 @@
       // additive — see ADR 0011 / ADR 0012 (drafts — ticket 04).
       deletions: [],
       backups: [],
+      // v1.4: Plan list + active-plan pointer. Plans are settings (not
+      // portfolio state) — see .scratch/v1.4-target-allocation-plans/
+      // and the planned v1.4 ADR (ticket 06). `active_plan_id` is null
+      // when no plan is active; the Home drift report hides itself when
+      // null. Both fields are additive (no version bump).
+      plans: [],
+      active_plan_id: null,
     };
   }
 
@@ -1938,6 +1952,14 @@
             // because adding a missing array is additive (ADR 0009 §6).
             if (!this.data.deletions) this.data.deletions = [];
             if (!this.data.backups) this.data.backups = [];
+            // v1.4 additive fields: lazy-init the Plan list and the
+            // active-plan pointer. Both are merged by lib/sync.js via
+            // mergeById (plans) / last-writer-wins scalar (active_plan_id)
+            // — no version bump needed because both are additive
+            // (ADR 0009 §6). See docs/adr (planned v1.4 ADR — ticket 06)
+            // and .scratch/v1.4-target-allocation-plans/.
+            if (!this.data.plans) this.data.plans = [];
+            if (this.data.active_plan_id === undefined) this.data.active_plan_id = null;
             this.data.holdings.forEach(h => { if (!h.attributes) h.attributes = {}; });
             this.data.cash_accounts.forEach(c => { if (!c.attributes) c.attributes = {}; });
             this.data.debts.forEach(d => { if (!d.attributes) d.attributes = {}; });
