@@ -1044,6 +1044,87 @@
           <p x-text="t('snapshots.stale.nudge')"></p>
         </div>
 
+        <!-- Trend chart (v1.5 ticket 05). Visible when ≥1 snapshot -->
+        <!-- exists; hidden entirely when 0 (the T02 empty state takes -->
+        <!-- over). Two polylines: Net Worth (primary, slate-900) and -->
+        <!-- Holdings Value (secondary, emerald-500). 1-snapshot state -->
+        <!-- drops the holdingsValue line and shows a caption below. -->
+        <div x-show="snapshotListRows.length > 0"
+             data-testid="snapshot-chart-card"
+             class="bg-white rounded-2xl border border-slate-200 p-4 mb-4">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-xs font-medium text-slate-700"
+                data-testid="snapshot-chart-title"
+                x-text="t('snapshots.chart.title')"></h3>
+            <div class="flex items-center gap-4 text-xs text-slate-500"
+                 data-testid="snapshot-chart-legend">
+              <span class="inline-flex items-center gap-1.5">
+                <span class="inline-block w-3 h-0.5 bg-slate-900"></span>
+                <span x-text="t('snapshots.chart.legend.netWorth')"></span>
+              </span>
+              <span class="inline-flex items-center gap-1.5"
+                    x-show="snapshotListRows.length > 1">
+                <span class="inline-block w-3 h-0.5 bg-emerald-500 opacity-70"></span>
+                <span x-text="t('snapshots.chart.legend.holdingsValue')"></span>
+              </span>
+            </div>
+          </div>
+          <div class="relative" data-testid="snapshot-chart-svg-wrap">
+            <svg viewBox="0 0 800 200"
+                 preserveAspectRatio="xMidYMid meet"
+                 class="w-full h-[160px]"
+                 data-testid="snapshot-chart-svg">
+              <!-- Y-axis (3 ticks: min / mid / max). Markup generated as -->
+              <!-- a string and injected via x-html because Alpine 3's -->
+              <!-- <template x-for> doesn't propagate the iteration -->
+              <!-- scope to children inside an SVG namespace. -->
+              <g data-testid="snapshot-chart-y-axis"
+                 x-html="chartYAxisMarkup()"
+                 @click.stop></g>
+
+              <!-- Net Worth polyline (primary; slate-900) -->
+              <polyline :points="chartNetWorthPoints()"
+                        data-testid="snapshot-chart-line-networth"
+                        fill="none"
+                        stroke="#0f172a"
+                        stroke-width="2"
+                        stroke-linejoin="round"
+                        stroke-linecap="round" />
+
+              <!-- Holdings Value polyline (secondary; emerald-500) -->
+              <polyline x-show="snapshotListRows.length > 1"
+                        :points="chartHoldingsPoints()"
+                        data-testid="snapshot-chart-line-holdings"
+                        fill="none"
+                        stroke="#10b981"
+                        stroke-width="1"
+                        opacity="0.7"
+                        stroke-linejoin="round"
+                        stroke-linecap="round" />
+
+              <!-- Net Worth dots (event-delegated hover + click) -->
+              <g data-testid="snapshot-chart-dots-networth"
+                 x-html="chartNetWorthDotsMarkup()"
+                 @click="chartDotClick($event)"
+                 @mouseover="chartDotEnter($event)"
+                 @mouseout="chartDotLeave($event)"></g>
+
+              <!-- Holdings Value dots -->
+              <g x-show="snapshotListRows.length > 1"
+                 data-testid="snapshot-chart-dots-holdings"
+                 x-html="chartHoldingsDotsMarkup()"
+                 @click="chartDotClick($event)"
+                 @mouseover="chartDotEnter($event)"
+                 @mouseout="chartDotLeave($event)"></g>
+            </svg>
+            <!-- 1-snapshot caption overlay (positioned below chart) -->
+            <p x-show="snapshotListRows.length === 1"
+               data-testid="snapshot-chart-single-point"
+               class="text-xs text-slate-400 mt-2 text-center"
+               x-text="t('snapshots.chart.singlePoint')"></p>
+          </div>
+        </div>
+
         <!-- Snapshot list (newest-first) -->
         <div x-show="snapshotListRows.length > 0"
              data-testid="snapshot-list"
@@ -1065,8 +1146,11 @@
         </div>
 
           <template x-for="row in snapshotListRows" :key="row.id">
-            <div class="bg-white p-4 rounded-2xl border border-slate-200"
-                 data-testid="snapshot-row">
+            <div class="bg-white p-4 rounded-2xl border border-slate-200 transition-colors"
+                 :class="hoveredSnapshotId === row.id ? 'ring-2 ring-slate-300' : ''"
+                 data-testid="snapshot-row"
+                 @mouseenter="hoveredSnapshotId = row.id"
+                 @mouseleave="hoveredSnapshotId = null">
               <div class="flex items-center justify-between gap-4">
                 <div class="min-w-0 flex-1">
                   <div class="flex items-baseline gap-3 flex-wrap">
@@ -1905,8 +1989,10 @@
 
 <!-- Snapshot builder (lib/snapshot.js) — L4 full-detail snapshot assembly
      (ADR 0005). Pure functions used by tests/snapshot.test.js. Depends on
-     Calc.* (lib/calc.js) and Serialize.stripInMemoryFields (lib/serialize.js),
-     so must load AFTER both. -->
+     Calc.* (lib/calc.js), Serialize.stripInMemoryFields (lib/serialize.js),
+     and Format.convertCurrency (lib/format.js), so must load AFTER all three.
+     (format.js loads at the top of the script block; serialize.js loads
+     here just above.) -->
 <script src="lib/snapshot.js"></script>
 
 
@@ -2203,6 +2289,17 @@
       'snapshots.compare.delta.value': 'Δ Value',
       'snapshots.compare.delta.pct': 'Δ %',
       'snapshots.compare.currencyNote': 'Computed in {currency} (frozen at capture time; no re-FX).',
+      // v1.5 ticket 05 — trend chart (inline SVG sparkline at top of
+      // the Snapshots page). Two polylines: Net Worth (primary) +
+      // Holdings Value (secondary). Single shared y-axis (3 ticks).
+      // 1-snapshot state shows only the netWorth point + caption
+      // (holdingsValue needs ≥2 points for trend semantics). Hover
+      // tooltip uses SVG <title> (browser native). Bidirectional
+      // hover-sync with list rows via hoveredSnapshotId.
+      'snapshots.chart.title': 'Net worth trend',
+      'snapshots.chart.legend.netWorth': 'Net Worth',
+      'snapshots.chart.legend.holdingsValue': 'Holdings Value',
+      'snapshots.chart.singlePoint': 'Only one snapshot — take another to see a trend.',
     },
     zh: {
       'app.title': 'Property Tracker',
@@ -2257,6 +2354,11 @@
       'snapshots.compare.delta.value': 'Δ 金額',
       'snapshots.compare.delta.pct': 'Δ %',
       'snapshots.compare.currencyNote': '以 {currency} 計算（凍結於快照建立時；不會重新換算）。',
+      // v1.5 ticket 05 — trend chart
+      'snapshots.chart.title': '淨值趨勢',
+      'snapshots.chart.legend.netWorth': '總淨值',
+      'snapshots.chart.legend.holdingsValue': '股票市值',
+      'snapshots.chart.singlePoint': '目前只有一個快照——再建立一個才能看出趨勢。',
       'summary.netWorth': '總資產 Net Worth',
       'summary.netWorthSub': '{a} holdings + {c} 現金 − {d} 負債',
       'summary.holdingsValue': 'Holdings 市值',
@@ -2537,6 +2639,12 @@
       // array Proxy, so a take / delete re-renders the compare view.
       selectedSnapshotIds: [],
       compareIds: null,
+      // v1.5 ticket 05: trend chart hover state.
+      // hoveredSnapshotId mirrors whichever snapshot the user is
+      // pointing at, so the chart dot and the list row can light up
+      // together. Set from chart dot @mouseenter and from list row
+      // @mouseenter; cleared on @mouseleave of both.
+      hoveredSnapshotId: null,
 
       // Plans page state (v1.4 — ticket 02). planDraft is the editing
       // buffer; null when showing the plan list. planEditorMode is a
@@ -3649,6 +3757,227 @@
         return this.t('snapshots.cap.usage', { n: count, cap });
       },
 
+      // ---- Trend chart (v1.5 ticket 05) ----
+      // Pure data lives in Snapshot.toDisplaySeries (lib/snapshot.js).
+      // The getters below are thin shims over that helper plus a
+      // linear-interpolation y-domain. The SVG geometry constants
+      // (margin, plot width/height) live inside chartPlotBounds() so
+      // every getter shares the same coordinate space.
+      //
+      // Coordinates (viewBox 0 0 800 200):
+      //   - left axis labels occupy x ∈ [0, 60)
+      //   - plot area: x ∈ [60, 780], y ∈ [10, 150)
+      //   - legend strip: y ∈ [155, 195)
+      // 1-snapshot state still uses the full plot area (single point at
+      // horizontal centre); the polyline collapses to one segment.
+
+      _CHART_VIEW_W: 800,
+      _CHART_VIEW_H: 200,
+      _CHART_MARGIN_LEFT: 60,
+      _CHART_MARGIN_RIGHT: 20,
+      _CHART_MARGIN_TOP: 10,
+      _CHART_MARGIN_BOTTOM: 50, // reserves room for x-hint + legend
+
+      chartSeries() {
+        const arr = Array.isArray(this.data?.snapshots) ? this.data.snapshots : [];
+        return Snapshot.toDisplaySeries(arr, this.displayCurrency);
+      },
+
+      // {min, mid, max} across both netWorth and holdingsValue so the
+      // shared y-axis covers both polylines. Empty series → 0/0/0.
+      chartDomain() {
+        const series = this.chartSeries();
+        if (series.length === 0) return { min: 0, mid: 0, max: 0 };
+        let min = Infinity, max = -Infinity;
+        for (const s of series) {
+          if (s.netWorth < min) min = s.netWorth;
+          if (s.netWorth > max) max = s.netWorth;
+          if (s.holdingsValue < min) min = s.holdingsValue;
+          if (s.holdingsValue > max) max = s.holdingsValue;
+        }
+        // Padding so the polyline doesn't touch the top/bottom edges.
+        const range = (max - min) || Math.max(Math.abs(max), 1);
+        const pad = range * 0.08;
+        min = min - pad;
+        max = max + pad;
+        return { min, mid: (min + max) / 2, max };
+      },
+
+      chartPlotBounds() {
+        return {
+          x0: this._CHART_MARGIN_LEFT,
+          x1: this._CHART_VIEW_W - this._CHART_MARGIN_RIGHT,
+          y0: this._CHART_MARGIN_TOP,
+          y1: this._CHART_VIEW_H - this._CHART_MARGIN_BOTTOM,
+        };
+      },
+
+      _chartX(i, n) {
+        const b = this.chartPlotBounds();
+        if (n <= 1) return (b.x0 + b.x1) / 2;
+        return b.x0 + ((b.x1 - b.x0) * i) / (n - 1);
+      },
+
+      _chartY(value, domain) {
+        const b = this.chartPlotBounds();
+        if (domain.max === domain.min) return (b.y0 + b.y1) / 2;
+        const t = (value - domain.min) / (domain.max - domain.min);
+        // y axis flipped (SVG top = small y).
+        return b.y1 - t * (b.y1 - b.y0);
+      },
+
+      // SVG <polyline points="x,y x,y ..."> string. Empty series → ''.
+      chartNetWorthPoints() {
+        const series = this.chartSeries();
+        if (series.length === 0) return '';
+        const d = this.chartDomain();
+        return series.map((s, i) => `${this._chartX(i, series.length)},${this._chartY(s.netWorth, d)}`).join(' ');
+      },
+
+      chartHoldingsPoints() {
+        const series = this.chartSeries();
+        // Only render holdingsValue line when there's a meaningful trend
+        // (≥2 points). One point would just be a duplicate of the
+        // netWorth dot with no semantic.
+        if (series.length < 2) return '';
+        const d = this.chartDomain();
+        return series.map((s, i) => `${this._chartX(i, series.length)},${this._chartY(s.holdingsValue, d)}`).join(' ');
+      },
+
+      // Dots rendered as separate <circle> elements so each can carry
+      // its own hover handler and SVG <title> tooltip. We expose the
+      // raw data so the template can iterate.
+      chartNetWorthDots() {
+        const series = this.chartSeries();
+        if (series.length === 0) return [];
+        const d = this.chartDomain();
+        return series.map((s, i) => ({
+          id: s.id,
+          date: s.date,
+          cx: this._chartX(i, series.length),
+          cy: this._chartY(s.netWorth, d),
+          value: s.netWorth,
+        }));
+      },
+
+      chartHoldingsDots() {
+        const series = this.chartSeries();
+        if (series.length < 2) return [];
+        const d = this.chartDomain();
+        return series.map((s, i) => ({
+          id: s.id,
+          date: s.date,
+          cx: this._chartX(i, series.length),
+          cy: this._chartY(s.holdingsValue, d),
+          value: s.holdingsValue,
+        }));
+      },
+
+      // 3 ticks for the y-axis (min / mid / max). Each tick carries
+      // raw value (for the SVG <line> positioning) and formatted text
+      // (for the <text> label). Format uses formatAmount with the
+      // current displayCurrency so labels match the rest of the page.
+      chartYAxisTicks() {
+        const d = this.chartDomain();
+        const b = this.chartPlotBounds();
+        const yMin = this._chartY(d.min, d);
+        const yMid = this._chartY(d.mid, d);
+        const yMax = this._chartY(d.max, d);
+        const labelX = b.x0 - 8;
+        const fmt = (v) => this.formatAmount(v, this.displayCurrency);
+        return [
+          { y: yMax, text: fmt(d.max) },
+          { y: yMid, text: fmt(d.mid) },
+          { y: yMin, text: fmt(d.min) },
+        ].map(t => ({ ...t, labelX }));
+      },
+
+      // SVG markup strings injected via x-html on <g> elements.
+      // (Alpine 3's <template x-for> doesn't propagate the iterator
+      // scope to children inside an SVG namespace; x-html on <g> parses
+      // its innerHTML as SVG, so we pre-build the markup as a string.)
+      // Each circle carries a data-snap-id for event delegation and
+      // a <title> child for the browser-native hover tooltip.
+
+      _escXml(s) {
+        return String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      },
+
+      chartYAxisMarkup() {
+        const b = this.chartPlotBounds();
+        const ticks = this.chartYAxisTicks();
+        return ticks.map(t => {
+          const yNum = Number(t.y) || 0;
+          const text = this._escXml(t.text);
+          return (
+            `<line x1="${b.x0}" x2="${b.x1}" y1="${yNum}" y2="${yNum}" `
+            + `stroke="#e2e8f0" stroke-width="0.5" stroke-dasharray="2 3" />`
+            + `<text x="${t.labelX}" y="${yNum}" dominant-baseline="middle" `
+            + `font-size="10" fill="#64748b" text-anchor="end">${text}</text>`
+          );
+        }).join('');
+      },
+
+      chartNetWorthDotsMarkup() {
+        const dots = this.chartNetWorthDots();
+        return dots.map(d => {
+          const cx = Number(d.cx) || 0;
+          const cy = Number(d.cy) || 0;
+          const tip = this._escXml(d.date + ' · ' + this.formatAmount(d.value, this.displayCurrency));
+          return (
+            `<g data-snap-id="${this._escXml(d.id)}" class="chart-dot" style="cursor:pointer">`
+            + `<circle cx="${cx}" cy="${cy}" r="10" fill="transparent">`
+            + `<title>${tip}</title></circle>`
+            + `<circle cx="${cx}" cy="${cy}" r="3" fill="#0f172a" />`
+            + `</g>`
+          );
+        }).join('');
+      },
+
+      chartHoldingsDotsMarkup() {
+        const dots = this.chartHoldingsDots();
+        return dots.map(d => {
+          const cx = Number(d.cx) || 0;
+          const cy = Number(d.cy) || 0;
+          const tip = this._escXml(d.date + ' · ' + this.formatAmount(d.value, this.displayCurrency));
+          return (
+            `<g data-snap-id="${this._escXml(d.id)}" class="chart-dot" style="cursor:pointer">`
+            + `<circle cx="${cx}" cy="${cy}" r="10" fill="transparent">`
+            + `<title>${tip}</title></circle>`
+            + `<circle cx="${cx}" cy="${cy}" r="2.5" fill="#10b981" opacity="0.7" />`
+            + `</g>`
+          );
+        }).join('');
+      },
+
+      // Event delegation helpers — find the snap id from a click /
+      // mouseover event that bubbled up from one of the chart dots.
+      _chartSnapIdFromEvent(ev) {
+        const node = ev.target && ev.target.closest && ev.target.closest('[data-snap-id]');
+        return node ? node.getAttribute('data-snap-id') : null;
+      },
+
+      chartDotClick(ev) {
+        const id = this._chartSnapIdFromEvent(ev);
+        if (id) this.viewSnapshot(id);
+      },
+
+      chartDotEnter(ev) {
+        const id = this._chartSnapIdFromEvent(ev);
+        if (id) this.hoveredSnapshotId = id;
+      },
+
+      chartDotLeave(ev) {
+        // Only clear when leaving the dot group entirely. Related target
+        // might be inside the same <g>, so check ancestors.
+        const id = this._chartSnapIdFromEvent(ev);
+        if (id && this.hoveredSnapshotId === id) this.hoveredSnapshotId = null;
+      },
+
       // Computed: can-take-snapshot gate. Always true today — the
       // intraday warning is handled inside takeSnapshot() via
       // shouldWarnIntraday(). Kept as a getter so future constraints
@@ -3701,6 +4030,7 @@
         if (!arr.find(s => s.id === id)) return;
         this.snapshotDetailId = id;
         this.selectedSnapshotIds = [];
+        this.hoveredSnapshotId = null;
       },
 
       // Close detail view, return to list.
@@ -3770,6 +4100,7 @@
       closeCompareView() {
         this.compareIds = null;
         this.selectedSnapshotIds = []; // Q4 = A: clear selection on exit
+        this.hoveredSnapshotId = null;
       },
 
       // ---- Compare getters (thin shims over Snapshot.computeDelta) ----

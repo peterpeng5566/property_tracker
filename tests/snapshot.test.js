@@ -397,8 +397,8 @@ const S = (id, opts = {}) => ({
   holdings: [],
   cash_accounts: [],
   debts: [],
-  fx_rate: 32.2,
-  totals: { netWorth: 0, holdingsValue: 0, displayCurrency: 'TWD' },
+  fx_rate: opts.fx_rate != null ? opts.fx_rate : 32.2,
+  totals: opts.totals || { netWorth: 0, holdingsValue: 0, displayCurrency: 'TWD' },
 });
 
 test('pushSnapshotWithCap: cap null → no cap applied (just push)', () => {
@@ -586,4 +586,108 @@ test('resolveAttributeRef: returns a fresh object each call (no shared mutable s
   assert.notEqual(a, b);
   a.kind = 'tampered';
   assert.equal(b.kind, 'ok');
+});
+
+// --- v1.5 ticket 05: toDisplaySeries for sparkline ---
+// TDD seam: lib/snapshot.js. Pure helper that converts each snap's
+// frozen netWorth / holdingsValue into the *current* display_currency
+// using each snap's own frozen fx_rate (NOT the current fx_rate).
+// Sorted ascending by date (oldest first; chart x-axis is left-to-right
+// time progression).
+// See .scratch/v1.5-snapshot-ui/issues/05-trend-chart-sparkline.md.
+
+test('toDisplaySeries: empty array → []', () => {
+  assert.deepEqual(Snapshot.toDisplaySeries([], 'TWD'), []);
+});
+
+test('toDisplaySeries: non-array input → [] (defensive)', () => {
+  assert.deepEqual(Snapshot.toDisplaySeries(null, 'TWD'), []);
+  assert.deepEqual(Snapshot.toDisplaySeries(undefined, 'TWD'), []);
+});
+
+test('toDisplaySeries: single TWD snapshot passes through unchanged', () => {
+  const out = Snapshot.toDisplaySeries(
+    [S('s1', { totals: { displayCurrency: 'TWD', holdingsValue: 80_000, netWorth: 150_000 } })],
+    'TWD'
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, 's1');
+  assert.equal(out[0].date, '2024-01-15');
+  assert.equal(out[0].netWorth, 150_000);
+  assert.equal(out[0].holdingsValue, 80_000);
+});
+
+test('toDisplaySeries: USD snapshot converted to TWD using its own fx_rate', () => {
+  // fx_rate = 31 → 5000 USD * 31 = 155,000 TWD
+  const out = Snapshot.toDisplaySeries(
+    [S('s-usd', { fx_rate: 31,
+      totals: { displayCurrency: 'USD', holdingsValue: 3_000, netWorth: 5_000 } })],
+    'TWD'
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].netWorth, 155_000);
+  assert.equal(out[0].holdingsValue, 93_000); // 3000 * 31
+});
+
+test('toDisplaySeries: TWD snapshot converted to USD using its own fx_rate', () => {
+  // fx_rate = 32 → 150,000 TWD / 32 = 4,687.50 USD
+  const out = Snapshot.toDisplaySeries(
+    [S('s-twd', { fx_rate: 32,
+      totals: { displayCurrency: 'TWD', holdingsValue: 80_000, netWorth: 150_000 } })],
+    'USD'
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].netWorth, 150_000 / 32);
+  assert.equal(out[0].holdingsValue, 80_000 / 32);
+});
+
+test('toDisplaySeries: sorted ascending by date (oldest first)', () => {
+  // Input intentionally reversed to prove the sort.
+  const out = Snapshot.toDisplaySeries([
+    S('newest', { date: '2025-03-15',
+      totals: { displayCurrency: 'TWD', holdingsValue: 100, netWorth: 300 } }),
+    S('mid',    { date: '2025-02-10',
+      totals: { displayCurrency: 'TWD', holdingsValue: 100, netWorth: 200 } }),
+    S('oldest', { date: '2025-01-05',
+      totals: { displayCurrency: 'TWD', holdingsValue: 100, netWorth: 100 } }),
+  ], 'TWD');
+  assert.deepEqual(out.map(s => s.id), ['oldest', 'mid', 'newest']);
+  assert.deepEqual(out.map(s => s.netWorth), [100, 200, 300]);
+});
+
+test('toDisplaySeries: same-currency cross-snap (USD throughout) uses each snap frozen fx_rate', () => {
+  // Two USD snapshots with different fx_rates. Each conversion uses its
+  // OWN fx_rate (not the most recent one).
+  const out = Snapshot.toDisplaySeries([
+    S('a', { fx_rate: 31, date: '2024-01-01',
+      totals: { displayCurrency: 'USD', holdingsValue: 1_000, netWorth: 1_000 } }),
+    S('b', { fx_rate: 32, date: '2025-01-01',
+      totals: { displayCurrency: 'USD', holdingsValue: 1_000, netWorth: 1_000 } }),
+  ], 'TWD');
+  assert.equal(out[0].netWorth, 31_000); // * 31
+  assert.equal(out[1].netWorth, 32_000); // * 32
+});
+
+test('toDisplaySeries: missing totals / fx_rate defended with 0 and identity', () => {
+  const out = Snapshot.toDisplaySeries([
+    // No totals field at all
+    { id: 'bare', date: '2024-01-15', holdings: [], cash_accounts: [], debts: [] },
+    // Totals but missing fx_rate → uses 1 (identity for USD↔TWD via *1 /1)
+    { id: 'no-fx', date: '2024-02-15', holdings: [], cash_accounts: [], debts: [],
+      totals: { displayCurrency: 'TWD', holdingsValue: 50, netWorth: 50 } },
+  ], 'TWD');
+  assert.equal(out.length, 2);
+  assert.equal(out[0].netWorth, 0);
+  assert.equal(out[0].holdingsValue, 0);
+  assert.equal(out[1].netWorth, 50);
+});
+
+test('toDisplaySeries: returns new array (does not mutate input)', () => {
+  const input = [
+    S('a', { date: '2024-01-01',
+      totals: { displayCurrency: 'TWD', holdingsValue: 1, netWorth: 1 } }),
+  ];
+  const before = JSON.stringify(input);
+  Snapshot.toDisplaySeries(input, 'TWD');
+  assert.equal(JSON.stringify(input), before);
 });

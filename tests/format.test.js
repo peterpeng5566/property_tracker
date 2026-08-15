@@ -13,7 +13,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { formatAmount, toTWD, fromTWD } = require('../lib/format.js');
+const { formatAmount, toTWD, fromTWD, convertCurrency } = require('../lib/format.js');
 
 const FX = 31; // USD → TWD rate used by tests
 
@@ -186,4 +186,57 @@ test('deltaPercent: non-finite numerator → "—"', () => {
 test('deltaPercent: non-finite denominator → "—"', () => {
   assert.equal(deltaPercent(5, NaN), '—');
   assert.equal(deltaPercent(5, Infinity), '—');
+});
+// ---------------------------------------------------------------------------
+// v1.5 ticket 05 — convertCurrency helper
+// (see .scratch/v1.5-snapshot-ui/issues/05-trend-chart-sparkline.md)
+// ---------------------------------------------------------------------------
+// Rules:
+//   - amount stays raw (number, not formatted string)
+//   - TWD → TWD: identity
+//   - USD → TWD: amount * fxRate (using snap's frozen fx_rate, NOT current)
+//   - TWD → USD: amount / fxRate
+//   - USD → USD: identity (no double conversion)
+//   - Same-currency pairs are identity (no surprise double-conversion)
+
+test('convertCurrency: TWD → TWD is identity (no conversion)', () => {
+  assert.strictEqual(convertCurrency(150_000, 'TWD', 'TWD', 31), 150_000);
+  assert.strictEqual(convertCurrency(-1234.56, 'TWD', 'TWD', 31), -1234.56);
+});
+
+test('convertCurrency: USD → TWD multiplies by fxRate', () => {
+  assert.strictEqual(convertCurrency(100, 'USD', 'TWD', 31), 3_100);
+  assert.strictEqual(convertCurrency(1000, 'USD', 'TWD', 31), 31_000);
+});
+
+test('convertCurrency: TWD → USD divides by fxRate', () => {
+  // 150,000 TWD / 31 = 4838.7096... USD
+  assert.strictEqual(convertCurrency(150_000, 'TWD', 'USD', 31), 150_000 / 31);
+  // Use a high-precision assert for the rounding:
+  assert.ok(Math.abs(convertCurrency(150_000, 'TWD', 'USD', 31) - 4838.709677419354) < 1e-9);
+});
+
+test('convertCurrency: USD → USD is identity (no double conversion)', () => {
+  assert.strictEqual(convertCurrency(5000, 'USD', 'USD', 31), 5000);
+  assert.strictEqual(convertCurrency(5000, 'USD', 'USD', 999), 5000);
+});
+
+test('convertCurrency: unknown currency passes through (matches toTWD/fromTWD semantics)', () => {
+  // Per toTWD/fromTWD: unknown currencies are treated as identity.
+  // This is a "passthrough" guard; document via test rather than behaviour
+  // change.
+  assert.strictEqual(convertCurrency(100, 'XYZ', 'XYZ', 31), 100);
+});
+
+test('convertCurrency: round-trip USD → TWD → USD returns original', () => {
+  const original = 1234.56;
+  const twd = convertCurrency(original, 'USD', 'TWD', 31);
+  const back = convertCurrency(twd, 'TWD', 'USD', 31);
+  assert.ok(Math.abs(back - original) < 1e-9, `expected ${original}, got ${back}`);
+});
+
+test('convertCurrency: fxRate has no effect when source === target', () => {
+  // fx_rate only matters during conversion; identity paths skip it.
+  assert.strictEqual(convertCurrency(100, 'USD', 'USD', 0), 100);
+  assert.strictEqual(convertCurrency(100, 'TWD', 'TWD', 0), 100);
 });
