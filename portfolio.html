@@ -1860,6 +1860,11 @@
         fx_rate: 32.2,
         fx_updated_at: new Date().toISOString(),
         language: 'en',
+        // v1.5: snapshot cap (FIFO). Default 365 (~1y of daily
+        // snapshots). 0 = unlimited. Sanitized via
+        // Snapshot.normalizeSnapshotCap on load() / import. See
+        // .scratch/v1.5-snapshot-ui/issues/01-snapshot-cap-and-gc.md.
+        snapshot_cap: 365,
       },
       categories: [],
       holdings: [],
@@ -2448,6 +2453,14 @@
             // and .scratch/v1.4-target-allocation-plans/.
             if (!this.data.plans) this.data.plans = [];
             if (this.data.active_plan_id === undefined) this.data.active_plan_id = null;
+            // v1.5 additive field: snapshot cap (FIFO on push).
+            // Sanitized via Snapshot.normalizeSnapshotCap which
+            // defaults missing / invalid values to 365 and preserves
+            // explicit 0 (unlimited). See .scratch/v1.5-snapshot-ui/
+            // issues/01-snapshot-cap-and-gc.md.
+            this.data.settings.snapshot_cap = Snapshot.normalizeSnapshotCap(
+              this.data.settings.snapshot_cap
+            );
             this.data.holdings.forEach(h => { if (!h.attributes) h.attributes = {}; });
             this.data.cash_accounts.forEach(c => { if (!c.attributes) c.attributes = {}; });
             this.data.debts.forEach(d => { if (!d.attributes) d.attributes = {}; });
@@ -2933,7 +2946,14 @@
           fxRate: this.fxRate(),
           prevSnapshot,
         });
-        this.data.snapshots.push(snap);
+        // v1.5: cap-aware push. FIFO trims oldest when the cap is
+        // exceeded; cap 0 / null / undefined means unlimited. See
+        // .scratch/v1.5-snapshot-ui/issues/01-snapshot-cap-and-gc.md.
+        this.data.snapshots = Snapshot.pushSnapshotWithCap(
+          this.data.snapshots,
+          snap,
+          this.data.settings.snapshot_cap
+        );
         this.save();
       },
       setCashFormAttribute(catId, valId) {
@@ -3627,6 +3647,10 @@
         // v1.4 additive fields: see load() for the same lazy-init.
         if (!this.data.plans) this.data.plans = [];
         if (this.data.active_plan_id === undefined) this.data.active_plan_id = null;
+        // v1.5 additive field: snapshot cap (see load() for the same lazy-init).
+        this.data.settings.snapshot_cap = Snapshot.normalizeSnapshotCap(
+          this.data.settings.snapshot_cap
+        );
         this.data.holdings.forEach(h => { if (!h.attributes) h.attributes = {}; });
         // Strip in-memory flags defensively (ADR 0009 §4).
         Serialize.stripInMemoryFields(this.data.holdings);

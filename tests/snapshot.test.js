@@ -1,15 +1,25 @@
-// tests/snapshot.test.js — tests for lib/snapshot.js (v1.2)
+// tests/snapshot.test.js — tests for lib/snapshot.js (v1.2 + v1.5)
 //
 // Covers: todayLocalISO(), isSameDay(), buildSnapshot(),
-// computeTotals(), computeDelta().
+// computeTotals(), computeDelta(), pushSnapshotWithCap(),
+// normalizeSnapshotCap().
 // Source of truth: lib/snapshot.js + ADR 0005 (L4 snapshot storage).
+// v1.5 cap behavior: .scratch/v1.5-snapshot-ui/issues/01.
 
 'use strict';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const Snapshot = require('../lib/snapshot.js');
-const { todayLocalISO, isSameDay, buildSnapshot, computeTotals, computeDelta } = Snapshot;
+const {
+  todayLocalISO,
+  isSameDay,
+  buildSnapshot,
+  computeTotals,
+  computeDelta,
+  pushSnapshotWithCap,
+  normalizeSnapshotCap,
+} = Snapshot;
 
 const iso = (s) => new Date(s).toISOString();
 const H = (id, opts = {}) => ({
@@ -323,4 +333,152 @@ test('computeDelta: holding absent from prev → not in perHolding', () => {
   const d = computeDelta(prev, cur);
   assert.ok(d.perHolding.a);
   assert.equal(d.perHolding.b, undefined);
+});
+
+// --- v1.5: pushSnapshotWithCap + normalizeSnapshotCap ---
+// T01: snapshot cap is FIFO; cap 0 = unlimited; helper is pure.
+// See .scratch/v1.5-snapshot-ui/issues/01-snapshot-cap-and-gc.md.
+
+const S = (id, opts = {}) => ({
+  id,
+  date: opts.date || '2024-01-15',
+  holdings: [],
+  cash_accounts: [],
+  debts: [],
+  fx_rate: 32.2,
+  totals: { netWorth: 0, holdingsValue: 0, displayCurrency: 'TWD' },
+});
+
+test('pushSnapshotWithCap: cap null → no cap applied (just push)', () => {
+  const arr = [S('s1'), S('s2')];
+  const out = pushSnapshotWithCap(arr, S('s3'), null);
+  assert.equal(out.length, 3);
+  assert.equal(out[2].id, 's3');
+  assert.notEqual(out, arr); // immutable
+  assert.equal(arr.length, 2); // input not mutated
+});
+
+test('pushSnapshotWithCap: cap undefined → no cap applied', () => {
+  const arr = [S('s1')];
+  const out = pushSnapshotWithCap(arr, S('s2'), undefined);
+  assert.equal(out.length, 2);
+  assert.equal(out[1].id, 's2');
+  assert.equal(arr.length, 1);
+});
+
+test('pushSnapshotWithCap: cap 0 → no cap applied (0 = unlimited)', () => {
+  const arr = [S('s1'), S('s2')];
+  const out = pushSnapshotWithCap(arr, S('s3'), 0);
+  assert.equal(out.length, 3);
+  assert.equal(out[2].id, 's3');
+  assert.equal(arr.length, 2);
+});
+
+test('pushSnapshotWithCap: cap 1 → keeps only the most recent', () => {
+  const arr = [S('s1'), S('s2'), S('s3')];
+  const out = pushSnapshotWithCap(arr, S('s4'), 1);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, 's4');
+  assert.equal(arr.length, 3); // input not mutated
+});
+
+test('pushSnapshotWithCap: cap 3 with 5 pushes → keeps last 3, drops oldest 2', () => {
+  let arr = [];
+  for (let i = 1; i <= 5; i++) {
+    arr = pushSnapshotWithCap(arr, S(`s${i}`), 3);
+  }
+  assert.equal(arr.length, 3);
+  assert.equal(arr[0].id, 's3'); // oldest kept
+  assert.equal(arr[1].id, 's4');
+  assert.equal(arr[2].id, 's5'); // newest
+});
+
+test('pushSnapshotWithCap: cap not exceeded → returns new array of length+1', () => {
+  const arr = [S('s1'), S('s2')];
+  const out = pushSnapshotWithCap(arr, S('s3'), 5);
+  assert.equal(out.length, 3);
+  assert.equal(out[0].id, 's1');
+  assert.equal(out[1].id, 's2');
+  assert.equal(out[2].id, 's3');
+  assert.notEqual(out, arr); // immutable
+  assert.equal(arr.length, 2);
+});
+
+test('pushSnapshotWithCap: cap exactly equal → push then trim to cap', () => {
+  const arr = [S('s1'), S('s2'), S('s3')]; // length 3, cap 3
+  const out = pushSnapshotWithCap(arr, S('s4'), 3);
+  assert.equal(out.length, 3);
+  assert.equal(out[0].id, 's2'); // s1 dropped
+  assert.equal(out[1].id, 's3');
+  assert.equal(out[2].id, 's4');
+  assert.equal(arr.length, 3); // input not mutated
+});
+
+test('pushSnapshotWithCap: empty input array → returns just the new snap', () => {
+  const out = pushSnapshotWithCap([], S('s1'), 10);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, 's1');
+});
+
+test('pushSnapshotWithCap: never mutates input array', () => {
+  const arr = [S('s1'), S('s2')];
+  const snap = S('s3');
+  pushSnapshotWithCap(arr, snap, 1);
+  pushSnapshotWithCap(arr, snap, 0);
+  pushSnapshotWithCap(arr, snap, null);
+  assert.equal(arr.length, 2);
+  assert.equal(arr[0].id, 's1');
+  assert.equal(arr[1].id, 's2');
+});
+
+test('pushSnapshotWithCap: defensive — negative cap treated as no cap', () => {
+  const arr = [S('s1')];
+  const out = pushSnapshotWithCap(arr, S('s2'), -5);
+  assert.equal(out.length, 2); // no cap applied
+  assert.equal(out[1].id, 's2');
+});
+
+test('pushSnapshotWithCap: defensive — NaN cap treated as no cap', () => {
+  const arr = [S('s1')];
+  const out = pushSnapshotWithCap(arr, S('s2'), NaN);
+  assert.equal(out.length, 2);
+  assert.equal(out[1].id, 's2');
+});
+
+test('pushSnapshotWithCap: defensive — non-number cap treated as no cap', () => {
+  const arr = [S('s1')];
+  const out = pushSnapshotWithCap(arr, S('s2'), '365');
+  assert.equal(out.length, 2);
+  assert.equal(out[1].id, 's2');
+});
+
+// --- normalizeSnapshotCap ---
+
+test('normalizeSnapshotCap: undefined → 365 (default)', () => {
+  assert.equal(normalizeSnapshotCap(undefined), 365);
+});
+
+test('normalizeSnapshotCap: 0 → 0 (explicit unlimited preserved)', () => {
+  assert.equal(normalizeSnapshotCap(0), 0);
+});
+
+test('normalizeSnapshotCap: positive integer → kept as-is', () => {
+  assert.equal(normalizeSnapshotCap(365), 365);
+  assert.equal(normalizeSnapshotCap(1), 1);
+  assert.equal(normalizeSnapshotCap(10000), 10000);
+});
+
+test('normalizeSnapshotCap: negative → 365 (reject)', () => {
+  assert.equal(normalizeSnapshotCap(-5), 365);
+  assert.equal(normalizeSnapshotCap(-1), 365);
+});
+
+test('normalizeSnapshotCap: NaN → 365 (reject)', () => {
+  assert.equal(normalizeSnapshotCap(NaN), 365);
+});
+
+test('normalizeSnapshotCap: non-number → 365 (reject)', () => {
+  assert.equal(normalizeSnapshotCap('365'), 365);
+  assert.equal(normalizeSnapshotCap(null), 365);
+  assert.equal(normalizeSnapshotCap({}), 365);
 });
