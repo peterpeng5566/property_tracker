@@ -251,6 +251,11 @@
               :class="currentPage === 'holdings' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
               class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
               x-text="t('nav.holdings')"></button>
+      <button @click="navigateToSnapshots()"
+              :class="currentPage === 'snapshots' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
+              class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
+              data-testid="nav-snapshots"
+              x-text="t('nav.snapshots')"></button>
       <button @click="currentPage = 'cash_debt'"
               :class="currentPage === 'cash_debt' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
               class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
@@ -994,6 +999,101 @@
          the restore algorithm: lib/backup.js (Backup.restoreFromBackup
          / restoreFromSnapshot). Source of truth for the Layer 2 fetch:
          Backup.listPortfolioBackupFiles / readPortfolioBackupFile. -->
+
+    <!-- Snapshots page (v1.5 — tickets 02–05).
+         Nav-row entry added after Holdings (live data + history reading
+         order: live / past / future / config). T02 ships the shell: nav
+         button, header + take button + cap-usage label, list rows (one
+         per snapshot, newest-first), row actions (View / Compare /
+         Delete), empty state, stale nudge (plan exists but no
+         snapshots). T03 wires View to a detail view; T04 wires Compare
+         to a delta picker; T05 adds an inline trend chart. The row
+         actions fire stubs today and become real in tickets 03 / 04.
+         Source of truth for the snapshot engine:
+         lib/snapshot.js (Snapshot.buildSnapshot / pushSnapshotWithCap /
+         normalizeSnapshotCap). Source of truth for delete propagation:
+         lib/records.js (Records.recordDeletion) + lib/sync.js
+         (mergeByIdWithDeletions). Snapshots are stored in
+         data.snapshots[] (per ADR 0005) and sync-merged by id.
+         .scratch/v1.5-snapshot-ui/issues/02-snapshots-nav-list-take.md. -->
+    <div x-show="currentPage === 'snapshots'" data-testid="snapshots-page" x-cloak>
+      <section class="mb-8">
+        <div class="flex items-start justify-between mb-4 gap-4">
+          <div class="min-w-0">
+            <h2 class="text-lg font-semibold" x-text="t('snapshots.title')"></h2>
+            <p class="text-xs text-slate-500 mt-1 max-w-2xl" x-text="t('snapshots.subtitle')"></p>
+          </div>
+          <div class="flex flex-col items-end gap-1 shrink-0">
+            <button @click="takeSnapshotFromPage()"
+                    :disabled="!canTakeSnapshot()"
+                    data-testid="snapshot-take"
+                    class="text-sm bg-slate-900 text-white px-4 py-2 rounded-md hover:bg-slate-800 transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed"
+                    x-text="t('snapshots.take')"></button>
+            <span class="text-xs text-slate-500 tabular"
+                  data-testid="snapshot-cap-usage"
+                  x-text="snapshotCapUsage()"></span>
+          </div>
+        </div>
+
+        <!-- Stale nudge (active plan exists, no snapshots yet) -->
+        <div x-show="shouldShowStaleNudge()"
+             data-testid="snapshot-stale-nudge"
+             class="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4 text-xs text-amber-700">
+          <p x-text="t('snapshots.stale.nudge')"></p>
+        </div>
+
+        <!-- Snapshot list (newest-first) -->
+        <div x-show="snapshotListRows.length > 0"
+             data-testid="snapshot-list"
+             class="space-y-3">
+          <template x-for="row in snapshotListRows" :key="row.id">
+            <div class="bg-white p-4 rounded-2xl border border-slate-200"
+                 data-testid="snapshot-row">
+              <div class="flex items-center justify-between gap-4">
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-baseline gap-3 flex-wrap">
+                    <span class="font-medium text-sm tabular" x-text="row.date"></span>
+                    <span class="text-base font-semibold tabular"
+                          data-testid="snapshot-row-networth"
+                          x-text="formatAmount(row.netWorth, row.displayCurrency)"></span>
+                  </div>
+                  <div class="text-xs text-slate-500 mt-1 tabular">
+                    <span x-text="t('snapshots.row.holdings')"></span>: <span x-text="formatAmount(row.holdingsValue, row.displayCurrency)"></span>
+                    · <span x-text="t('snapshots.row.cash')"></span>: <span x-text="formatAmount(row.totalCash, row.displayCurrency)"></span>
+                    · <span x-text="t('snapshots.row.debts')"></span>: <span x-text="formatAmount(row.totalDebts, row.displayCurrency)"></span>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                  <button @click="viewSnapshot(row.id)"
+                          data-testid="snapshot-row-view"
+                          class="text-xs px-2 py-1 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded transition-colors"
+                          x-text="t('snapshots.row.view')"></button>
+                  <button @click="compareSnapshotStart(row.id)"
+                          data-testid="snapshot-row-compare"
+                          class="text-xs px-2 py-1 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded transition-colors"
+                          x-text="t('snapshots.row.compare')"></button>
+                  <button @click="deleteSnapshot(row.id)"
+                          data-testid="snapshot-row-delete"
+                          class="text-xs px-2 py-1 border border-slate-200 text-slate-600 hover:bg-rose-50 hover:text-rose-700 rounded transition-colors"
+                          x-text="t('snapshots.row.delete')"></button>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Empty state -->
+        <div x-show="snapshotListRows.length === 0"
+             class="bg-white rounded-2xl border border-slate-200 p-8 text-center"
+             data-testid="snapshot-empty">
+          <p class="text-sm text-slate-400 mb-4" x-text="t('snapshots.empty.body')"></p>
+          <button @click="takeSnapshotFromPage()"
+                  data-testid="snapshot-empty-take"
+                  class="text-sm bg-slate-900 text-white px-4 py-2 rounded-md hover:bg-slate-800 transition-colors"
+                  x-text="t('snapshots.empty.take')"></button>
+        </div>
+      </section>
+    </div>
     <div x-show="currentPage === 'backups'" data-testid="backups-page" x-cloak>
     <section class="mb-8">
       <h2 class="text-lg font-semibold mb-2" x-text="t('backups.title')"></h2>
@@ -1391,14 +1491,15 @@
      restoreFromBackup which composes over the deletion log. -->
 <script src="lib/backup.js"></script>
 
+<!-- Serialize helpers (lib/serialize.js) — strips in-memory fields before JSON output -->
+<script src="lib/serialize.js"></script>
+
 <!-- Snapshot builder (lib/snapshot.js) — L4 full-detail snapshot assembly
      (ADR 0005). Pure functions used by tests/snapshot.test.js. Depends on
      Calc.* (lib/calc.js) and Serialize.stripInMemoryFields (lib/serialize.js),
      so must load AFTER both. -->
 <script src="lib/snapshot.js"></script>
 
-<!-- Serialize helpers (lib/serialize.js) — strips in-memory fields before JSON output -->
-<script src="lib/serialize.js"></script>
 
 <!-- Market display helpers (lib/market-display.js) — Day Δ% + 52W bar logic -->
 <script src="lib/market-display.js"></script>
@@ -1626,6 +1727,30 @@
       'backups.toastSyncSkipped': 'Cloud sync skipped (restored locally): {reason}',
       'backups.loading': 'Loading cloud backups…',
       'backups.cloudUnavailable': 'Connect to Google Drive to see cloud backups.',
+
+      // v1.5 — Snapshot UI (tickets 02–05). Nav label, list layout,
+      // row actions, delete confirmation, success toast, cap usage
+      // label, unlimited-sentinel label, empty-state copy, stale
+      // nudge (plan exists but no snapshots). {n} / {cap} / {date} /
+      // {time} are substituted via t(key, params). See
+      // .scratch/v1.5-snapshot-ui/ for ticket layout.
+      'nav.snapshots': 'Snapshots',
+      'snapshots.title': 'Snapshots',
+      'snapshots.subtitle': 'Take a snapshot to record your net worth at a moment in time. Oldest are dropped when the cap is reached.',
+      'snapshots.take': '+ Take Snapshot',
+      'snapshots.cap.usage': '{n} / {cap} snapshots',
+      'snapshots.cap.unlimited': '{n} snapshots (unlimited)',
+      'snapshots.empty.body': 'Take your first snapshot to start tracking your net worth over time.',
+      'snapshots.empty.take': 'Take your first snapshot',
+      'snapshots.stale.nudge': 'Plan drift is computed against today; take a snapshot to start tracking drift over time.',
+      'snapshots.row.holdings': 'Holdings',
+      'snapshots.row.cash': 'Cash',
+      'snapshots.row.debts': 'Debts',
+      'snapshots.row.view': 'View',
+      'snapshots.row.compare': 'Compare',
+      'snapshots.row.delete': 'Delete',
+      'snapshots.delete.confirm': 'Delete the snapshot from {date}? This cannot be undone.',
+      'snapshots.toast.taken': 'Snapshot taken — {date}',
     },
     zh: {
       'app.title': 'Property Tracker',
@@ -1634,6 +1759,23 @@
       'nav.cashDebt': '現金與負債',
       'nav.categories': 'Categories',
       'nav.backups': '備份與還原',
+      'nav.snapshots': '快照',
+      'snapshots.title': '快照歷史',
+      'snapshots.subtitle': '建立快照以記錄當下的資產淨值。超過上限時最舊的快照會自動移除。',
+      'snapshots.take': '+ 建立快照',
+      'snapshots.cap.usage': '已有 {n} 個，上限 {cap}',
+      'snapshots.cap.unlimited': '已有 {n} 個（無上限）',
+      'snapshots.empty.body': '建立第一個快照以追蹤資產淨值隨時間的變化。',
+      'snapshots.empty.take': '建立第一個快照',
+      'snapshots.stale.nudge': '目前的 plan drift 是用今天的資料計算的；建立快照才能開始追蹤 plan 的歷史變化。',
+      'snapshots.row.holdings': '股票',
+      'snapshots.row.cash': '現金',
+      'snapshots.row.debts': '負債',
+      'snapshots.row.view': '檢視',
+      'snapshots.row.compare': '比較',
+      'snapshots.row.delete': '刪除',
+      'snapshots.delete.confirm': '確定刪除 {date} 的快照？此操作無法復原。',
+      'snapshots.toast.taken': '已建立 {date} 的快照',
       'summary.netWorth': '總資產 Net Worth',
       'summary.netWorthSub': '{a} holdings + {c} 現金 − {d} 負債',
       'summary.holdingsValue': 'Holdings 市值',
@@ -2684,6 +2826,13 @@
           // doesn't throw on data.plans.length.
           result.data.plans = result.data.plans || [];
           if (result.data.active_plan_id === undefined) result.data.active_plan_id = null;
+          // v1.5 additive field: snapshot cap (see load() for the same
+          // lazy-init). Older backups (pre-v1.5) lack the setting;
+          // normalizeSnapshotCap falls back to 365.
+          if (!result.data.settings) result.data.settings = { ...defaultPortfolio().settings };
+          result.data.settings.snapshot_cap = Snapshot.normalizeSnapshotCap(
+            result.data.settings.snapshot_cap
+          );
           // Defensive: restoreFromSnapshot returns a `data` object whose
           // shape is derived from the snapshot. If the snapshot (e.g. a
           // Cloud-restore payload or an older local backup) is missing
@@ -2956,6 +3105,121 @@
         );
         this.save();
       },
+
+      // ---- Snapshot page (v1.5 — ticket 02) ----
+      // Thin shims around the snapshot engine. The engine itself lives
+      // in lib/snapshot.js; this section only handles Alpine concerns
+      // (current page navigation, list rendering, cap usage string,
+      // delete propagation). View / Compare are stubs today; T03 wires
+      // detail view, T04 wires comparison picker.
+
+      navigateToSnapshots() {
+        this.currentPage = 'snapshots';
+      },
+
+      // Computed: snapshot list rows. Newest-first (data.snapshots is
+      // append-only, so reverse the copy). Each row exposes the fields
+      // the DOM row needs (id, date, totals sub-fields, display
+      // currency). Falls back to an empty array when data.snapshots is
+      // missing (e.g. after restore from an older backup) — guards the
+      // `x-show` / `x-for` template expressions from throwing.
+      get snapshotListRows() {
+        const arr = Array.isArray(this.data?.snapshots) ? this.data.snapshots : [];
+        return arr.slice().reverse().map(snap => {
+          const tot = (snap && snap.totals) || {};
+          return {
+            id: snap.id,
+            date: snap.date,
+            netWorth: tot.netWorth,
+            holdingsValue: tot.holdingsValue,
+            totalCash: tot.totalCash,
+            totalDebts: tot.totalDebts,
+            displayCurrency: tot.displayCurrency,
+          };
+        });
+      },
+
+      // Computed: cap-usage label under the Take button. Uses the
+      // unlimited-sentinel branch when cap === 0 (set explicitly via
+      // settings.snapshot_cap = 0). {n} and {cap} are i18n placeholders.
+      snapshotCapUsage() {
+        const arr = Array.isArray(this.data?.snapshots) ? this.data.snapshots : [];
+        const count = arr.length;
+        const cap = this.data?.settings?.snapshot_cap;
+        if (cap === 0) {
+          return this.t('snapshots.cap.unlimited', { n: count });
+        }
+        return this.t('snapshots.cap.usage', { n: count, cap });
+      },
+
+      // Computed: can-take-snapshot gate. Always true today — the
+      // intraday warning is handled inside takeSnapshot() via
+      // shouldWarnIntraday(). Kept as a getter so future constraints
+      // (e.g. "no portfolio yet") can plug in without touching the
+      // template.
+      canTakeSnapshot() {
+        return true;
+      },
+
+      // Computed: stale nudge when an active plan exists but no
+      // snapshots have been taken yet. The drift section on Home is
+      // always live (computed against today's portfolio state); the
+      // nudge reminds the user that *history* of drift requires
+      // snapshots.
+      shouldShowStaleNudge() {
+        if (!Array.isArray(this.data?.plans) || this.data.plans.length === 0) return false;
+        const arr = Array.isArray(this.data?.snapshots) ? this.data.snapshots : [];
+        return arr.length === 0;
+      },
+
+      // Take snapshot from the Snapshots page. Delegates to the
+      // existing takeSnapshot() shim (which already wires the
+      // intraday-confirm dialog and the cap-aware push). Fire-and-
+      // forget: takeSnapshot() returns a Promise when an intraday
+      // confirm is required; the page doesn't await — the list re-
+      // renders reactively when data.snapshots changes.
+      takeSnapshotFromPage() {
+        if (!this.canTakeSnapshot()) return;
+        this.takeSnapshot();
+      },
+
+      // View stub — T03 wires the detail view (drill-in to holdings /
+      // cash / debts for a single snapshot). Today the row's View
+      // button is inert but already rendered; surfacing "coming soon"
+      // would be noisy.
+      viewSnapshot(_id) {
+        // T03: navigate to / open detail view.
+      },
+
+      // Compare stub — T04 wires the comparison picker (pick a second
+      // snapshot to diff against). Same as viewSnapshot: silent stub.
+      compareSnapshotStart(_id) {
+        // T04: open comparison picker.
+      },
+
+      // Delete a snapshot. Confirms via the localised string with the
+      // snapshot's date interpolated. Uses Records.recordDeletion so
+      // the deletion tombstone enters data.deletions[] and survives
+      // sync (lib/sync.js mergeByIdWithDeletions — same pattern as
+      // holdings / plans / cash / debts per ADR 0011). type='snapshots'
+      // labels the tombstone; the merge layer doesn't branch on it.
+      deleteSnapshot(id) {
+        const arr = Array.isArray(this.data?.snapshots) ? this.data.snapshots : [];
+        const snap = arr.find(s => s.id === id);
+        if (!snap) return;
+        if (!confirm(this.t('snapshots.delete.confirm', { date: snap.date }))) return;
+        const out = Records.recordDeletion(arr, this.data.deletions, {
+          targetId: id,
+          type: 'snapshots',
+          deviceId: DEVICE_ID,
+          deletedAt: new Date().toISOString(),
+          genDelId: () => genId('del'),
+        });
+        if (!out.didDelete) return;
+        this.data.snapshots = out.records;
+        this.data.deletions = out.deletions;
+      },
+
       setCashFormAttribute(catId, valId) {
         if (valId) this.cashForm.attributes[catId] = valId;
         else delete this.cashForm.attributes[catId];
