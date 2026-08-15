@@ -662,3 +662,201 @@ test('mergePortfolios: hard-delete WITHOUT a matching tombstone keeps remote-onl
   const out = mergePortfolios(local, remote, 'this');
   assert.equal(out.debts.length, 1, 'without a tombstone, remote-only records survive — delete + tombstone must always go together');
 });
+
+// --- mergePortfolios: data.plans[] integration (v1.4 — ticket 05) ---
+//
+// Per ADR 0004 pattern (per-record merge by updated_at) + ADR 0011
+// deletion log: plans merge via mergeByIdWithDeletions. Tests cover
+// the local-only / remote-only / both / conflict / deletion paths.
+
+const P = (id, opts = {}) => Object.assign({
+  id,
+  name: opts.name || id,
+  rules: opts.rules || [],
+  updated_at: opts.updated_at || '2024-01-01T00:00:00Z',
+}, opts);
+
+test('mergePortfolios: plans local-only (remote has none) → local passes through', () => {
+  const local = { plans: [P('p1', { name: 'Local-only' })], holdings: [] };
+  const remote = { plans: undefined, holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.plans.length, 1);
+  assert.equal(out.plans[0].name, 'Local-only');
+});
+
+test('mergePortfolios: plans remote-only (local has none) → remote passes through', () => {
+  const local = { plans: undefined, holdings: [] };
+  const remote = { plans: [P('p1', { name: 'Remote-only' })], holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.plans.length, 1);
+  assert.equal(out.plans[0].name, 'Remote-only');
+});
+
+test('mergePortfolios: plans remote-only + local has undefined plans → remote passes through', () => {
+  // Older v1.3 backup with no plans field — must not crash.
+  const local = { holdings: [] }; // no plans
+  const remote = { plans: [P('p1', { name: 'R' })], holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.plans.length, 1);
+  assert.equal(out.plans[0].name, 'R');
+});
+
+test('mergePortfolios: plans disjoint ids → both sides present', () => {
+  const local = { plans: [P('p1', { name: 'L' })], holdings: [] };
+  const remote = { plans: [P('p2', { name: 'R' })], holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.plans.length, 2);
+  assert.ok(out.plans.some(p => p.name === 'L'));
+  assert.ok(out.plans.some(p => p.name === 'R'));
+});
+
+test('mergePortfolios: plans same id, remote newer → remote wins (rule edits propagate)', () => {
+  const local = {
+    plans: [P('p1', { name: 'old', rules: [{ id: 'r1' }], updated_at: '2024-01-01T00:00:00Z' })],
+    holdings: [],
+  };
+  const remote = {
+    plans: [P('p1', { name: 'new', rules: [{ id: 'r1' }, { id: 'r2' }], updated_at: '2024-02-01T00:00:00Z' })],
+    holdings: [],
+  };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.plans.length, 1);
+  assert.equal(out.plans[0].name, 'new');
+  assert.equal(out.plans[0].rules.length, 2, 'remote-newer rules must replace local rules wholesale');
+});
+
+test('mergePortfolios: plans same id, local newer → local wins', () => {
+  const local = {
+    plans: [P('p1', { name: 'local-edit', updated_at: '2024-02-01T00:00:00Z' })],
+    holdings: [],
+  };
+  const remote = {
+    plans: [P('p1', { name: 'remote-edit', updated_at: '2024-01-01T00:00:00Z' })],
+    holdings: [],
+  };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.plans.length, 1);
+  assert.equal(out.plans[0].name, 'local-edit');
+});
+
+test('mergePortfolios: plans same id, equal timestamp → local wins (tie-break like other records)', () => {
+  const t = '2024-01-01T00:00:00Z';
+  const local = { plans: [P('p1', { name: 'L', updated_at: t })], holdings: [] };
+  const remote = { plans: [P('p1', { name: 'R', updated_at: t })], holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.plans.length, 1);
+  assert.equal(out.plans[0].name, 'L');
+});
+
+test('mergePortfolios: plans missing updated_at → treated as epoch 0 (remote newer wins)', () => {
+  // A v1.4 plan saved before updated_at stamping was wired in still
+  // loses to a newer remote edit — epoch 0 fallback keeps mergeById
+  // contract consistent across records.
+  const local = { plans: [{ id: 'p1', name: 'L', rules: [] }], holdings: [] };
+  const remote = {
+    plans: [P('p1', { name: 'R', rules: [], updated_at: '2024-02-01T00:00:00Z' })],
+    holdings: [],
+  };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.plans[0].name, 'R');
+});
+
+test('mergePortfolios: plans local deletion tombstone removes remote plan', () => {
+  const local = {
+    plans: [],
+    deletions: [{ id: 'del-1', target_id: 'p1', type: 'plans',
+                  deleted_at: '2024-06-15T12:00:00Z', device_id: 'this' }],
+    holdings: [],
+  };
+  const remote = { plans: [P('p1', { name: 'remote-plan' })], holdings: [] };
+  const out = mergePortfolios(local, remote, 'this');
+  assert.equal(out.plans.length, 0, 'plan must be filtered out by plan tombstone');
+  // tombstone itself survives the sync (it must — that's how other devices learn)
+  assert.ok(out.deletions.some(d => d.target_id === 'p1'));
+});
+
+test('mergePortfolios: plans remote deletion tombstone propagates to local', () => {
+  const local = { plans: [P('p1', { name: 'local-plan' })], holdings: [] };
+  const remote = {
+    plans: [],
+    deletions: [{ id: 'del-1', target_id: 'p1', type: 'plans',
+                  deleted_at: '2024-06-15T12:00:00Z', device_id: 'other' }],
+    holdings: [],
+  };
+  const out = mergePortfolios(local, remote, 'this');
+  assert.equal(out.plans.length, 0, 'remote tombstone must remove local plan');
+});
+
+test('mergePortfolios: plans deletion on both sides → removed, tombstone deduplicated', () => {
+  const local = {
+    plans: [],
+    deletions: [{ id: 'del-1', target_id: 'p1', type: 'plans',
+                  deleted_at: '2024-06-15T12:00:00Z', device_id: 'a' }],
+    holdings: [],
+  };
+  const remote = {
+    plans: [P('p1', {})],
+    deletions: [{ id: 'del-2', target_id: 'p1', type: 'plans',
+                  deleted_at: '2024-06-15T12:00:00Z', device_id: 'b' }],
+    holdings: [],
+  };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.plans.length, 0);
+  // Both tombstones survive separately (different ids) — union of deletion logs.
+  assert.equal(out.deletions.length, 2);
+});
+
+test('mergePortfolios: plans disjoint ids + overlapping deletion → mix preserved + tombstoned removed', () => {
+  const local = {
+    plans: [P('p1', { name: 'L' })],
+    deletions: [{ id: 'del-1', target_id: 'p2', type: 'plans',
+                  deleted_at: '2024-06-15T12:00:00Z', device_id: 'a' }],
+    holdings: [],
+  };
+  const remote = { plans: [P('p2', { name: 'R' })], holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.plans.length, 1);
+  assert.equal(out.plans[0].id, 'p1', 'p1 (untombstoned local-only) survives');
+  // p2 was remote-only AND tombstoned locally → filtered out
+});
+
+// --- mergePortfolios: data.active_plan_id scalar merge (v1.4 — ticket 05) ---
+
+test('mergePortfolios: active_plan_id prefers remote (consistent with last_synced_at coarseness)', () => {
+  const local = { active_plan_id: 'p1', holdings: [] };
+  const remote = { active_plan_id: 'p2', holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.active_plan_id, 'p2');
+});
+
+test('mergePortfolios: active_plan_id falls back to local when remote missing', () => {
+  const local = { active_plan_id: 'p1', holdings: [] };
+  const remote = { holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.active_plan_id, 'p1');
+});
+
+test('mergePortfolios: active_plan_id null when both missing', () => {
+  const out = mergePortfolios({}, {}, 'd');
+  assert.equal(out.active_plan_id, null);
+});
+
+test('mergePortfolios: active_plan_id preserves explicit null on either side', () => {
+  // null is meaningful: user cleared the active pointer.
+  const local = { active_plan_id: 'p1', holdings: [] };
+  const remote = { active_plan_id: null, holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  // Remote-side null is the latest known state — applies.
+  assert.equal(out.active_plan_id, null);
+});
+
+test('mergePortfolios: active_plan_id may point at a non-existent plan (validatePlans warns)', () => {
+  // Sync can race the pointer ahead of the plan list — e.g., device A
+  // deletes plan X, device B (which had X active) syncs and sees an
+  // orphan pointer. We intentionally do NOT filter here; validation
+  // belongs to validatePlans() so the UI can warn + offer recovery.
+  const local = { active_plan_id: 'gone', plans: [], holdings: [] };
+  const remote = { active_plan_id: 'gone', plans: [], holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.active_plan_id, 'gone', 'orphan pointer survives merge by design');
+});

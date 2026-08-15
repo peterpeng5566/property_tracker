@@ -1393,6 +1393,14 @@
       'categories.appliesToCash': 'Cash',
       'categories.appliesToDebt': 'Debts',
       'categories.appliesToEmpty': 'This category won\'t appear in any modal',
+      // v1.4 — Roadside guard (ticket 05). deleteCategory / deleteValue
+      // shims refuse when a plan references the target — these strings
+      // surface the count of blocking plans. Pluralisation: {n} === 1
+      // picks the singular form (1 plan references vs N plans reference).
+      'categories.deleteBlocked.plans.one': '1 plan references this category. Delete or edit that plan first.',
+      'categories.deleteBlocked.plans.other': '{n} plans reference this category. Delete or edit them first.',
+      'categories.deleteBlocked.values.one': '1 plan references this value. Delete or edit that plan first.',
+      'categories.deleteBlocked.values.other': '{n} plans reference this value. Delete or edit them first.',
 
       // v1.4 — Plan page (ticket 02). Plan list, editor, rule editor,
       // active switcher, delete confirmation. The Plan page section
@@ -1578,6 +1586,11 @@
       'categories.appliesToCash': '現金',
       'categories.appliesToDebt': '負債',
       'categories.appliesToEmpty': '此 category 不會出現在任何 modal',
+      // v1.4 — Roadside guard (ticket 05)
+      'categories.deleteBlocked.plans.one': '有 1 個 plan 參考這個 category，請先刪除或編輯。',
+      'categories.deleteBlocked.plans.other': '有 {n} 個 plan 參考這個 category，請先刪除或編輯。',
+      'categories.deleteBlocked.values.one': '有 1 個 plan 參考這個 value，請先刪除或編輯。',
+      'categories.deleteBlocked.values.other': '有 {n} 個 plan 參考這個 value，請先刪除或編輯。',
 
       // v1.4 — Plan page (ticket 02)
       'nav.plans': 'Plans',
@@ -2873,6 +2886,18 @@
         else cat.applies_to.push(type);
       },
       deleteCategory(catId) {
+        // v1.4 — roadside guard (ticket 05). Categories referenced by
+        // any plan's `when` or `distribute` cannot be deleted without
+        // first editing the plan (Plan.plansReferencingCategory). Surfaced
+        // via alert rather than disabling the button (consistent with the
+        // rest of the delete UX — keeps the failure point visible on
+        // click rather than silently no-op).
+        const blocking = Plan.plansReferencingCategory(catId, this.data.plans);
+        if (blocking.length > 0) {
+          const key = `categories.deleteBlocked.plans.${blocking.length === 1 ? 'one' : 'other'}`;
+          alert(this.t(key, { n: blocking.length }));
+          return;
+        }
         if (!confirm('Delete this category? Holdings/cash/debts will lose this attribute.')) return;
         this.data.categories = this.data.categories.filter(c => c.id !== catId);
         const clean = (items) => items.forEach(item => {
@@ -2887,6 +2912,16 @@
         cat.values.push({ id: genId('val'), name: 'New Value' });
       },
       deleteValue(catId, valId) {
+        // v1.4 — roadside guard (ticket 05). Mirrors deleteCategory:
+        // refuse if any plan's `when[cat]` contains valId, or any plan's
+        // `distribute[cat]` has a weight keyed by valId. See
+        // Plan.plansReferencingValue for the lookup semantics.
+        const blocking = Plan.plansReferencingValue(catId, valId, this.data.plans);
+        if (blocking.length > 0) {
+          const key = `categories.deleteBlocked.values.${blocking.length === 1 ? 'one' : 'other'}`;
+          alert(this.t(key, { n: blocking.length }));
+          return;
+        }
         const cat = this.data.categories.find(c => c.id === catId);
         if (!cat) return;
         cat.values = cat.values.filter(v => v.id !== valId);
@@ -2954,13 +2989,22 @@
       savePlanDraft() {
         if (!this.canSavePlanDraft()) return;
         const draft = this.planDraft;
+        // v1.4 — ticket 05. Stamp updated_at on every save so the
+        // sync layer can LWW-merge edits across devices (mergeById
+        // compares per-record updated_at; without a stamp, plans fall
+        // back to epoch 0 → tie → local-wins on conflict, which would
+        // silently drop remote edits). Cloning the draft keeps
+        // planDraft's reactive binding intact while putting a stamped
+        // copy into data.plans.
+        const now = new Date().toISOString();
+        const stamped = Object.assign({}, draft, { updated_at: now });
         const idx = this.data.plans.findIndex(p => p.id === draft.id);
         if (idx >= 0) {
           // Edit — replace in place so reactive bindings stay intact.
-          this.data.plans[idx] = draft;
+          this.data.plans[idx] = stamped;
         } else {
           // Create — push.
-          this.data.plans.push(draft);
+          this.data.plans.push(stamped);
         }
         // If the saved plan was previously the active one, no change;
         // if not, leave active_plan_id alone (user must opt in via
@@ -2984,7 +3028,21 @@
         const isActive = this.data.active_plan_id === planId;
         const confirmKey = isActive ? 'plan.delete.confirmActive' : 'plan.delete.confirm';
         if (!confirm(this.t(confirmKey))) return;
-        this.data.plans = this.data.plans.filter(p => p.id !== planId);
+        // v1.4 — ticket 05. Use Records.recordDeletion (same helper as
+        // holdings/cash/debts) so a tombstone enters data.deletions[].
+        // Without it, sync would re-pull the plan from remote (the
+        // c434c0d-style bug class — see ADR 0011). Falling through to a
+        // bare Array.filter would be the wrong shape.
+        const out = Records.recordDeletion(this.data.plans, this.data.deletions, {
+          targetId: planId,
+          type: 'plans',
+          deviceId: DEVICE_ID,
+          deletedAt: new Date().toISOString(),
+          genDelId: () => genId('del'),
+        });
+        if (!out.didDelete) return;
+        this.data.plans = out.records;
+        this.data.deletions = out.deletions;
         if (isActive) this.data.active_plan_id = null;
       },
 
