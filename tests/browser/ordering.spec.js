@@ -683,6 +683,54 @@ test('Cash: top row ↑ disabled; bottom row ↓ disabled; single row both disab
   await expect(page.locator('[data-testid="cash-move-down-c-1"]')).toBeDisabled();
 });
 
+// Regression test: bug reported 2026-08 — user said "cash's last item
+// (國泰世華) can't move up". Root cause: cash_accounts_order contained a
+// stale id (e.g. a deleted record's id still in the array). The last
+// row was rendered via Order.applyOrder's leftover-append (not present
+// in the stored array), and _moveOrderItem resolved fromIndex against
+// the stored array — so .indexOf returned -1 and the move silently
+// returned. Fix: _moveOrderItem now uses the leftover-merged view
+// (effectiveOrder) for swap indices, which self-heals stale ids on save.
+test('Cash: stale id in cash_accounts_order → click ↑ on last row (visible via leftover-append) → moves up + self-heals array', async ({ page }) => {
+  const fixture = {
+    ...CASH_FIXTURE,
+    // 'c-DELETED' is a stale id — no record has this id, but it sits
+    // in the order array. 'c-3' (Brokerage / the user's '國泰世華'
+    // stand-in) is only present via applyOrder's leftover-append.
+    cash_accounts_order: ['c-1', 'c-2', 'c-DELETED'],
+  };
+  await page.addInitScript(`
+    localStorage.setItem(${JSON.stringify(STORAGE_KEY)}, JSON.stringify(${JSON.stringify(fixture)}));
+  `);
+  await gotoCashDebtPage(page);
+
+  // Sanity: the table renders all 3 cash accounts (c-3 via leftover-append).
+  expect(await readRenderedCashOrder(page)).toEqual(['Checking', 'Savings', 'Brokerage']);
+
+  // The bug: click ↑ on c-3 (last row, idx 2). Before the fix this was
+  // a silent no-op because the stored array didn't contain 'c-3'.
+  await page.click('[data-testid="cash-move-up-c-3"]');
+  await page.waitForFunction(
+    () => {
+      const raw = localStorage.getItem('property_tracker_portfolio_v1');
+      if (!raw) return false;
+      const d = JSON.parse(raw);
+      return Array.isArray(d.cash_accounts_order) && d.cash_accounts_order[1] === 'c-3';
+    },
+    { timeout: 5000 }
+  );
+
+  // After the move: c-3 is now at position 1 (between c-1 and c-2).
+  const order = await readStoredOrder(page, 'cash_accounts_order');
+  expect(order).toEqual(['c-1', 'c-3', 'c-2']);
+  // Stale id 'c-DELETED' is dropped (self-heal) — the saved array only
+  // contains valid record ids.
+  expect(order).not.toContain('c-DELETED');
+
+  // The table reflects the swap: Brokerage is now in the middle.
+  expect(await readRenderedCashOrder(page)).toEqual(['Checking', 'Brokerage', 'Savings']);
+});
+
 test('Debts: no order array → click ↓ on row 1 → row 1 swaps with row 2, array materializes', async ({ page }) => {
   // No debts_order yet — user has never reordered debts.
   const fixture = { ...CASH_FIXTURE };

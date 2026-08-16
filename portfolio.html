@@ -3773,6 +3773,17 @@
       // Generic reorder helper: resolves the index in the *ordered* view,
       // applies the swap, and materializes the order array on first click.
       // Shared by all three collections (T02 holdings, T03 cash + debts).
+      //
+      // v1.6 bug fix (cash last-row-↑-no-op, reported by user 2026-08):
+      // The user sees a *leftover-merged* view via Order.applyOrder (records
+      // whose id is not in cash_accounts_order are appended in original
+      // relative order — see lib/order.js applyOrder). If cash_accounts_order
+      // contains a stale id (e.g. from a deleted record), some visible rows
+      // are only present via leftover-append and the raw array.indexOf
+      // returns -1 → silent early return → user sees "↑ doesn't work".
+      // Fix: resolve swap indices against the effective order (= the
+      // leftover-merged view the user sees), and write it back. This also
+      // self-heals stale ids (they are dropped on save).
       _moveOrderItem(getOrdered, recordsKey, orderKey, id, direction) {
         const ordered = getOrdered.call(this);
         const idx = ordered.findIndex(r => r.id === id);
@@ -3780,14 +3791,14 @@
         const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
         if (targetIdx < 0 || targetIdx >= ordered.length) return; // boundary guard
         const targetId = ordered[targetIdx].id;
-        // Materialize the order array if absent (ADR 0015 §3 — first click).
-        const currentOrder = Array.isArray(this.data[orderKey])
-          ? this.data[orderKey]
-          : this.data[recordsKey].map(r => r.id);
-        const fromIndex = currentOrder.indexOf(id);
-        const toIndex = currentOrder.indexOf(targetId);
+        // Use the leftover-merged view (what the user sees) for swap
+        // indices. Materializes the order array if absent (ADR 0015 §3 —
+        // first click). Drops stale ids when present.
+        const effectiveOrder = ordered.map(r => r.id);
+        const fromIndex = effectiveOrder.indexOf(id);
+        const toIndex = effectiveOrder.indexOf(targetId);
         if (fromIndex === -1 || toIndex === -1) return;
-        this.data[orderKey] = Order.moveItem(currentOrder, fromIndex, toIndex);
+        this.data[orderKey] = Order.moveItem(effectiveOrder, fromIndex, toIndex);
         this.save();
       },
       moveHoldingUp(id)   { this._moveOrderItem(this.getOrderedHoldings, 'holdings', 'holdings_order', id, 'up'); },
