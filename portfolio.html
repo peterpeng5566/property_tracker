@@ -3699,14 +3699,7 @@
           if (idx >= 0) this.data.holdings[idx] = record;
         } else {
           this.data.holdings.push(record);
-          // v1.6 — append new id to order array IF it exists. Lazy-write
-          // semantics (ADR 0015 §3): if the array is absent, leave it
-          // absent. applyOrder's leftover-append renders the new record
-          // at the end of the table transparently. (Only the first
-          // reorder click materializes the array.)
-          if (Array.isArray(this.data.holdings_order)) {
-            this.data.holdings_order = Order.appendToOrder(this.data.holdings_order, record.id);
-          }
+          this._onRecordAdded('holdings_order', record.id);
         }
         this.closeModal();
       },
@@ -3751,6 +3744,20 @@
       },
 
       // ---- v1.6 — Manual record ordering (ADR 0015) ----
+      // Append a new id to the matching order array IF it already
+      // exists. Lazy-write semantics (ADR 0015 §3): if the array is
+      // absent, leave it absent (applyOrder's leftover-append renders
+      // the new record at the end of the table transparently — the
+      // first reorder click is what materializes the array). Pairs
+      // with _removeRecord for symmetry: both gate on
+      // Array.isArray(this.data[orderKey]) so the absent-array case
+      // stays a true no-op (never silently writes an empty array).
+      // Used by saveHolding / saveCash / saveDebt.
+      _onRecordAdded(orderKey, newId) {
+        if (Array.isArray(this.data[orderKey])) {
+          this.data[orderKey] = Order.appendToOrder(this.data[orderKey], newId);
+        }
+      },
       // Reordered view (template x-for iterates getter). Lazy-write: when
       // data.<collection>_order is undefined, applyOrder returns a clone
       // of records in insertion order (defensive behavior of lib/order.js).
@@ -4386,10 +4393,7 @@
           if (idx >= 0) this.data.cash_accounts[idx] = record;
         } else {
           this.data.cash_accounts.push(record);
-          // v1.6 — see holdings saveHolding for the lazy-write rationale.
-          if (Array.isArray(this.data.cash_accounts_order)) {
-            this.data.cash_accounts_order = Order.appendToOrder(this.data.cash_accounts_order, record.id);
-          }
+          this._onRecordAdded('cash_accounts_order', record.id);
         }
         this.closeCashModal();
       },
@@ -4443,10 +4447,7 @@
           if (idx >= 0) this.data.debts[idx] = record;
         } else {
           this.data.debts.push(record);
-          // v1.6 — see holdings saveHolding for the lazy-write rationale.
-          if (Array.isArray(this.data.debts_order)) {
-            this.data.debts_order = Order.appendToOrder(this.data.debts_order, record.id);
-          }
+          this._onRecordAdded('debts_order', record.id);
         }
         this.closeDebtModal();
       },
