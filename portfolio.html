@@ -1186,7 +1186,7 @@
                             x-text="formatAmountNative(record.currentValue, record.currency)"></td>
                         <td class="px-3 py-2 text-right tabular"
                             x-show="ruleCandidate.kind === 'holding'"
-                            x-text="record.currentPrice != null ? formatAmountNative(record.currentPrice, record.currency) : ''"></td>
+                            x-text="record.current_price != null ? formatAmountNative(record.current_price, record.currency) : ''"></td>
                         <td class="px-3 py-2 text-center" x-show="ruleCandidate.kind === 'holding'">
                           <div class="week52-bar inline-block"
                                x-show="record.high_52w != null && record.low_52w != null">
@@ -5378,7 +5378,7 @@
             if (!original) continue;
             if (original.kind === 'holding') {
               rec.ticker = original.record.ticker;
-              rec.currentPrice = rec.currentPrice;
+              rec.current_price = original.record.current_price;
               rec.high_52w = original.record.high_52w;
               rec.low_52w = original.record.low_52w;
             } else {

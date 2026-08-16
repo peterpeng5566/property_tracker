@@ -198,6 +198,25 @@ test.describe('portfolio.html rebalance page (v1.8 ticket #02)', () => {
     await expect(page.locator('[data-testid="rebalance-rule-candidate-h-1"] .week52-bar').first()).toBeVisible();
     await expect(page.locator('[data-testid="rebalance-rule-candidate-h-1"] .week52-marker').first()).toBeVisible();
 
+    // Regression: the marker must be positioned at the current price within
+    // the 52w range. (current_price=600, low=500, high=700 → 50%.) The
+    // earlier version of this test only checked element visibility, which
+    // let the no-op enrichment `rec.currentPrice = rec.currentPrice` slip
+    // through and render `left: NaN%` (which browsers fall back to 0%).
+    const markerStyle = await page.locator(
+      '[data-testid="rebalance-rule-candidate-h-1"] .week52-marker'
+    ).first().getAttribute('style');
+    expect(markerStyle).toBe('left: 50%');
+
+    // Sibling check: the price cell must render the holding's current_price.
+    // This would have broken if we only fixed the enrichment to set
+    // `current_price` (snake_case) but left the markup reading the
+    // non-existent `record.currentPrice` (camelCase).
+    const priceCell = await page.locator(
+      '[data-testid="rebalance-rule-candidate-h-1"] td.tabular.text-right'
+    ).nth(1).innerText();
+    expect(priceCell).toContain('600');
+
     expect(errors).toEqual([]);
   });
 
