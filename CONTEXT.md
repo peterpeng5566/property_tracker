@@ -124,6 +124,28 @@ _Avoid_: Deviation, variance (technical), gap
 The plan currently selected for drift computation on Home. Stored as `data.active_plan_id`. Synced across devices via the per-record merge pattern.
 _Avoid_: Current plan, selected plan
 
+## Rebalance
+
+**Rebalance**:
+Read-only advisor that consumes the active plan's *Rebalance-eligible rule*s and produces per-record *Candidate action*s — "buy N shares of X" for holdings, "add $Y to" / "reduce $Y from" for cash accounts. The user picks which candidates to execute; v1.8 has no execute action. Stored recomputation — no per-portfolio state; the active plan + current prices ARE the input. Lives on the new top-level "Rebalance" nav page. See `docs/adr/0017-rebalance-advisor.md`.
+_Avoid_: Trading bot, execute trades, broker integration
+
+**Rebalance-eligible rule**:
+A `data.plans[].rules[]` entry whose `target_weight_pct` is set to a finite number in `[0, 100]`. Rules without the field remain drift-only rules for the existing Plans feature (per `Plan.validateRule`). One rule is the source of truth for both drift (via `distribute`) and rebalance (via `target_weight_pct`); adding the field is opt-in.
+_Avoid_: Active rule, weighted rule, rebalance target
+
+**Candidate action**:
+A single (rule, record) row on the Rebalance page showing the per-holding or per-cash-account advice for one rebalance-eligible rule's matched records. Even-split of the rule's *Rebalance target value* across its N matched records per R4-Q1 (each record's `target_value = rule_target_value / N`). All candidates are independent rows; the user picks which to execute. When 2+ rules match the same holding, the page shows N separate rows (one per rule), each in the respective rule's section.
+_Avoid_: Trade order, suggestion, recommendation
+
+**Rebalance target value**:
+The total value (`rule.target_weight_pct × portfolio.totalValue`, in baseline currency) that one rebalance-eligible rule is aiming to allocate. Even-split across its matched records; candidate rows show `target_value / N` per row. Section summary lines show this in baseline currency; per-candidate-row cells show the record's native currency (per ADR 0017 §6 — "act vs measure"). Holding candidates' `target_shares = target_value_native / current_price`; cash candidates' `target_balance_native = target_value_native`.
+_Avoid_: Allocation amount, target dollar amount
+
+**52-week position**:
+A holding's current price's place within its 52-week high/low range, computed as `(current_price - low_52w) / (high_52w - low_52w)`. Shown on both the Holdings page (per-row) and Rebalance candidate rows (per-candidate) as the same visual component (`.week52-bar` + `.week52-marker`). Highlighted when current price is in the top decile or bottom decile of the 52-week range. The same `week52Style(record)` helper drives both surfaces.
+_Avoid_: 52w range, position in range (less precise), percentile
+
 ## Snapshots
 
 **Snapshot**:

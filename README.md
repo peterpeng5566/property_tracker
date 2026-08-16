@@ -9,6 +9,7 @@ A personal net-worth tracker. Tracks stocks, cash, and debts with manual snapsho
 - **v1.5** — Snapshot UI landed. 5th nav page (Snapshots) with list / detail (drill-in to holdings/cash/debts with frozen currency + orphan handling) / compare 2 snapshots (delta view) / trend chart (inline SVG sparkline with 2 polylines). Manual-only; snapshot cap (default 365, FIFO, user-configurable, `0 = unlimited`). See [`docs/adr/0014-snapshot-ui.md`](docs/adr/0014-snapshot-ui.md).
 - **v1.6** — Manual record ordering landed. Per-collection ID array (`data.holdings_order` / `cash_accounts_order` / `debts_order`); ↑/↓ buttons on the Holdings / Cash / Debts pages with ARIA-correct disabled states. Lazy-write semantics (the array is absent until first reordering); sync-friendly prefer-remote merge (last-synced-wins on offline conflict). Categories and Plans pages are explicitly out of scope. See [`docs/adr/0015-record-ordering.md`](docs/adr/0015-record-ordering.md).
 - **v1.7** — Categories + Settings sync merge landed. Categories gain per-record newer-wins merge with tombstone propagation (replaces the pre-v1.7 replace-from-remote limitation that silently wiped locally-added categories on stale pulls). Settings gain object-level newer-wins with edit-path-only stamps. Backward-compatible: no schema version bump; pre-v1.7 portfolios are lazy-backfilled on first load. See [`docs/adr/0016-categories-and-settings-sync.md`](docs/adr/0016-categories-and-settings-sync.md).
+- **v1.8** — Region-aware rebalance advisor landed. Existing Plan rules gain an optional `target_weight_pct` field; a new top-level "Rebalance" nav consumes the active plan and produces per-record "buy/sell N shares" (or cash amount delta) advice, with a 52-week position indicator per holding candidate. Reuses the existing Categories attribute system (no new schema); cash is a first-class asset class. See [`docs/adr/0017-rebalance-advisor.md`](docs/adr/0017-rebalance-advisor.md).
 
 ## Run it
 
@@ -132,16 +133,17 @@ For the on-disk schema (fields, types, migration rules), see [docs/data-file-for
 
 ## Roadmap
 
-_Last updated at v1.7 close-out._ The remaining open items are in the per-version issue trackers under `.scratch/`:
+_Last updated at v1.8 close-out._ The remaining open items are in the per-version issue trackers under `.scratch/`:
 
 - `.scratch/v1.4-target-allocation-plans/map.md` — leaves "snapshot + active plan drift history" as open fog (a future effort, not on a version).
 - `.scratch/v1.6-record-ordering/map.md` — v1.6 ships with 4 resolved tickets (data + lib + 3 UI pages + ADR/glossary/smoke). Categories / Plans reorder is deferred (ADR 0015 §5). Drag-and-drop is deferred (open until user complaint).
 - `.scratch/v1.7-category-sync/map.md` — v1.7 ships with 2 resolved tickets (data + merge + tombstone + 3 settings edit-path stamps + ADR 0016 + glossary; backward-compat + 6 browser integration scenarios). Categories rename ties follow the same newer-wins rule as holdings/cash/debts/plans (ADR 0016 §9); pre-v1.7 clients lack tombstone mechanism (ADR 0016 §8); per-field Settings merge and per-value Categories merge are deferred as overkill.
+- `.scratch/v1.8-region-aware-rebalance/map.md` — v1.8 ships with 3 resolved tickets (data layer + ADR 0017 + sync merge tests + 39 unit tests; Rebalance UI page + Plan editor `target_weight_pct` + 9 browser integration scenarios; docs + close-out). Lot-size enforcement is deferred (schema field pre-laid but no UI control — `.week52-bar` will consume it when added). Cash-residual destination is manual (user picks the destination cash account as part of the execute choice). Within-leaf priority ordering is deferred. Per-leaf sub-weights (per-holding weight override) are deferred.
 
 ## Docs
 
 - [CONTEXT.md](CONTEXT.md) — domain glossary
-- [docs/adr/](docs/adr/) — architectural decisions (0001–0016)
+- [docs/adr/](docs/adr/) — architectural decisions (0001–0017)
 - [docs/data-file-format.md](docs/data-file-format.md) — JSON file format spec
 - [docs/google-oauth-setup.md](docs/google-oauth-setup.md) — Google Cloud Console setup
 - [docs/agents/](docs/agents/) — agent / workflow conventions
