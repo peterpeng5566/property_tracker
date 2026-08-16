@@ -145,44 +145,322 @@ test('mergePortfolios: empty inputs → created_at is current ISO time', () => {
   assert.ok(ts >= before && ts <= after, `expected ${ts} in [${before}, ${after}]`);
 });
 
-// --- mergePortfolios: categories / settings replacement ---
+// --- mergeSettings: object-level newer-wins (v1.7, ADR 0016) ---
+//
+// Settings is a singleton object (not record-bearing). v1.7 replaces
+// the v1 `replace-from-remote` workaround with object-level
+// newer-wins on `settings.updated_at`. Strict `>` so tie → local
+// (symmetric with mergeById / mergeByIdWithDeletions tie-break).
 
-test('mergePortfolios: categories replaced from remote when present', () => {
-  const local = { categories: [{ id: 'c1', name: 'Local' }], holdings: [] };
-  const remote = { categories: [{ id: 'c2', name: 'Remote' }], holdings: [] };
-  const out = mergePortfolios(local, remote, 'd');
-  assert.deepEqual(out.categories, [{ id: 'c2', name: 'Remote' }]);
+test('mergeSettings: both null/undefined → null', () => {
+  assert.equal(Sync.mergeSettings(null, null), null);
+  assert.equal(Sync.mergeSettings(undefined, undefined), null);
+  assert.equal(Sync.mergeSettings(null, undefined), null);
+  assert.equal(Sync.mergeSettings(undefined, null), null);
 });
 
-test('mergePortfolios: settings replaced from remote when present', () => {
-  const local = { settings: { theme: 'dark' }, holdings: [] };
-  const remote = { settings: { theme: 'light' }, holdings: [] };
-  const out = mergePortfolios(local, remote, 'd');
-  assert.deepEqual(out.settings, { theme: 'light' });
+test('mergeSettings: only local (remote null) → local', () => {
+  const local = { fx_rate: 32.2, updated_at: '2024-01-15T00:00:00Z' };
+  const out = Sync.mergeSettings(local, null);
+  assert.deepEqual(out, local);
 });
 
-test('mergePortfolios: categories fall back to local when remote.categories is undefined', () => {
-  const local = { categories: [{ id: 'c1', name: 'Local' }], holdings: [] };
-  const remote = { holdings: [] }; // no categories
-  const out = mergePortfolios(local, remote, 'd');
-  assert.deepEqual(out.categories, [{ id: 'c1', name: 'Local' }]);
+test('mergeSettings: only remote (local null) → remote', () => {
+  const remote = { fx_rate: 30.5, updated_at: '2024-02-01T00:00:00Z' };
+  const out = Sync.mergeSettings(null, remote);
+  assert.deepEqual(out, remote);
 });
 
-test('mergePortfolios: settings fall back to local when remote.settings is undefined', () => {
-  const local = { settings: { theme: 'dark' }, holdings: [] };
-  const remote = { holdings: [] }; // no settings
-  const out = mergePortfolios(local, remote, 'd');
-  assert.deepEqual(out.settings, { theme: 'dark' });
+test('mergeSettings: local newer → local wins (whole object)', () => {
+  const local = { fx_rate: 32.2, updated_at: '2024-02-01T00:00:00Z' };
+  const remote = { fx_rate: 30.5, updated_at: '2024-01-15T00:00:00Z' };
+  const out = Sync.mergeSettings(local, remote);
+  assert.deepEqual(out, local, 'newer local wins — whole object replaced');
 });
 
-test('mergePortfolios: both categories missing → undefined', () => {
+test('mergeSettings: remote newer → remote wins (whole object)', () => {
+  const local = { fx_rate: 32.2, updated_at: '2024-01-15T00:00:00Z' };
+  const remote = { fx_rate: 30.5, updated_at: '2024-02-01T00:00:00Z' };
+  const out = Sync.mergeSettings(local, remote);
+  assert.deepEqual(out, remote, 'newer remote wins — whole object replaced');
+});
+
+test('mergeSettings: equal timestamps → local wins (tie-break, strict >)', () => {
+  const t = '2024-01-15T00:00:00Z';
+  const local = { fx_rate: 32.2, updated_at: t };
+  const remote = { fx_rate: 30.5, updated_at: t };
+  const out = Sync.mergeSettings(local, remote);
+  assert.deepEqual(out, local, 'strict > → local retains on tie');
+});
+
+test('mergeSettings: both updated_at missing → local wins (fallback / epoch-0 treat)', () => {
+  // Pre-v1.7 settings have no `updated_at`. mergeSettings treats
+  // missing as epoch 0 (mirror mergeById tsOf semantics). Both
+  // epoch 0 → tie → local wins. After load-time backfill stamps
+  // updated_at, this code path rarely fires — kept for the case
+  // where backfill somehow didn't run (e.g. settings is undefined
+  // and gets lazy-resolved to a default later).
+  const local = { fx_rate: 32.2 };
+  const remote = { fx_rate: 30.5 };
+  const out = Sync.mergeSettings(local, remote);
+  assert.deepEqual(out, local);
+});
+
+test('mergeSettings: local updated_at missing, remote newer → remote wins', () => {
+  // Local is pre-v1.7 (no updated_at); remote is post-v1.7 with a
+  // real timestamp. remote should win — the user-edited value
+  // survives.
+  const local = { fx_rate: 32.2 };
+  const remote = { fx_rate: 30.5, updated_at: '2024-02-01T00:00:00Z' };
+  const out = Sync.mergeSettings(local, remote);
+  assert.deepEqual(out, remote);
+});
+
+test('mergeSettings: local newer, remote updated_at missing → local wins', () => {
+  // Local was post-v1.7 (real timestamp) but remote is pre-v1.7
+  // (epoch 0). Local should win.
+  const local = { fx_rate: 32.2, updated_at: '2024-02-01T00:00:00Z' };
+  const remote = { fx_rate: 30.5 };
+  const out = Sync.mergeSettings(local, remote);
+  assert.deepEqual(out, local);
+});
+
+test('mergeSettings: invalid updated_at on local → treated as epoch 0 (remote with real ts wins)', () => {
+  // Defensive — invalid ISO strings fall back to 0 (mirror tsOf).
+  const local = { fx_rate: 32.2, updated_at: 'not-a-date' };
+  const remote = { fx_rate: 30.5, updated_at: '2024-02-01T00:00:00Z' };
+  const out = Sync.mergeSettings(local, remote);
+  assert.deepEqual(out, remote);
+});
+
+// --- mergePortfolios: categories via mergeByIdWithDeletions (v1.7, ADR 0016) ---
+//
+// Pre-v1.7 categories were replaced from remote (ADR 0009 §5 v1
+// limitation). v1.7 supersedes: categories are record-bearing and
+// merge via the same primitive as plans / holdings / cash / debts /
+// snapshots. Each category carries updated_at + device_id (lazy
+// populated at load time per ADR 0016 §2). Deletions propagate via
+// the same data.deletions[] log (type: 'categories' — enum extension
+// of ADR 0011).
+
+const C = (id, opts = {}) => Object.assign({
+  id,
+  name: opts.name || id,
+  applies_to: opts.applies_to || ['holdings'],
+}, opts);
+
+test('mergePortfolios: categories uses mergeByIdWithDeletions (per-record newer wins, was replace-from-remote)', () => {
+  // v1.7 regression — pre-v1.7 had out.categories === remote.categories
+  // (replace-from-remote). Now it's per-record mergeByIdWithDeletions.
+  const local = {
+    categories: [C('finance', { name: 'Local-Finance', updated_at: '2024-02-01T00:00:00Z', device_id: 'a' })],
+    holdings: [],
+  };
+  const remote = {
+    categories: [C('finance', { name: 'Remote-Finance', updated_at: '2024-01-15T00:00:00Z', device_id: 'b' })],
+    holdings: [],
+  };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.categories.length, 1);
+  assert.equal(out.categories[0].name, 'Local-Finance', 'local newer wins per mergeById');
+});
+
+test('mergePortfolios: categories disjoint ids → both sides present (was wipe)', () => {
+  // v1.7 regression — pre-v1.7 lost all local categories on a stale
+  // pull (replace-from-remote). Now disjoint ids are unioned.
+  const local = {
+    categories: [C('tech', { updated_at: '2024-01-15T00:00:00Z', device_id: 'a' })],
+    holdings: [],
+  };
+  const remote = {
+    categories: [C('finance', { updated_at: '2024-02-01T00:00:00Z', device_id: 'b' })],
+    holdings: [],
+  };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.categories.length, 2);
+  assert.ok(out.categories.some(c => c.id === 'tech'));
+  assert.ok(out.categories.some(c => c.id === 'finance'));
+});
+
+test('mergePortfolios: categories local adds (id not on remote) → preserved on remote pull', () => {
+  // User adds a category on Device B; pulls Device A's stale remote →
+  // the new category must survive. Was the user-reported bug.
+  const local = {
+    categories: [C('new-cat', { updated_at: '2024-02-01T00:00:00Z', device_id: 'b' })],
+    holdings: [],
+  };
+  const remote = {
+    categories: [C('old-cat', { updated_at: '2024-01-15T00:00:00Z', device_id: 'a' })],
+    holdings: [],
+  };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.categories.length, 2, 'both old and new categories survive');
+  assert.ok(out.categories.some(c => c.id === 'new-cat'));
+  assert.ok(out.categories.some(c => c.id === 'old-cat'));
+});
+
+test('mergePortfolios: categories deleted via tombstone (type=categories) → removed from result', () => {
+  // deleteCategory pushes type: 'categories' tombstone. The tombstone
+  // filters the categories array on the next sync, mirroring how
+  // holdings / cash / debts / snapshots / plans deletions propagate
+  // (ADR 0011, type enum extended).
+  const local = {
+    categories: [],
+    deletions: [{ id: 'del-1', target_id: 'finance', type: 'categories',
+                  deleted_at: '2024-06-15T12:00:00Z', device_id: 'this' }],
+    holdings: [],
+  };
+  const remote = {
+    categories: [C('finance', { updated_at: '2024-02-01T00:00:00Z', device_id: 'b' })],
+    holdings: [],
+  };
+  const out = mergePortfolios(local, remote, 'this');
+  assert.equal(out.categories.length, 0, 'tombstone removes category');
+});
+
+test('mergePortfolios: categories remote tombstone (type=categories) → removed locally', () => {
+  const local = {
+    categories: [C('finance', { updated_at: '2024-02-01T00:00:00Z', device_id: 'this' })],
+    holdings: [],
+  };
+  const remote = {
+    categories: [],
+    deletions: [{ id: 'del-1', target_id: 'finance', type: 'categories',
+                  deleted_at: '2024-06-15T12:00:00Z', device_id: 'other' }],
+    holdings: [],
+  };
+  const out = mergePortfolios(local, remote, 'this');
+  assert.equal(out.categories.length, 0, 'remote tombstone filters local category');
+});
+
+test('mergePortfolios: categories both sides delete → single category removed, tombstones unioned', () => {
+  const local = {
+    categories: [],
+    deletions: [{ id: 'del-1', target_id: 'finance', type: 'categories',
+                  deleted_at: '2024-06-15T12:00:00Z', device_id: 'a' }],
+    holdings: [],
+  };
+  const remote = {
+    categories: [C('finance', { updated_at: '2024-02-01T00:00:00Z', device_id: 'b' })],
+    deletions: [{ id: 'del-2', target_id: 'finance', type: 'categories',
+                  deleted_at: '2024-06-15T12:00:00Z', device_id: 'b' }],
+    holdings: [],
+  };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.categories.length, 0);
+  // Both tombstones survive (different ids) — the merger does not
+  // dedupe across devices; it dedupes within a device via mergeById.
+  assert.ok(out.deletions.some(d => d.target_id === 'finance'));
+});
+
+test('mergePortfolios: categories missing on both sides → empty array (not undefined)', () => {
+  // Mirror holdings / cash / debts / snapshots / plans return-shape
+  // contract. Always [] rather than undefined so consumers can
+  // safely call .filter / .map without nullish guards.
   const out = mergePortfolios({}, {}, 'd');
-  assert.equal(out.categories, undefined);
+  assert.deepEqual(out.categories, []);
 });
 
-test('mergePortfolios: both settings missing → undefined', () => {
-  const out = mergePortfolios({}, {}, 'd');
-  assert.equal(out.settings, undefined);
+test('mergePortfolios: categories rename same id, remote newer → remote wins (per-record merge)', () => {
+  // Both devices edit the same category's name simultaneously; the
+  // newer updated_at wins. Tie on updated_at → local wins (mergeById
+  // convention). Documented as Q6 known limitation in ADR 0016 §9.
+  const local = {
+    categories: [C('finance', { name: 'Local-Rename', updated_at: '2024-01-15T00:00:00Z', device_id: 'a' })],
+    holdings: [],
+  };
+  const remote = {
+    categories: [C('finance', { name: 'Remote-Rename', updated_at: '2024-02-01T00:00:00Z', device_id: 'b' })],
+    holdings: [],
+  };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.categories.length, 1);
+  assert.equal(out.categories[0].name, 'Remote-Rename');
+});
+
+test('mergePortfolios: categories pre-v1.7 (no updated_at) on both → both at epoch 0 → tie → local wins', () => {
+  // Pre-v1.7 file merge fallback. Mirror mergeById tsOf=0 behaviour:
+  // no updated_at = epoch 0, tie at 0 → local wins.
+  const local = { categories: [C('tech', { name: 'L' })], holdings: [] };
+  const remote = { categories: [C('tech', { name: 'R' })], holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.categories[0].name, 'L');
+});
+
+test('mergePortfolios: categories cross-collection tombstone isolation (holdings tombstone does NOT remove a category)', () => {
+  // The deletion-log filter keys by `id` matching the merged
+  // deletion log → which is itself all-types. Reuse the same id
+  // name deliberately means the tombstone would remove ANY record
+  // with that id. Real-world categories use 'cat-' prefix and
+  // holdings use 'h-' prefix so id collision is unlikely; this
+  // test pins the contract that id-based matching means what it
+  // says. If a user somehow had a category id == a holding id, that
+  // tombstone would remove both. This is documented behavior, not a
+  // bug.
+  const local = {
+    categories: [C('h1', { name: 'Magic-Cat' })],
+    holdings: [],
+    deletions: [{ id: 'del-1', target_id: 'h1', type: 'holdings',
+                  deleted_at: '2024-06-15T12:00:00Z', device_id: 'a' }],
+  };
+  const remote = { holdings: [] };
+  const out = mergePortfolios(local, remote, 'a');
+  assert.equal(out.categories.length, 0, 'id-collision: the holdings tombstone removes the category too');
+});
+
+// --- mergePortfolios: settings uses mergeSettings (v1.7, ADR 0016) ---
+
+test('mergePortfolios: settings uses mergeSettings (newer wins, not replace-from-remote)', () => {
+  // This is the regression: pre-v1.7 settings were replaced wholesale
+  // from remote when present (ADR 0009 §5 v1 limitation), silently
+  // wiping local edits even when the user just edited fx_rate on this
+  // device. v1.7 changes to mergeSettings.
+  const local = { settings: { fx_rate: 32.2, updated_at: '2024-02-01T00:00:00Z' }, holdings: [] };
+  const remote = { settings: { fx_rate: 30.5, updated_at: '2024-01-15T00:00:00Z' }, holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.deepEqual(out.settings, { fx_rate: 32.2, updated_at: '2024-02-01T00:00:00Z' });
+});
+
+test('mergePortfolios: settings replace-from-remote BEHAVIOR is gone (regression guard)', () => {
+  // Pre-v1.7: out.settings would equal the remote object (whole
+  // object replacement). Post-v1.7: out.settings is whichever side
+  // is newer — even if local is "old" by stale-Drive-state but the
+  // user just edited it locally, local wins.
+  const local = {
+    settings: { fx_rate: 32.2, display_currency: 'TWD', updated_at: '2024-02-01T00:00:00Z' },
+    holdings: [],
+  };
+  const remote = {
+    settings: { fx_rate: 30.5, display_currency: 'USD', updated_at: '2024-01-15T00:00:00Z' },
+    holdings: [],
+  };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.settings.fx_rate, 32.2, 'local newer wins even though remote.fx_rate differs');
+  assert.equal(out.settings.display_currency, 'TWD', 'all fields inherited from local-wholesale');
+});
+
+test('mergePortfolios: settings pre-v1.7 (no updated_at) on both sides → local wins', () => {
+  // Pre-v1.7 file merged with pre-v1.7 file → both lack
+  // updated_at → tie at epoch 0 → local wins. Distinct from the
+  // old replace-from-remote behavior: now the seam is mergeSettings
+  // which has its own fallback rule.
+  const local = { settings: { fx_rate: 32.2 }, holdings: [] };
+  const remote = { settings: { fx_rate: 30.5 }, holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.deepEqual(out.settings, { fx_rate: 32.2 });
+});
+
+test('mergePortfolios: settings absent on one side → present side wins', () => {
+  // Pre-v1.7 fallback to local when remote absent is preserved.
+  const local = { settings: { fx_rate: 32.2, updated_at: '2024-01-15T00:00:00Z' }, holdings: [] };
+  const remote = { holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.deepEqual(out.settings, { fx_rate: 32.2, updated_at: '2024-01-15T00:00:00Z' });
+
+  const local2 = { holdings: [] };
+  const remote2 = { settings: { fx_rate: 30.5, updated_at: '2024-02-01T00:00:00Z' }, holdings: [] };
+  const out2 = mergePortfolios(local2, remote2, 'd');
+  assert.deepEqual(out2.settings, { fx_rate: 30.5, updated_at: '2024-02-01T00:00:00Z' });
 });
 
 // --- mergePortfolios: meta device_id (prefers local, then remote, then deviceId) ---
@@ -319,8 +597,8 @@ test('mergePortfolios: realistic round-trip with all meta fields exercised', () 
       last_synced_at: '2024-01-15T00:00:00Z',
       created_at: '2024-01-01T00:00:00Z',
     },
-    settings: { theme: 'dark' },
-    categories: [{ id: 'tech', name: 'Tech' }],
+    settings: { theme: 'dark', updated_at: '2024-01-10T00:00:00Z' },
+    categories: [{ id: 'tech', name: 'Tech', updated_at: '2024-01-05T00:00:00Z', device_id: 'local-d' }],
     holdings: [
       H('aapl', { ticker: 'AAPL', shares: 10, updated_at: iso('2024-01-10') }),
       H('msft', { ticker: 'MSFT', shares: 5, updated_at: iso('2024-01-05') }),
@@ -336,8 +614,8 @@ test('mergePortfolios: realistic round-trip with all meta fields exercised', () 
       last_synced_at: '2024-01-20T00:00:00Z',
       created_at: '2024-01-02T00:00:00Z',
     },
-    settings: { theme: 'light' },
-    categories: [{ id: 'finance', name: 'Finance' }],
+    settings: { theme: 'light', updated_at: '2024-01-20T00:00:00Z' },
+    categories: [{ id: 'finance', name: 'Finance', updated_at: '2024-01-20T00:00:00Z', device_id: 'remote-d' }],
     holdings: [
       H('aapl', { ticker: 'AAPL', shares: 20, updated_at: iso('2024-01-15') }), // newer → wins
       H('googl', { ticker: 'GOOGL', shares: 8, updated_at: iso('2024-01-15') }), // only remote
@@ -355,9 +633,12 @@ test('mergePortfolios: realistic round-trip with all meta fields exercised', () 
   assert.equal(out.meta.device_id, 'local-d');
   assert.equal(out.meta.last_synced_at, '2024-01-20T00:00:00Z');
   assert.equal(out.meta.created_at, '2024-01-01T00:00:00Z');
-  // settings/categories: replaced from remote
-  assert.deepEqual(out.settings, { theme: 'light' });
-  assert.deepEqual(out.categories, [{ id: 'finance', name: 'Finance' }]);
+  // settings: mergeSettings — remote.settings.updated_at newer → remote whole object wins
+  assert.deepEqual(out.settings, { theme: 'light', updated_at: '2024-01-20T00:00:00Z' });
+  // categories: mergeByIdWithDeletions — disjoint ids → both present
+  assert.equal(out.categories.length, 2);
+  assert.ok(out.categories.some(c => c.id === 'tech'));
+  assert.ok(out.categories.some(c => c.id === 'finance'));
   // holdings: merged by id (aapl=remote newer 20, msft=local only 5, googl=remote only 8)
   assert.equal(out.holdings.length, 3);
   assert.equal(out.holdings.find(r => r.id === 'aapl').shares, 20);

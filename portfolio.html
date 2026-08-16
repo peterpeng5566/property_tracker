@@ -208,7 +208,7 @@
             <div class="flex items-center gap-1 text-xs border border-slate-200 rounded-md px-2 py-1">
               <span class="text-slate-500">1 USD =</span>
               <input type="number" x-model.number="data.settings.fx_rate"
-                     @change="data.settings.fx_updated_at = new Date().toISOString()"
+                     @change="data.settings.fx_updated_at = new Date().toISOString(); if (data.settings) data.settings.updated_at = data.settings.fx_updated_at"
                      step="0.01" min="0"
                      class="w-16 text-right text-slate-900 text-sm font-medium tabular focus:outline-none">
               <span class="text-slate-500">TWD</span>
@@ -2040,6 +2040,16 @@
 
 <script src="lib/order.js"></script>
 
+<!-- Migration helpers (lib/migration.js) — v1.7 load-time backfill
+     (ADR 0016 §2). Pure `migrateAdditiveFields(data, now)` that
+     lazy-populates `updated_at` + `device_id` on each category and
+     `updated_at` on the settings singleton. Called from load() and
+     handleImportFile() so pre-v1.7 portfolio files reach the new
+     merge logic on first load. Loaded after sync because the
+     migration's contract (the fields it stamps) is defined by what
+     mergeByIdWithDeletions / mergeSettings expect. -->
+<script src="lib/migration.js"></script>
+
 <!-- Backup helpers (lib/backup.js) — two-layer backup safety net for true
      delete (ADR 0012 + ticket #02). Layer 1 (in-portfolio data.backups[]):
      buildBackupSnapshot, pushBackup, restoreFromBackup. Layer 2 (Drive
@@ -3305,6 +3315,12 @@
             this.data.settings.snapshot_cap = Snapshot.normalizeSnapshotCap(
               this.data.settings.snapshot_cap
             );
+            // v1.7 additive fields (ADR 0016 §2 — load-time backfill):
+            // categories gain per-record `updated_at` + `device_id` and
+            // settings gains `updated_at` so they are merge-eligible
+            // (mergeByIdWithDeletions / mergeSettings) on the first sync
+            // forward. Idempotent — existing fields are preserved.
+            Migration.migrateAdditiveFields(this.data);
             this.data.holdings.forEach(h => { if (!h.attributes) h.attributes = {}; });
             this.data.cash_accounts.forEach(c => { if (!c.attributes) c.attributes = {}; });
             this.data.debts.forEach(d => { if (!d.attributes) d.attributes = {}; });
@@ -3535,6 +3551,12 @@
           result.data.settings.snapshot_cap = Snapshot.normalizeSnapshotCap(
             result.data.settings.snapshot_cap
           );
+          // v1.7 additive fields (ADR 0016 §2 — load-time backfill).
+          // Restored portfolios from older backups may lack category /
+          // settings timestamps. Migrate before swapping this.data so
+          // the deep watcher's save() afterward sees a fully
+          // merge-eligible state. Idempotent.
+          Migration.migrateAdditiveFields(result.data);
           // Defensive: restoreFromSnapshot returns a `data` object whose
           // shape is derived from the snapshot. If the snapshot (e.g. a
           // Cloud-restore payload or an older local backup) is missing
@@ -4498,7 +4520,25 @@
           return;
         }
         if (!confirm('Delete this category? Holdings/cash/debts will lose this attribute.')) return;
-        this.data.categories = this.data.categories.filter(c => c.id !== catId);
+        // v1.7 — true-delete via lib/records.recordDeletion (ADR 0016
+        // §3 + ADR 0011). Composes over the deletion log with
+        // type: 'categories' so a tombstone propagates the delete to
+        // the other device on next sync (replaces the pre-v1.7 splice
+        // that hard-deleted locally only).
+        const out = Records.recordDeletion(this.data.categories, this.data.deletions, {
+          targetId: catId,
+          type: 'categories',          // ← ADR 0011 type enum extended
+          deviceId: DEVICE_ID,
+          deletedAt: new Date().toISOString(),
+          genDelId: () => genId('del'),
+        });
+        if (!out.didDelete) return;
+        this.data.categories = out.records;
+        this.data.deletions = out.deletions;
+        // Attribute cascade unchanged: any holdings/cash/debts that
+        // referenced this category lose the dangling attribute key.
+        // Independent of the tombstone — it is the user-visible "I'm
+        // cleaning up references" cascade, not sync infra.
         const clean = (items) => items.forEach(item => {
           if (item.attributes && catId in item.attributes) delete item.attributes[catId];
         });
@@ -5036,8 +5076,23 @@
       },
 
       // ---- Actions ----
-      setCurrency(c) { this.displayCurrency = c; },
-      setLanguage(lang) { this.language = lang; },
+      setCurrency(c) {
+        this.displayCurrency = c;
+        // v1.7 — stamp settings.updated_at on actual settings edit
+        // (ADR 0016 §6: edit-path only, not on every save()). The deep
+        // $watch fires save() after this method returns, so the stamp
+        // is captured before the persist.
+        if (this.data && this.data.settings) {
+          this.data.settings.updated_at = new Date().toISOString();
+        }
+      },
+      setLanguage(lang) {
+        this.language = lang;
+        // v1.7 — same edit-path stamp as setCurrency (ADR 0016 §6).
+        if (this.data && this.data.settings) {
+          this.data.settings.updated_at = new Date().toISOString();
+        }
+      },
       downloadJSON() {
         const blob = new Blob([this.serializeData(this.data)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -5079,6 +5134,9 @@
         this.data.settings.snapshot_cap = Snapshot.normalizeSnapshotCap(
           this.data.settings.snapshot_cap
         );
+        // v1.7 additive fields (ADR 0016 §2 — load-time backfill).
+        // See load() for the same comment.
+        Migration.migrateAdditiveFields(this.data);
         this.data.holdings.forEach(h => { if (!h.attributes) h.attributes = {}; });
         // Strip in-memory flags defensively (ADR 0009 §4).
         Serialize.stripInMemoryFields(this.data.holdings);

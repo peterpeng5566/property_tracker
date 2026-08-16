@@ -120,3 +120,65 @@ test('recordDeletion: appends to existing deletions without dropping prior tombs
   assert.equal(out.deletions[1].id, 'del-1');
   assert.equal(out.deletions[1].target_id, 'h1');
 });
+
+// --- v1.7 — type: 'categories' is permitted (ADR 0011 type enum extension) ---
+
+test('recordDeletion: type=categories appends tombstone with category target (ADR 0016 §3)', () => {
+  // v1.7 extends the ADR 0011 type enum with 'categories' so that
+  // deleteCategory pushes tombstones that propagate across devices.
+  // recordDeletion is type-agnostic at the data layer; this test pins
+  // the wire shape that deleteCategory will produce.
+  const out = recordDeletion(
+    [{ id: 'cat-1', name: 'Tech' }],
+    [],
+    {
+      targetId: 'cat-1',
+      type: 'categories',                  // ← ADR 0011 enum extension
+      deviceId: 'dev-a',
+      deletedAt: '2024-08-15T00:00:00Z',
+      genDelId: () => 'del-cat-1',
+    }
+  );
+  assert.equal(out.didDelete, true);
+  assert.deepEqual(out.records, []);
+  assert.deepEqual(out.deletions, [{
+    id: 'del-cat-1',
+    target_id: 'cat-1',
+    type: 'categories',                    // ← enum extended, type matches
+    deleted_at: '2024-08-15T00:00:00Z',
+    device_id: 'dev-a',
+  }]);
+});
+
+test('recordDeletion: types across collections coexist in the deletion log (mixed-type)', () => {
+  // The data.deletions[] log is a single array across all record-bearing
+  // collections. Pins the contract: 'categories' tombstones can sit in
+  // the same array as 'holdings' / 'cash_accounts' / 'debts' /
+  // 'snapshots' / 'plans' tombstones without confusion.
+  const records = [{ id: 'cat-1', name: 'Tech' }];
+  const prior = [
+    { id: 'del-h1', target_id: 'h1', type: 'holdings',
+      deleted_at: '2024-05-01T00:00:00Z', device_id: 'd' },
+    { id: 'del-c1', target_id: 'c1', type: 'cash_accounts',
+      deleted_at: '2024-06-01T00:00:00Z', device_id: 'd' },
+    { id: 'del-d1', target_id: 'd1', type: 'debts',
+      deleted_at: '2024-06-02T00:00:00Z', device_id: 'd' },
+    { id: 'del-s1', target_id: 's1', type: 'snapshots',
+      deleted_at: '2024-06-03T00:00:00Z', device_id: 'd' },
+    { id: 'del-p1', target_id: 'p1', type: 'plans',
+      deleted_at: '2024-06-04T00:00:00Z', device_id: 'd' },
+  ];
+  const out = recordDeletion(records, prior, {
+    targetId: 'cat-1',
+    type: 'categories',
+    deviceId: 'd',
+    deletedAt: '2024-08-15T00:00:00Z',
+    genDelId: () => 'del-cat-1',
+  });
+  assert.equal(out.deletions.length, 6, 'pre-existing tombstones preserved + new category tombstone');
+  assert.deepEqual(
+    out.deletions.map(d => d.type),
+    ['holdings', 'cash_accounts', 'debts', 'snapshots', 'plans', 'categories'],
+    'type field is preserved per-tombstone — single log serves all collections'
+  );
+});

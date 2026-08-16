@@ -166,8 +166,17 @@ When the local and remote copies have diverged. Resolved per-record using timest
 _Avoid_: Merge conflict (technical), edit conflict
 
 **Deletion log**:
-`data.deletions[]` — an additive array of `{id, target_id, type, deleted_at, device_id}` entries that records "this record was hard-deleted; do not resurrect from remote." Combined with `mergeById` to filter out deleted IDs after every merge. Conflict resolution: *delete always wins* — a stale edit on another device after a delete is lost. The log grows unbounded; recovery from a bad delete is via the *Backup* layer, not via deletion-log edits. The `type` field discriminates the four record-bearing collections: `'holdings'` / `'cash_accounts'` / `'debts'` / `'plans'`. See `docs/adr/0011-true-delete-deletion-log.md` and `docs/adr/0013-target-allocation-plans.md` §8 for the plans adoption.
+`data.deletions[]` — an additive array of `{id, target_id, type, deleted_at, device_id}` entries that records "this record was hard-deleted; do not resurrect from remote." Combined with `mergeById` to filter out deleted IDs after every merge. Conflict resolution: *delete always wins* — a stale edit on another device after a delete is lost. The log grows unbounded; recovery from a bad delete is via the *Backup* layer, not via deletion-log edits. The `type` field discriminates the record-bearing collections: `'holdings'` / `'cash_accounts'` / `'debts'` / `'plans'` / `'snapshots'` / `'categories'` (added in v1.7 by `docs/adr/0016-categories-and-settings-sync.md`). See `docs/adr/0011-true-delete-deletion-log.md` and `docs/adr/0013-target-allocation-plans.md` §8 for the plans adoption.
 _Avoid_: tombstone list (overloaded), delete log (too generic)
+
+**Category merge**:
+How `data.categories[]` syncs across devices. Per-record `mergeByIdWithDeletions` (same primitive as *Plan merge* / Holdings / Cash / Debts / Snapshots) using per-category `updated_at` and `device_id`. Both fields are lazy-populated at load time (ADR 0016 §2) so pre-v1.7 files reach merge-eligible state on first sync without a schema version bump. `deleteCategory` pushes a tombstone into the *Deletion log* with `type: 'categories'` so deletes propagate. Replaces the pre-v1.7 `replace-from-remote` workaround (ADR 0009 §5 v1 limitation) — that workaround silently wiped locally-added categories on a stale pull.
+_Avoid_: categories sync (generic), category conflict (overloaded)
+
+**Settings merge**:
+How `data.settings` syncs across devices. Settings is a singleton object (not record-bearing), so it uses object-level newer-wins on `data.settings.updated_at`: whichever side's timestamp is newer replaces the whole object; tie → local wins (strict `>`). `updated_at` is stamped only at the actual settings edit handlers (`setCurrency` / `setLanguage` / the fx_rate inline input's `@change`) — NOT on every `save()` — so non-settings saves do not preempt the other device's recent settings edit. Backfill at load time if missing (ADR 0016 §2). Coarse-grained: a `display_currency` edit and an `fx_rate` edit at the same second will lose one edit (whichever was earlier); acceptable because settings are edited rarely. Replaces pre-v1.7 `replace-from-remote`.
+_Avoid_: settings sync (generic), config merge (overloaded)
+
 
 ## Safety net
 
