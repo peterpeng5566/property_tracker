@@ -38,13 +38,19 @@ jobs:
 
       - name: Materialise config.js from YAHOO_PROXY_URL secret
         # config.js is gitignored at the repo level, so this runs in CI only.
+        # The secret is explicitly mapped to an env var on this step rather
+        # than referenced as $YAHOO_PROXY_URL in bash: GitHub Actions does
+        # not always expose secrets as shell env vars (depends on secret
+        # type + job context), but explicit env: mapping always works.
         # If the secret is unset, we write an empty value so the page still
         # loads — Yahoo refresh will then fail with a clear "not configured"
         # error (see portfolio.html:3230) instead of a generic fetch error.
+        env:
+          YAHOO_PROXY_URL: ${{ secrets.YAHOO_PROXY_URL || '' }}
         run: |
           {
             echo "window.PORTFOLIO_CONFIG = {"
-            echo "  yahooProxyUrl: '${YAHOO_PROXY_URL:-}',"
+            echo "  yahooProxyUrl: '${YAHOO_PROXY_URL}',"
             echo "};"
           } > config.js
 
