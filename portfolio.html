@@ -140,7 +140,20 @@
 
   <!-- Header -->
   <header class="bg-white border-b border-slate-200">
-    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between gap-2">
+      <!-- v1.9 — hamburger trigger (ADR 0018 ticket 02 commit 2).
+           LEFT side of header (R2-Q16=left); the right cluster already
+           carries 4 buttons and would push further if the hamburger
+           joined. Hidden ≥md via .md:hidden. Touch target ≥44 px
+           enforced by min-h-[44px] min-w-[44px] p-2. -->
+      <button @click="mobileNavOpen = !mobileNavOpen"
+              data-testid="header-hamburger"
+              :aria-expanded="mobileNavOpen.toString()"
+              aria-controls="mobile-nav-drawer"
+              :aria-label="mobileNavOpen ? 'Close navigation' : 'Open navigation'"
+              class="md:hidden min-h-[44px] min-w-[44px] p-2 inline-flex items-center justify-center rounded-md border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors text-lg leading-none">
+        <span aria-hidden="true" x-text="mobileNavOpen ? '✕' : '☰'"></span>
+      </button>
       <div>
         <h1 class="text-xl font-semibold tracking-tight" x-text="t('app.title')"></h1>
         <p class="text-xs text-slate-500 mt-0.5" x-text="summary"></p>
@@ -240,43 +253,48 @@
     </div>
   </div>
 
-  <!-- Tab bar -->
+  <!-- Tab bar — v1.9 (ADR 0018 ticket 02 commit 2): at <md the 8 tabs
+       overflow 414 px (audit hot-list #1). Hidden via per-button
+       `hidden md:inline-block` (computed display: none at <md, so the
+       regression net's `getComputedStyle().display !== 'none'`
+       assertion holds). ≥md keeps the original inline-block default.
+       Mobile users navigate via the hamburger drawer. -->
   <nav class="bg-white border-b border-slate-200">
     <div class="max-w-7xl mx-auto px-6 flex gap-1">
       <button @click="currentPage = 'home'"
               :class="currentPage === 'home' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
-              class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
+              class="hidden md:inline-block px-4 py-3 text-sm font-medium border-b-2 transition-colors"
               x-text="t('nav.home')"></button>
       <button @click="currentPage = 'holdings'"
               :class="currentPage === 'holdings' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
-              class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
+              class="hidden md:inline-block px-4 py-3 text-sm font-medium border-b-2 transition-colors"
               x-text="t('nav.holdings')"></button>
       <button @click="navigateToSnapshots()"
               :class="currentPage === 'snapshots' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
-              class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
+              class="hidden md:inline-block px-4 py-3 text-sm font-medium border-b-2 transition-colors"
               data-testid="nav-snapshots"
               x-text="t('nav.snapshots')"></button>
       <button @click="currentPage = 'cash_debt'"
               :class="currentPage === 'cash_debt' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
-              class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
+              class="hidden md:inline-block px-4 py-3 text-sm font-medium border-b-2 transition-colors"
               x-text="t('nav.cashDebt')"></button>
       <button @click="currentPage = 'categories'"
               :class="currentPage === 'categories' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
-              class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
+              class="hidden md:inline-block px-4 py-3 text-sm font-medium border-b-2 transition-colors"
               x-text="t('nav.categories')"></button>
       <button @click="currentPage = 'plans'"
               :class="currentPage === 'plans' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
-              class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
+              class="hidden md:inline-block px-4 py-3 text-sm font-medium border-b-2 transition-colors"
               x-text="t('nav.plans')"></button>
       <button @click="currentPage = 'backups'; fetchCloudBackups().catch(() => {})"
               :class="currentPage === 'backups' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
-              class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
+              class="hidden md:inline-block px-4 py-3 text-sm font-medium border-b-2 transition-colors"
               x-text="t('nav.backups')"></button>
       <!-- Rebalance tab (v1.8 — ADR 0017, ticket 02). Reads the active plan
            and renders per-rule × per-matched-record candidate actions. -->
       <button @click="currentPage = 'rebalance'"
               :class="currentPage === 'rebalance' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
-              class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
+              class="hidden md:inline-block px-4 py-3 text-sm font-medium border-b-2 transition-colors"
               data-testid="nav-rebalance"
               x-text="t('nav.rebalance')"></button>
     </div>
@@ -1891,6 +1909,101 @@
 
   </main>
 
+  <!-- v1.9 — Mobile nav backdrop + drawer (ADR 0018 ticket 02 commit 2).
+       Siblings to <main> so the backdrop can cover the full viewport
+       (z-40) and the drawer slides in from the right at z-50. The
+       hamburger trigger is .md:hidden so desktop users never toggle
+       mobileNavOpen; we use <template x-if="mobileNavOpen"> to keep
+       the drawer's nav buttons out of the DOM when closed (avoids
+       Playwright strict-mode collisions with the second-row nav for
+       tests like `button:has-text("Backups")`).
+
+       Patterns:
+       - Backdrop: click → close (`mobileNavOpen = false`). z-40 stays
+         below the drawer (z-50).
+       - Drawer: right-side slide-in. Each nav link invokes the same
+         handler as the second-row nav (currentPage = '...') plus
+         `mobileNavOpen = false` so the drawer auto-closes after
+         navigation.
+       - @keydown.escape.window also closes — out of scope for v1.9;
+         reserved for v1.9.x if user requests. -->
+  <template x-if="mobileNavOpen">
+    <div @click="mobileNavOpen = false"
+         data-testid="mobile-nav-backdrop"
+         class="md:hidden fixed inset-0 bg-black/40 z-40"
+         x-transition.opacity></div>
+  </template>
+
+  <template x-if="mobileNavOpen">
+    <aside id="mobile-nav-drawer"
+           data-testid="mobile-nav-drawer"
+           @click.outside="mobileNavOpen = false"
+           class="md:hidden fixed top-0 right-0 h-full w-72 max-w-[85vw] bg-white shadow-xl z-50 overflow-y-auto flex flex-col"
+           x-transition:enter="transition ease-out duration-200"
+           x-transition:enter-start="translate-x-full"
+           x-transition:enter-end="translate-x-0"
+           x-transition:leave="transition ease-in duration-150"
+           x-transition:leave-start="translate-x-0"
+           x-transition:leave-end="translate-x-full">
+      <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+        <h2 class="text-base font-semibold tracking-tight" x-text="t('app.title')"></h2>
+        <button @click="mobileNavOpen = false"
+                data-testid="mobile-nav-close"
+                aria-label="Close navigation"
+                class="min-h-[44px] min-w-[44px] p-2 inline-flex items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-colors">
+          <svg class="w-5 h-5" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M5 5l10 10M5 15L15 5" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <nav class="flex-1 px-2 py-3 space-y-1" aria-label="Mobile navigation">
+        <button @click="currentPage = 'home'; mobileNavOpen = false"
+                :class="currentPage === 'home' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'"
+                class="w-full text-left min-h-[44px] px-4 py-3 rounded-md text-sm font-medium transition-colors"
+                data-testid="mobile-nav-home"
+                x-text="t('nav.home')"></button>
+        <button @click="currentPage = 'holdings'; mobileNavOpen = false"
+                :class="currentPage === 'holdings' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'"
+                class="w-full text-left min-h-[44px] px-4 py-3 rounded-md text-sm font-medium transition-colors"
+                data-testid="mobile-nav-holdings"
+                x-text="t('nav.holdings')"></button>
+        <button @click="navigateToSnapshots(); mobileNavOpen = false"
+                :class="currentPage === 'snapshots' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'"
+                class="w-full text-left min-h-[44px] px-4 py-3 rounded-md text-sm font-medium transition-colors"
+                data-testid="mobile-nav-snapshots"
+                x-text="t('nav.snapshots')"></button>
+        <button @click="currentPage = 'cash_debt'; mobileNavOpen = false"
+                :class="currentPage === 'cash_debt' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'"
+                class="w-full text-left min-h-[44px] px-4 py-3 rounded-md text-sm font-medium transition-colors"
+                data-testid="mobile-nav-cash_debt"
+                x-text="t('nav.cashDebt')"></button>
+        <button @click="currentPage = 'categories'; mobileNavOpen = false"
+                :class="currentPage === 'categories' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'"
+                class="w-full text-left min-h-[44px] px-4 py-3 rounded-md text-sm font-medium transition-colors"
+                data-testid="mobile-nav-categories"
+                x-text="t('nav.categories')"></button>
+        <button @click="currentPage = 'plans'; mobileNavOpen = false"
+                :class="currentPage === 'plans' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'"
+                class="w-full text-left min-h-[44px] px-4 py-3 rounded-md text-sm font-medium transition-colors"
+                data-testid="mobile-nav-plans"
+                x-text="t('nav.plans')"></button>
+        <button @click="currentPage = 'backups'; fetchCloudBackups().catch(() => {}); mobileNavOpen = false"
+                :class="currentPage === 'backups' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'"
+                class="w-full text-left min-h-[44px] px-4 py-3 rounded-md text-sm font-medium transition-colors"
+                data-testid="mobile-nav-backups"
+                x-text="t('nav.backups')"></button>
+        <button @click="currentPage = 'rebalance'; mobileNavOpen = false"
+                :class="currentPage === 'rebalance' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'"
+                class="w-full text-left min-h-[44px] px-4 py-3 rounded-md text-sm font-medium transition-colors"
+                data-testid="mobile-nav-rebalance"
+                x-text="t('nav.rebalance')"></button>
+      </nav>
+      <div class="px-5 py-3 border-t border-slate-200 text-xs text-slate-500">
+        <span class="font-mono" x-text="(data.meta && data.meta.device_id) || '—'"></span>
+      </div>
+    </aside>
+  </template>
+
   <!-- Holdings Modal -->
   <div x-show="showModal" x-transition.opacity class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" @click.self="closeModal()" style="display:none;">
     <div class="bg-white rounded-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" @click.stop>
@@ -2970,6 +3083,13 @@
       displayCurrency: 'TWD',
       language: 'en',
       currentPage: 'home',
+      // v1.9 — header hamburger drawer state (ADR 0018, ticket 02
+      // commit 2). Toggled by the hamburger button (header left)
+      // and the backdrop; closing also happens implicitly when a
+      // drawer nav link invokes a navigateTo* helper. Drawer is
+      // hidden ≥md (CSS .md:hidden), so this flag is irrelevant at
+      // desktop but still flipped if a user resizes the window.
+      mobileNavOpen: false,
 
       // Snapshot detail view state (v1.5 — ticket 03). null when the
       // Snapshots page is showing the list; an id when showing detail.

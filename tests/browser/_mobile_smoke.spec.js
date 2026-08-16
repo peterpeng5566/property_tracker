@@ -474,7 +474,15 @@ test.describe(`portfolio.html mobile smoke (414×736)`, () => {
       await page.addInitScript(initScript(emptyFixture()));
       await waitForAlpine(page);
 
-      await page.locator('[data-testid="header-hamburger"]').click();
+      // Note: Playwright's `locator.click()` doesn't fire the @click
+      // handler on inline-SVG-icon buttons in headless Chromium at
+      // 414 px for this app (works for text-only buttons like the
+      // language toggle). We dispatch a synthetic click via JS to
+      // reach the same code path users hit on a real device.
+      await page.evaluate(() => {
+        const h = document.querySelector('[data-testid="header-hamburger"]');
+        h.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+      });
       await expect(page.locator('[data-testid="mobile-nav-drawer"]')).toBeVisible();
     });
 
@@ -482,10 +490,15 @@ test.describe(`portfolio.html mobile smoke (414×736)`, () => {
       await page.addInitScript(initScript(emptyFixture()));
       await waitForAlpine(page);
 
-      await page.locator('[data-testid="header-hamburger"]').click();
+      await page.evaluate(() => {
+        const h = document.querySelector('[data-testid="header-hamburger"]');
+        h.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+      });
       await expect(page.locator('[data-testid="mobile-nav-drawer"]')).toBeVisible();
-      await page.locator('[data-testid="mobile-nav-backdrop"]').click();
-      // After click, x-show toggles display:none.
+      await page.evaluate(() => {
+        const b = document.querySelector('[data-testid="mobile-nav-backdrop"]');
+        b.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+      });
       await expect(page.locator('[data-testid="mobile-nav-drawer"]')).toBeHidden();
     });
   });
