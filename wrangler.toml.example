@@ -1,0 +1,27 @@
+# wrangler.toml.example — Cloudflare Worker deployment config.
+#
+# wrangler.toml is gitignored (the Worker `name` binds to your Cloudflare
+# account; don't commit it). Copy this file to `wrangler.toml`, change `name`
+# to match your Worker, then `wrangler deploy` from the repo root.
+#
+# ALLOWED_ORIGIN supports multiple origins. Use either a TOML array (shown
+# below) or a comma-separated string — both formats are parsed by the Worker.
+# Add every origin you'll open the app from (localhost, GitHub Pages, custom
+# domain, etc.). The first entry is the fallback used for server-to-server
+# requests with no Origin header.
+
+name = "yahoo-proxy"
+main = "docs/workers/yahoo-proxy.mjs"
+compatibility_date = "2025-01-01"
+
+[vars]
+# Multiple origins supported: TOML array (shown) or comma-separated string.
+# Add every origin you'll open the app from — localhost entries go here too,
+# but the README's "Run it" section assumes default :8000; if you use a
+# different dev port, add it below.
+ALLOWED_ORIGIN = [
+  "http://localhost:8000",          # dev server default
+  "https://YOURNAME.github.io",     # GitHub Pages (user-site) — replace with your GitHub username
+  # "https://YOURNAME.github.io/your-repo",  # project-site URL if not using user site
+  # "https://your.domain",                  # custom domain
+]

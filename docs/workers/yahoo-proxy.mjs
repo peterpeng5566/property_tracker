@@ -27,6 +27,13 @@
 //   - Restricts target URLs to query1.finance.yahoo.com (chart data) and
 //     fc.yahoo.com (cookie bootstrap host) (security).
 //   - Restricts origin to ALLOWED_ORIGIN env var if set (security).
+//     ALLOWED_ORIGIN accepts a single origin, a comma-separated string, or a
+//     TOML array (parsed uniformly here). When multiple origins are allowed
+//     the response echoes the request origin per the CORS multi-origin
+//     pattern; the first entry is the fallback for origin-less requests.
+//     Origin-less requests (no Origin header) themselves bypass the allowlist
+//     so curl smoke tests work; the Host allowlist below still restricts
+//     the target URL.
 //
 // TESTING:
 //   curl 'https://yahoo-proxy.YOURACCOUNT.workers.dev/?url=https%3A%2F%2Fquery1.finance.yahoo.com%2Fv8%2Ffinance%2Fchart%2FAAPL%3Finterval%3D1d%26range%3D1d'
@@ -34,8 +41,8 @@
 // SECURITY:
 //   - Without ALLOWED_ORIGIN env var, any origin can use the Worker (uses up
 //     your 100k/day quota). For personal use this is fine.
-//   - With ALLOWED_ORIGIN set (e.g. to "http://localhost:8000"), only that
-//     origin is allowed. Recommended for production.
+//   - With ALLOWED_ORIGIN set (e.g. to "http://localhost:8000"), only those
+//     origins are allowed. Recommended for production.
 //
 // ENDPOINT NOTE:
 //   This Worker uses Yahoo's /v8/finance/chart/<SYMBOL> endpoint, NOT the
@@ -74,18 +81,47 @@ async function getCookie() {
   return value;
 }
 
-function corsHeaders(env) {
+// Parse ALLOWED_ORIGIN into a list. Accepts:
+//   - null/undefined → null (permissive default, see isOriginAllowed)
+//   - TOML array     → used as-is
+//   - comma-separated string → split, trimmed, empty entries dropped
+// A TOML array (wrangler.toml) and a comma-separated string (Cloudflare
+// dashboard) both flow through this function identically.
+function parseAllowedOrigins(raw) {
+  if (raw == null) return null;
+  if (Array.isArray(raw)) return raw.filter(Boolean);
+  if (typeof raw === 'string') return raw.split(',').map((s) => s.trim()).filter(Boolean);
+  return null;
+}
+
+function isOriginAllowed(env, origin) {
+  const allowed = parseAllowedOrigins(env.ALLOWED_ORIGIN);
+  if (!allowed || allowed.length === 0) return true;  // permissive default
+  // Origin-less requests (server-to-server, curl smoke tests) bypass the
+  // allowlist. The Host allowlist in handleRequest still restricts target
+  // URLs to Yahoo's chart/cookie hosts. Browser requests without a matching
+  // Origin still get 403.
+  if (origin === '') return true;
+  return allowed.includes(origin);
+}
+
+function corsHeaders(requestOrigin, env) {
+  const allowed = parseAllowedOrigins(env.ALLOWED_ORIGIN);
+  let allowOrigin = '*';
+  if (allowed && allowed.length > 0) {
+    // Multi-origin CORS pattern: echo the request origin when it's in the
+    // allowlist. Fall back to the first allowed entry when no Origin header
+    // is present (server-to-server / curl smoke tests).
+    allowOrigin = (requestOrigin && allowed.includes(requestOrigin))
+      ? requestOrigin
+      : allowed[0];
+  }
   return {
-    'Access-Control-Allow-Origin': env.ALLOWED_ORIGIN || '*',
+    'Access-Control-Allow-Origin': allowOrigin,
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
     'Access-Control-Allow-Headers': '*',
     'Access-Control-Max-Age': '86400',
   };
-}
-
-function isOriginAllowed(env, origin) {
-  if (!env.ALLOWED_ORIGIN) return true;  // permissive default
-  return origin === env.ALLOWED_ORIGIN;
 }
 
 async function handleRequest(request, env) {
@@ -100,7 +136,7 @@ async function handleRequest(request, env) {
   if (request.method === 'OPTIONS') {
     return new Response(null, {
       status: 204,
-      headers: corsHeaders(env),
+      headers: corsHeaders(origin, env),
     });
   }
 
@@ -141,7 +177,7 @@ async function handleRequest(request, env) {
 
   // Build response with CORS headers
   const headers = {
-    ...corsHeaders(env),
+    ...corsHeaders(origin, env),
     'Content-Type': res.headers.get('Content-Type') ?? 'application/json',
   };
   return new Response(res.body, {

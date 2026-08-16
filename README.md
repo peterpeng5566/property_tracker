@@ -56,7 +56,7 @@ wrangler deploy docs/workers/yahoo-proxy.mjs --name yahoo-proxy --compatibility-
 
 Wrangler prints the URL: `https://yahoo-proxy.YOURACCOUNT.workers.dev`.
 
-**3. Lock origin (recommended):** create a `wrangler.toml` (gitignored) in the repo root:
+**3. Lock origin (recommended):** create a `wrangler.toml` (gitignored) in the repo root. Use [`wrangler.toml.example`](wrangler.toml.example) as the template:
 
 ```toml
 name = "yahoo-proxy"
@@ -64,7 +64,12 @@ main = "docs/workers/yahoo-proxy.mjs"
 compatibility_date = "2025-01-01"
 
 [vars]
-ALLOWED_ORIGIN = "http://localhost:8000"   # or your production origin
+# Multiple origins supported: TOML array (shown) or comma-separated string.
+ALLOWED_ORIGIN = [
+  "http://localhost:8000",       # dev server default
+  "https://YOURNAME.github.io",  # GitHub Pages — replace with your GitHub username
+  # "https://your.domain",        # add when using a custom domain
+]
 ```
 
 Then redeploy with `wrangler deploy` (no flags needed — wrangler reads the toml).
@@ -75,6 +80,8 @@ Then redeploy with `wrangler deploy` (no flags needed — wrangler reads the tom
 cp config.js.example config.js
 # Edit config.js, paste your Worker URL into yahooProxyUrl
 ```
+
+The committed [`config.js`](config.js) already has the maintainer's deployed Worker URL as a working default — only override this if you deploy your own Worker. Newcomers running the app as-is can skip this step entirely (the file is no longer gitignored).
 
 **5. Verify:** open `portfolio.html` via `./dev.sh`, click the **Refresh** button in the header. Prices should appear. DevTools Network tab should show N requests to your Worker URL.
 
@@ -92,7 +99,7 @@ If you prefer the dashboard UI over Wrangler CLI:
 2. **Create Worker**: left sidebar → **Workers & Pages** → **Create application** → **Create Worker** → name it `yahoo-proxy` → **Deploy**.
 3. **Paste code**: click **Edit Code** → select all → delete → paste the entire contents of [`docs/workers/yahoo-proxy.mjs`](docs/workers/yahoo-proxy.mjs) → **Save and Deploy**.
 4. **Copy URL** from the dashboard. It looks like `https://yahoo-proxy.YOURACCOUNT.workers.dev`.
-5. **(Optional but recommended) Lock origin**: dashboard → your Worker → **Settings** → **Variables** → add variable `ALLOWED_ORIGIN` = your app's origin (e.g. `http://localhost:8000` for dev, `https://YOURNAME.github.io` for production).
+5. **(Optional but recommended) Lock origin**: dashboard → your Worker → **Settings** → **Variables** → add variable `ALLOWED_ORIGIN` = your app's origin. Comma-separated for multiple origins, e.g. `http://localhost:8000,https://YOURNAME.github.io` for dev + GitHub Pages.
 6. **Configure app**: copy `config.js.example` to `config.js` (the file is gitignored). Paste your Worker URL into `yahooProxyUrl`.
 
 ⚠️ **Known dashboard editor issues**:

@@ -12,7 +12,9 @@
 // Test cases (7 total, in the order specified by ticket 02):
 //   1. 200 OK response forwarding with full body intact
 //   2. OPTIONS preflight returns 204 with CORS headers
-//   3. Origin allowlist: allowed, denied, unset (default '*')
+//   3. Origin allowlist: single allowed, denied, unset (default '*'),
+//      multi-origin as comma-separated string, multi-origin as TOML array,
+//      multi-origin denial, and no-Origin-header fallback to first entry.
 //   4. Host allowlist: query1.finance.yahoo.com ✓, fc.yahoo.com ✓, others ✗
 //   5. Missing ?url= returns 400
 //   6. Cookie bootstrap failure (fetch rejects) returns 500
@@ -120,19 +122,20 @@ test('worker: OPTIONS preflight returns 204 with CORS headers', async () => {
 });
 
 // ===== Test 3: Origin allowlist =====
-test('worker: origin allowlist — allowed, denied, unset (default *)', async () => {
+test('worker: origin allowlist — single, denied, unset, multi (string + array)', async () => {
   resetCache();
   mockFetch({
     'https://fc.yahoo.com/': COOKIE_OK(),
     [CHART_URL]: CHART_OK(),
   });
 
-  // 3a. Allowed origin → 200
+  // 3a. Single allowed origin → 200, header echoes the origin
   const req1 = makeRequest(`${PROXY_BASE}/?url=${encodeURIComponent(CHART_URL)}`, {
     origin: 'http://localhost:8000',
   });
   const res1 = await worker.fetch(req1, { ALLOWED_ORIGIN: 'http://localhost:8000' });
   assert.equal(res1.status, 200);
+  assert.equal(res1.headers.get('Access-Control-Allow-Origin'), 'http://localhost:8000');
 
   // 3b. Denied origin → 403
   const req2 = makeRequest(`${PROXY_BASE}/?url=${encodeURIComponent(CHART_URL)}`, {
@@ -148,6 +151,62 @@ test('worker: origin allowlist — allowed, denied, unset (default *)', async ()
   const res3 = await worker.fetch(req3, {});
   assert.equal(res3.status, 200);
   assert.equal(res3.headers.get('Access-Control-Allow-Origin'), '*');
+
+  // 3d. Multi-origin as comma-separated string — each allowed origin returns 200
+  const multiStr = 'http://localhost:8000,https://peterpeng5566.github.io';
+  for (const origin of ['http://localhost:8000', 'https://peterpeng5566.github.io']) {
+    resetCache();
+    mockFetch({
+      'https://fc.yahoo.com/': COOKIE_OK(),
+      [CHART_URL]: CHART_OK(),
+    });
+    const req = makeRequest(`${PROXY_BASE}/?url=${encodeURIComponent(CHART_URL)}`, { origin });
+    const res = await worker.fetch(req, { ALLOWED_ORIGIN: multiStr });
+    assert.equal(res.status, 200);
+    // Multi-origin CORS pattern: header echoes the request origin, not the
+    // first allowed entry. This is what lets browsers accept the response
+    // without wildcard+credentials footguns.
+    assert.equal(res.headers.get('Access-Control-Allow-Origin'), origin);
+  }
+
+  // 3e. Multi-origin as TOML array — same behavior as comma-separated string
+  const multiArr = ['http://localhost:8000', 'https://peterpeng5566.github.io'];
+  resetCache();
+  mockFetch({
+    'https://fc.yahoo.com/': COOKIE_OK(),
+    [CHART_URL]: CHART_OK(),
+  });
+  const req5 = makeRequest(`${PROXY_BASE}/?url=${encodeURIComponent(CHART_URL)}`, {
+    origin: 'https://peterpeng5566.github.io',
+  });
+  const res5 = await worker.fetch(req5, { ALLOWED_ORIGIN: multiArr });
+  assert.equal(res5.status, 200);
+  assert.equal(res5.headers.get('Access-Control-Allow-Origin'), 'https://peterpeng5566.github.io');
+
+  // 3f. Multi-origin denies an origin not in the list
+  resetCache();
+  mockFetch({
+    'https://fc.yahoo.com/': COOKIE_OK(),
+    [CHART_URL]: CHART_OK(),
+  });
+  const req6 = makeRequest(`${PROXY_BASE}/?url=${encodeURIComponent(CHART_URL)}`, {
+    origin: 'http://evil.example',
+  });
+  const res6 = await worker.fetch(req6, { ALLOWED_ORIGIN: multiArr });
+  assert.equal(res6.status, 403);
+
+  // 3g. Multi-origin with no Origin header (e.g. curl smoke test) falls back
+  // to the first allowed entry, not '*'. This is the documented behavior in
+  // the comment header of yahoo-proxy.mjs.
+  resetCache();
+  mockFetch({
+    'https://fc.yahoo.com/': COOKIE_OK(),
+    [CHART_URL]: CHART_OK(),
+  });
+  const req7 = new Request(`${PROXY_BASE}/?url=${encodeURIComponent(CHART_URL)}`, { method: 'GET' });
+  const res7 = await worker.fetch(req7, { ALLOWED_ORIGIN: multiArr });
+  assert.equal(res7.status, 200);
+  assert.equal(res7.headers.get('Access-Control-Allow-Origin'), 'http://localhost:8000');
 });
 
 // ===== Test 4: Host allowlist =====

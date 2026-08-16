@@ -1,8 +1,8 @@
 # Local scratch / wayfinder maps
 .scratch/
 
-# Per-user runtime config (Worker URL); copy config.js.example
-config.js
+# wrangler.toml — per-user Cloudflare Worker config (Worker name binds to your
+# account). Use wrangler.toml.example as the template; keep this file local.
 wrangler.toml
 
 # Wrangler local dev cache (miniflare state from `wrangler dev`)
