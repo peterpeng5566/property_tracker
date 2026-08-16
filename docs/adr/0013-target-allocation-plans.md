@@ -89,8 +89,14 @@ Per the AGENTS.md "Tests" rule and ADR 0010: this keeps the source of truth in t
 
 **Rejected**: optional `name` with a condition-derived fallback. Reasons:
 - The drift card header shows the rule's *name* (per ticket 03 grill, variant B + rule-name-only header); an empty name would render as a blank card header. The user has no idea what the rule says.
-- A condition-derived fallback ("the rule is `Sector=Tech`" → "Sector=Tech") would render the JSON-shaped condition as the visible label. That hides the user's intent behind a serialised shape and makes the card header fragile to condition changes.
+- A condition-derived fallback ("the rule is `Sector=Tech`` → "Sector=Tech") would render the JSON-shaped condition as the visible label. That hides the user's intent behind a serialised shape and makes the card header fragile to condition changes.
 - The required-name check is one line in `validateRule` and the pre-emptive editor affordance mirrors the existing "sum to 100%" pre-emption. Both are in the same UX family.
+
+### 11. Rebalance view (v1.8 cross-reference)
+
+**A plan rule gains an optional `target_weight_pct: number` field** (in `[0, 100]`, validated by `validateRule`). When set, the rule is *rebalance-eligible*: the v1.8 Rebalance advisor (`lib/rebalance.js`) consumes the active plan's rebalance-eligible rules and emits per-rule × per-matched-record candidate actions. When absent (or `null`), the rule remains a v1.4 drift-only rule — unchanged.
+
+The full rebalance design — within-leaf even-split, multi-rule co-collision as independent rows, per-region native currency for trade advice, baseline currency for total drift %, category-row builder as filter UI, schema stays at `'1.1'`, etc. — is documented in [ADR 0017 — Region-Aware Rebalance Advisor](0017-rebalance-advisor.md). This §11 is intentionally terse: ADR 0017 owns the rebalance design; ADR 0013 owns the Plan data model and drift math. v1.8 rebalance reuses Plan's `recordsMatchingRule` predicate and the per-record newer-wins sync path (ADR 0004 / 0016) without modification.
 
 ## Test count snapshot
 

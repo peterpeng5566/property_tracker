@@ -106,6 +106,97 @@ test('newPlan / newRule: each call returns a distinct id', () => {
   assert.notEqual(a.id, b.id);
 });
 
+// ---- validateRule: target_weight_pct (v1.8, ADR 0017 §1) ----
+// target_weight_pct is OPTIONAL on a rule. When set, it marks the rule
+// as rebalance-eligible and must be a finite number in [0, 100].
+// Missing / null / undefined → rule remains drift-only (existing v1.4
+// behaviour preserved). The lib does NOT cross-check distribute when
+// target_weight_pct is set; a drift-only rule can still have a valid
+// distribute field.
+
+test('validateRule: rule without target_weight_pct → valid (drift-only, existing behaviour)', () => {
+  const r = { name: 'TW', when: {}, distribute: { type: { stock: 100 } } };
+  const out = validateRule(r);
+  assert.equal(out.valid, true);
+});
+
+test('validateRule: target_weight_pct: 0 → valid (lower boundary)', () => {
+  const r = { name: 'TW', when: {}, distribute: { type: { stock: 100 } }, target_weight_pct: 0 };
+  const out = validateRule(r);
+  assert.equal(out.valid, true);
+  assert.deepEqual(out.errors, []);
+});
+
+test('validateRule: target_weight_pct: 100 → valid (upper boundary)', () => {
+  const r = { name: 'TW', when: {}, distribute: { type: { stock: 100 } }, target_weight_pct: 100 };
+  const out = validateRule(r);
+  assert.equal(out.valid, true);
+  assert.deepEqual(out.errors, []);
+});
+
+test('validateRule: target_weight_pct: 50.5 → valid (fractional accepted)', () => {
+  const r = { name: 'TW', when: {}, distribute: { type: { stock: 100 } }, target_weight_pct: 50.5 };
+  const out = validateRule(r);
+  assert.equal(out.valid, true);
+  assert.deepEqual(out.errors, []);
+});
+
+test('validateRule: target_weight_pct: null → valid (explicit null = not set)', () => {
+  // JSON null is semantically the same as missing; the lib treats it
+  // as "rule is not rebalance-eligible". Tests the JSON-roundtrip
+  // case where a field is explicitly nulled rather than deleted.
+  const r = { name: 'TW', when: {}, distribute: { type: { stock: 100 } }, target_weight_pct: null };
+  const out = validateRule(r);
+  assert.equal(out.valid, true);
+});
+
+test('validateRule: target_weight_pct: -10 → invalid (below 0)', () => {
+  const r = { name: 'TW', when: {}, distribute: { type: { stock: 100 } }, target_weight_pct: -10 };
+  const out = validateRule(r);
+  assert.equal(out.valid, false);
+  assert.ok(out.errors.some(e => /target_weight_pct/.test(e)));
+});
+
+test('validateRule: target_weight_pct: 110 → invalid (above 100)', () => {
+  const r = { name: 'TW', when: {}, distribute: { type: { stock: 100 } }, target_weight_pct: 110 };
+  const out = validateRule(r);
+  assert.equal(out.valid, false);
+  assert.ok(out.errors.some(e => /target_weight_pct/.test(e)));
+});
+
+test('validateRule: target_weight_pct: "50" → invalid (string rejected)', () => {
+  const r = { name: 'TW', when: {}, distribute: { type: { stock: 100 } }, target_weight_pct: '50' };
+  const out = validateRule(r);
+  assert.equal(out.valid, false);
+  assert.ok(out.errors.some(e => /target_weight_pct/.test(e)));
+});
+
+test('validateRule: target_weight_pct: NaN → invalid', () => {
+  const r = { name: 'TW', when: {}, distribute: { type: { stock: 100 } }, target_weight_pct: NaN };
+  const out = validateRule(r);
+  assert.equal(out.valid, false);
+  assert.ok(out.errors.some(e => /target_weight_pct/.test(e)));
+});
+
+test('validateRule: target_weight_pct: Infinity → invalid', () => {
+  const r = { name: 'TW', when: {}, distribute: { type: { stock: 100 } }, target_weight_pct: Infinity };
+  const out = validateRule(r);
+  assert.equal(out.valid, false);
+  assert.ok(out.errors.some(e => /target_weight_pct/.test(e)));
+});
+
+test('validateRule: bad target_weight_pct does not break distribute validation', () => {
+  // The target_weight_pct error should be reported IN ADDITION TO any
+  // distribute errors, not replacing them. The error contract is
+  // "rule is invalid, here are all the reasons".
+  const r = { name: '', when: {}, distribute: { type: { stock: 50, bond: 30 } }, target_weight_pct: 110 };
+  const out = validateRule(r);
+  assert.equal(out.valid, false);
+  assert.ok(out.errors.some(e => /target_weight_pct/.test(e)), 'has target_weight_pct error');
+  assert.ok(out.errors.some(e => /name/.test(e)), 'still reports missing name');
+  assert.ok(out.errors.some(e => /sum to 100/.test(e)), 'still reports bad distribute sum');
+});
+
 // ---- validateRule ----
 
 test('validateRule: good rule with sum=100 → valid', () => {

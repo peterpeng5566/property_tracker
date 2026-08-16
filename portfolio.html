@@ -2014,6 +2014,13 @@
      ticket 02 / drift report on Home, ticket 04) wraps these. -->
 <script src="lib/plan.js"></script>
 
+<!-- Rebalance advisor (lib/rebalance.js, v1.8 — ADR 0017) — pure candidate
+     list / total drift / execute-candidate helpers. Depends on Plan's
+     recordsMatchingRule (so loads AFTER plan.js) and on Format's toTWD /
+     fromTWD (so loads AFTER format.js, transitively via plan.js). The
+     Alpine shim (Rebalance page UI, ticket 02) wraps these. -->
+<script src="lib/rebalance.js"></script>
+
 <!-- Refresh state machine (lib/refresh.js) — retry / cancel / partial-success
      workflow. Pure functions used by tests/refresh.test.js. Self-contained —
      no deps on other lib globals (Yahoo/Format are injected at call site). -->

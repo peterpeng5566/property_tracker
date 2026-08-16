@@ -1056,6 +1056,66 @@ test('mergePortfolios: plans local deletion tombstone removes remote plan', () =
   assert.ok(out.deletions.some(d => d.target_id === 'p1'));
 });
 
+// --- target_weight_pct sync (v1.8, ADR 0017 §1) ---
+//
+// target_weight_pct is an additive sub-field of a plan rule (ADR 0009
+// §6). The merge unit is the *plan* (via mergeByIdWithDeletions); the
+// rule is a nested object, so the whole rule is replaced wholesale
+// when the plan's updated_at is newer — including the target_weight_pct
+// field. This is the same merge contract v1.4 established for any
+// rule sub-field (e.g. distribute weights, when filters). Tests pin
+// the contract that two devices editing target_weight_pct produce the
+// newer-wins result without any new merge code.
+
+test('mergePortfolios: plans rule target_weight_pct newer wins (v1.8, ADR 0017)', () => {
+  const planWithRule = (pct, updated_at) => P('p1', {
+    name: 'Targets',
+    updated_at,
+    rules: [{ id: 'r1', name: 'Stocks', target_weight_pct: pct,
+              when: {}, distribute: { type: { stock: 100 } } }],
+  });
+  const local = { plans: [planWithRule(30, '2024-01-01T00:00:00Z')], holdings: [] };
+  const remote = { plans: [planWithRule(40, '2024-02-01T00:00:00Z')], holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.plans.length, 1);
+  assert.equal(out.plans[0].rules[0].target_weight_pct, 40, 'newer remote wins');
+});
+
+test('mergePortfolios: plans rule target_weight_pct reverse direction (local newer wins)', () => {
+  const planWithRule = (pct, updated_at) => P('p1', {
+    name: 'Targets',
+    updated_at,
+    rules: [{ id: 'r1', name: 'Stocks', target_weight_pct: pct,
+              when: {}, distribute: { type: { stock: 100 } } }],
+  });
+  const local = { plans: [planWithRule(40, '2024-02-01T00:00:00Z')], holdings: [] };
+  const remote = { plans: [planWithRule(30, '2024-01-01T00:00:00Z')], holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.plans.length, 1);
+  assert.equal(out.plans[0].rules[0].target_weight_pct, 40, 'newer local wins');
+});
+
+test('mergePortfolios: plans pre-v1.8 (no target_weight_pct) merge with v1.8 → field survives', () => {
+  // A v1.7 plan has rules without target_weight_pct (drift-only).
+  // A v1.8 plan has rules with target_weight_pct set. When the v1.8
+  // plan is newer, the merge must preserve target_weight_pct on the
+  // surviving rule (not drop the field).
+  const local = { plans: [P('p1', {
+    name: 'Pre',
+    updated_at: '2024-01-01T00:00:00Z',
+    rules: [{ id: 'r1', name: 'Stocks', when: {}, distribute: { type: { stock: 100 } } }],
+  })], holdings: [] };
+  const remote = { plans: [P('p1', {
+    name: 'Post',
+    updated_at: '2024-02-01T00:00:00Z',
+    rules: [{ id: 'r1', name: 'Stocks', target_weight_pct: 35,
+              when: {}, distribute: { type: { stock: 100 } } }],
+  })], holdings: [] };
+  const out = mergePortfolios(local, remote, 'd');
+  assert.equal(out.plans[0].rules[0].target_weight_pct, 35,
+    'newer v1.8 rule wins; target_weight_pct survives');
+});
+
 test('mergePortfolios: plans remote deletion tombstone propagates to local', () => {
   const local = { plans: [P('p1', { name: 'local-plan' })], holdings: [] };
   const remote = {
