@@ -100,7 +100,8 @@ If you prefer the dashboard UI over Wrangler CLI:
 3. **Paste code**: click **Edit Code** → select all → delete → paste the entire contents of [`docs/workers/yahoo-proxy.mjs`](docs/workers/yahoo-proxy.mjs) → **Save and Deploy**.
 4. **Copy URL** from the dashboard. It looks like `https://yahoo-proxy.YOURACCOUNT.workers.dev`.
 5. **(Optional but recommended) Lock origin**: dashboard → your Worker → **Settings** → **Variables** → add variable `ALLOWED_ORIGIN` = your app's origin. Comma-separated for multiple origins, e.g. `http://localhost:8000,https://YOURNAME.github.io` for dev + GitHub Pages.
-6. **Configure app**: copy `config.js.example` to `config.js` (the file is gitignored). Paste your Worker URL into `yahooProxyUrl`.
+6. **(Optional but recommended) Rate limit** (see ADR 0019): if you copy `wrangler.toml.example` → `wrangler.toml` and `wrangler deploy`, the Worker picks up the `RATE_LIMITER` binding (100 req / 60s per IP). Without it, the check is a no-op and your Worker is exposed to anyone who learns the URL.
+7. **Configure app**: copy `config.js.example` to `config.js` (the file is gitignored). Paste your Worker URL into `yahooProxyUrl`.
 
 ⚠️ **Known dashboard editor issues**:
 - Pasted code sometimes appears doubled or partially missing — verify after paste.

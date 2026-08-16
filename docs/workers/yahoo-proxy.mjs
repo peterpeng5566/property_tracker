@@ -44,6 +44,20 @@
 //   - With ALLOWED_ORIGIN set (e.g. to "http://localhost:8000"), only those
 //     origins are allowed. Recommended for production.
 //
+// RATE LIMIT:
+//   - Optional. If a `[[ratelimits]]` binding named RATE_LIMITER is declared
+//     in wrangler.toml, the Worker enforces N requests per 60 seconds per
+//     CF-Connecting-IP (configurable in wrangler.toml — adjust `limit` to
+//     trade legitimate headroom against abuse-resistance). 100 req/60s is
+//     the default in wrangler.toml.example.
+//   - Without the binding (dev mode, or before this was added), the check is
+//     a no-op.
+//   - On binding failure (e.g. Cloudflare side error), the check fails OPEN
+//     (allows the request). A quota-protection outage would be worse than
+//     no quota protection.
+//   - 429 responses still carry CORS headers so browsers surface a useful
+//     error instead of an opaque CORS failure.
+//
 // ENDPOINT NOTE:
 //   This Worker uses Yahoo's /v8/finance/chart/<SYMBOL> endpoint, NOT the
 //   /v7/finance/quote batch endpoint. As of 2025, Yahoo locked the quote
@@ -124,12 +138,43 @@ function corsHeaders(requestOrigin, env) {
   };
 }
 
+// Optional per-IP rate limit. Returns true if the request should be blocked
+// with 429; false if it should proceed (either under the limit, or no
+// binding configured, or binding itself errored).
+//
+// Wrangler declares the binding in [[ratelimits]] and provisions the
+// namespace on first deploy — see wrangler.toml.example.
+async function isRateLimited(request, env) {
+  if (!env.RATE_LIMITER) return false;  // No binding — dev mode or pre-config
+  const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+  try {
+    const { success } = await env.RATE_LIMITER.limit({ key: clientIP });
+    return !success;
+  } catch (e) {
+    // Fail open on binding errors. The header comment above documents the
+    // trade-off: a quota-protection outage would be worse than no quota
+    // protection.
+    return false;
+  }
+}
+
 async function handleRequest(request, env) {
   const origin = request.headers.get('origin') || '';
 
   // Origin allowlist
   if (!isOriginAllowed(env, origin)) {
     return new Response('forbidden', { status: 403 });
+  }
+
+  // Per-IP rate limit (Cloudflare Workers Rate Limiting binding, optional).
+  // Runs after the origin check so a denied origin can't burn through a
+  // legit user's bucket via cross-origin spam. 429 carries CORS headers so
+  // the browser surfaces a clean error instead of a CORS failure.
+  if (await isRateLimited(request, env)) {
+    return new Response('rate limited', {
+      status: 429,
+      headers: corsHeaders(origin, env),
+    });
   }
 
   // CORS preflight

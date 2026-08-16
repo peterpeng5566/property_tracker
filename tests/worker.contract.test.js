@@ -9,7 +9,7 @@
 // Node treats it as ESM) and we resolve its absolute path and convert to a
 // file:// URL for the dynamic import.
 //
-// Test cases (7 total, in the order specified by ticket 02):
+// Test cases (8 total, in the order specified by ticket 02 + 04):
 //   1. 200 OK response forwarding with full body intact
 //   2. OPTIONS preflight returns 204 with CORS headers
 //   3. Origin allowlist: single allowed, denied, unset (default '*'),
@@ -19,6 +19,9 @@
 //   5. Missing ?url= returns 400
 //   6. Cookie bootstrap failure (fetch rejects) returns 500
 //   7. Cookie cache hit on second request — fc.yahoo.com fetched exactly once
+//   8. Per-IP rate limit (binding returned success=true → 200, success=false
+//      → 429 with CORS headers, no binding → 200 no-op, binding throws → 200
+//      fail open).
 
 'use strict';
 
@@ -289,4 +292,72 @@ test('worker: cookie cache hit — fc.yahoo.com fetched exactly once across two 
   assert.equal(res2.status, 200);
 
   assert.equal(fcFetches, 1, 'fc.yahoo.com should be fetched exactly once across two requests');
+});
+
+// ===== Test 8: Per-IP rate limit =====
+test('worker: rate limit — success=true → 200, success=false → 429, no binding → 200, binding throws → 200', async () => {
+  // 8a. Binding says success=true → request proceeds
+  resetCache();
+  mockFetch({
+    'https://fc.yahoo.com/': COOKIE_OK(),
+    [CHART_URL]: CHART_OK(),
+  });
+  const okLimiter = { limit: async () => ({ success: true }) };
+  const req8a = makeRequest(`${PROXY_BASE}/?url=${encodeURIComponent(CHART_URL)}`, {
+    origin: 'http://localhost:8000',
+  });
+  const res8a = await worker.fetch(req8a, {
+    ALLOWED_ORIGIN: 'http://localhost:8000',
+    RATE_LIMITER: okLimiter,
+  });
+  assert.equal(res8a.status, 200);
+  assert.equal(res8a.headers.get('Access-Control-Allow-Origin'), 'http://localhost:8000');
+
+  // 8b. Binding says success=false → 429 with CORS headers so the browser
+  // surfaces a clean error rather than a CORS failure.
+  const denyLimiter = { limit: async () => ({ success: false }) };
+  const req8b = makeRequest(`${PROXY_BASE}/?url=${encodeURIComponent(CHART_URL)}`, {
+    origin: 'http://localhost:8000',
+  });
+  const res8b = await worker.fetch(req8b, {
+    ALLOWED_ORIGIN: 'http://localhost:8000',
+    RATE_LIMITER: denyLimiter,
+  });
+  assert.equal(res8b.status, 429);
+  // 429 must carry CORS headers — without them the browser hides the body
+  // and the user only sees "Failed to fetch" (one of the harder-to-debug
+  // production failures to track down).
+  assert.equal(res8b.headers.get('Access-Control-Allow-Origin'), 'http://localhost:8000');
+
+  // 8c. No binding on env (dev mode, or before rate limit was added) →
+  // request proceeds; the check is a no-op so the existing local dev
+  // workflow stays unbroken.
+  resetCache();
+  mockFetch({
+    'https://fc.yahoo.com/': COOKIE_OK(),
+    [CHART_URL]: CHART_OK(),
+  });
+  const req8c = makeRequest(`${PROXY_BASE}/?url=${encodeURIComponent(CHART_URL)}`, {
+    origin: 'http://localhost:8000',
+  });
+  const res8c = await worker.fetch(req8c, { ALLOWED_ORIGIN: 'http://localhost:8000' });
+  assert.equal(res8c.status, 200);
+
+  // 8d. Binding throws (e.g. transient Cloudflare side error) → fails open
+  // rather than 500. A quota-protection outage would be worse than no
+  // quota protection; documented in the header comment of yahoo-proxy.mjs.
+  resetCache();
+  mockFetch({
+    'https://fc.yahoo.com/': COOKIE_OK(),
+    [CHART_URL]: CHART_OK(),
+  });
+  const brokenLimiter = { limit: async () => { throw new Error('rate limit binding down'); } };
+  const req8d = makeRequest(`${PROXY_BASE}/?url=${encodeURIComponent(CHART_URL)}`, {
+    origin: 'http://localhost:8000',
+  });
+  const res8d = await worker.fetch(req8d, {
+    ALLOWED_ORIGIN: 'http://localhost:8000',
+    RATE_LIMITER: brokenLimiter,
+  });
+  assert.equal(res8d.status, 200);
 });
