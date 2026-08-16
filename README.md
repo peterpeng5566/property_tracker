@@ -8,6 +8,7 @@ A personal net-worth tracker. Tracks stocks, cash, and debts with manual snapsho
 - **v1.1–v1.4** — pricing refresh + migration safety net (v1.1–v1.2), true-delete + automatic backups (v1.3), target-allocation plans + drift (v1.4).
 - **v1.5** — Snapshot UI landed. 5th nav page (Snapshots) with list / detail (drill-in to holdings/cash/debts with frozen currency + orphan handling) / compare 2 snapshots (delta view) / trend chart (inline SVG sparkline with 2 polylines). Manual-only; snapshot cap (default 365, FIFO, user-configurable, `0 = unlimited`). See [`docs/adr/0014-snapshot-ui.md`](docs/adr/0014-snapshot-ui.md).
 - **v1.6** — Manual record ordering landed. Per-collection ID array (`data.holdings_order` / `cash_accounts_order` / `debts_order`); ↑/↓ buttons on the Holdings / Cash / Debts pages with ARIA-correct disabled states. Lazy-write semantics (the array is absent until first reordering); sync-friendly prefer-remote merge (last-synced-wins on offline conflict). Categories and Plans pages are explicitly out of scope. See [`docs/adr/0015-record-ordering.md`](docs/adr/0015-record-ordering.md).
+- **v1.7** — Categories + Settings sync merge landed. Categories gain per-record newer-wins merge with tombstone propagation (replaces the pre-v1.7 replace-from-remote limitation that silently wiped locally-added categories on stale pulls). Settings gain object-level newer-wins with edit-path-only stamps. Backward-compatible: no schema version bump; pre-v1.7 portfolios are lazy-backfilled on first load. See [`docs/adr/0016-categories-and-settings-sync.md`](docs/adr/0016-categories-and-settings-sync.md).
 
 ## Run it
 
@@ -139,7 +140,7 @@ _Last updated at v1.6 close-out._ The remaining open items are in the per-versio
 ## Docs
 
 - [CONTEXT.md](CONTEXT.md) — domain glossary
-- [docs/adr/](docs/adr/) — architectural decisions (0001–0015)
+- [docs/adr/](docs/adr/) — architectural decisions (0001–0016)
 - [docs/data-file-format.md](docs/data-file-format.md) — JSON file format spec
 - [docs/google-oauth-setup.md](docs/google-oauth-setup.md) — Google Cloud Console setup
 - [docs/agents/](docs/agents/) — agent / workflow conventions
