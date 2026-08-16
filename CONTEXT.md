@@ -41,6 +41,14 @@ A state a holding can be in when it has been delisted or otherwise retired. Inac
 **Do not use as a soft-delete mechanism.** True delete is a separate operation recorded in the *Deletion log* (see `docs/adr/0011-true-delete-deletion-log.md`). The intermediate fix that conflated Delete with Inactive violated this glossary and was superseded; the "Avoid: Deleted" warning above is the correct shape.
 _Avoid_: Deleted (sounds destructive), archived (overloaded)
 
+**Manual order**:
+A user-defined display sequence of records within a single collection (holdings, cash accounts, or debts). Stored as a `data.<collection>_order[]` array of record IDs; absent means fall back to insertion order. The user edits order via ↑/↓ buttons in the table; the system never auto-sorts. Pure helper `Order.applyOrder` resolves an order array against a record array, defensively dropping stale IDs and appending leftovers. Per-collection (3 arrays: `holdings_order`, `cash_accounts_order`, `debts_order`). Lazy-written: only materialized when the user first reorders. See ADR 0015.
+_Avoid_: display order (implies read-only), sort order (sounds automatic), record order (overloaded)
+
+**Order list**:
+The `data.<collection>_order[]` array of record IDs that encodes *Manual order*. Per-collection (3 arrays: `holdings_order`, `cash_accounts_order`, `debts_order`). Lazy-written: only materialized when the user first reorders. Sync semantics: prefer-remote (last-synced-wins on offline conflict). See ADR 0015.
+_Avoid_: sort key (technical), index list (overloaded), position array (sounds numeric)
+
 ## Money
 
 **Native currency**:

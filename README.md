@@ -7,6 +7,7 @@ A personal net-worth tracker. Tracks stocks, cash, and debts with manual snapsho
 - **v1.0** — sync complete. 4 pages (Home, Holdings, Cash & Debts, Categories). Import / Export / Sync I/O. Live as of 2026-08-09 (real client_id + Google Drive smoke test passed).
 - **v1.1–v1.4** — pricing refresh + migration safety net (v1.1–v1.2), true-delete + automatic backups (v1.3), target-allocation plans + drift (v1.4).
 - **v1.5** — Snapshot UI landed. 5th nav page (Snapshots) with list / detail (drill-in to holdings/cash/debts with frozen currency + orphan handling) / compare 2 snapshots (delta view) / trend chart (inline SVG sparkline with 2 polylines). Manual-only; snapshot cap (default 365, FIFO, user-configurable, `0 = unlimited`). See [`docs/adr/0014-snapshot-ui.md`](docs/adr/0014-snapshot-ui.md).
+- **v1.6** — Manual record ordering landed. Per-collection ID array (`data.holdings_order` / `cash_accounts_order` / `debts_order`); ↑/↓ buttons on the Holdings / Cash / Debts pages with ARIA-correct disabled states. Lazy-write semantics (the array is absent until first reordering); sync-friendly prefer-remote merge (last-synced-wins on offline conflict). Categories and Plans pages are explicitly out of scope. See [`docs/adr/0015-record-ordering.md`](docs/adr/0015-record-ordering.md).
 
 ## Run it
 
@@ -130,15 +131,15 @@ For the on-disk schema (fields, types, migration rules), see [docs/data-file-for
 
 ## Roadmap
 
-_Last updated at v1.5 close-out._ The remaining open items are in the per-version issue trackers under `.scratch/`:
+_Last updated at v1.6 close-out._ The remaining open items are in the per-version issue trackers under `.scratch/`:
 
 - `.scratch/v1.4-target-allocation-plans/map.md` — leaves "snapshot + active plan drift history" as open fog (a future effort, not on a version).
-- `.scratch/v1.5-snapshot-ui/map.md` — v1.5 close-out ticket (`06`) covers ADR + glossary + smoke. All v1.5 UI work is done.
+- `.scratch/v1.6-record-ordering/map.md` — v1.6 ships with 4 resolved tickets (data + lib + 3 UI pages + ADR/glossary/smoke). Categories / Plans reorder is deferred (ADR 0015 §5). Drag-and-drop is deferred (open until user complaint).
 
 ## Docs
 
 - [CONTEXT.md](CONTEXT.md) — domain glossary
-- [docs/adr/](docs/adr/) — architectural decisions (0001–0014)
+- [docs/adr/](docs/adr/) — architectural decisions (0001–0015)
 - [docs/data-file-format.md](docs/data-file-format.md) — JSON file format spec
 - [docs/google-oauth-setup.md](docs/google-oauth-setup.md) — Google Cloud Console setup
 - [docs/agents/](docs/agents/) — agent / workflow conventions

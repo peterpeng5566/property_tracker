@@ -836,3 +836,101 @@ test('Cash & Debts: cross-section independence \u2014 reordering cash does NOT c
   const cashOrder2 = await readStoredOrder(page, 'cash_accounts_order');
   expect(cashOrder2).toEqual(['c-2', 'c-1', 'c-3']);
 });
+
+// --- T04 scenarios --------------------------------------------------------
+// T04 closes out v1.6 with two integration-level scenarios that mirror
+// what would happen in production: (a) a remote-portfolio merge prefers
+// the remote order array (per ADR 0015 §4), and (b) a v1.5-era backup
+// that has no *_order arrays still renders + can be reordered (lazy-write
+// preserved).
+
+test('T04: multi-device sync (prefer-remote wins) — remote holdings_order overwrites local on merge', async ({ page }) => {
+  // Two devices, each with the same holdings but different order arrays.
+  // Device A: [h-1, h-2, h-3]. Device B: [h-3, h-2, h-1].
+  // Device B pulls from A → merge → B's holdings_order becomes [h-1, h-2, h-3].
+  // The browser exposes Sync.mergePortfolios via the lib/sync.js IIFE
+  // (root.Sync = api), so we can simulate the pull without mocking the
+  // Drive layer.
+  await page.addInitScript(INIT_SCRIPT);
+  await page.goto('http://localhost:8000/portfolio.html');
+  await page.waitForFunction(() => !!window.Alpine);
+
+  // Local = device B's current state (already in localStorage via the
+  // addInitScript above). Remote = device A's push.
+  const merged = await page.evaluate(() => {
+    const localRaw = localStorage.getItem('property_tracker_portfolio_v1');
+    const local = JSON.parse(localRaw);
+    const remote = {
+      ...local,
+      // Device A's reordering: same holdings, but A wants them in A's order.
+      holdings_order: ['h-3', 'h-2', 'h-1'],
+    };
+    const merged = window.Sync.mergePortfolios(local, remote, 'local-device');
+    return {
+      local_holdings_order: local.holdings_order,
+      remote_holdings_order: remote.holdings_order,
+      merged_holdings_order: merged.holdings_order,
+      merged_holdings_count: merged.holdings.length,
+    };
+  });
+
+  // Sanity: local has the original order; remote has the inverted order.
+  expect(merged.local_holdings_order).toEqual(['h-1', 'h-2', 'h-3']);
+  expect(merged.remote_holdings_order).toEqual(['h-3', 'h-2', 'h-1']);
+
+  // Prefer-remote wins: the merged result has remote's order.
+  expect(merged.merged_holdings_order).toEqual(['h-3', 'h-2', 'h-1']);
+  // Records themselves are merged unchanged (no edit on either side).
+  expect(merged.merged_holdings_count).toBe(3);
+});
+
+test('T04: v1.5 backup compatibility (lazy-write) — pre-v1.6 portfolio renders + reorders cleanly', async ({ page }) => {
+  // A v1.5 backup has holdings, cash, debts, snapshots, settings.snapshot_cap,
+  // but NO *_order arrays. The Holdings table must render in insertion
+  // order (no error) and the first ↑/↓ click must materialize the array.
+  const v15Backup = {
+    // Strip all *_order arrays to simulate a v1.5 backup.
+    ...PORTFOLIO_FIXTURE,
+    holdings_order: undefined,
+    cash_accounts_order: undefined,
+    debts_order: undefined,
+  };
+  delete v15Backup.holdings_order;
+  delete v15Backup.cash_accounts_order;
+  delete v15Backup.debts_order;
+
+  await page.addInitScript(`
+    localStorage.setItem(${JSON.stringify(STORAGE_KEY)}, JSON.stringify(${JSON.stringify(v15Backup)}));
+  `);
+  await page.goto('http://localhost:8000/portfolio.html');
+  await page.waitForFunction(() => !!window.Alpine);
+
+  // Confirm pre-v1.6 state: no *_order arrays.
+  expect(await readStoredOrder(page, 'holdings_order')).toBeUndefined();
+  expect(await readStoredOrder(page, 'cash_accounts_order')).toBeUndefined();
+  expect(await readStoredOrder(page, 'debts_order')).toBeUndefined();
+
+  // Render the Holdings page; the table should render in insertion order
+  // without error (no stale-id blow-up, no missing-key crash).
+  await gotoHoldingsPage(page);
+  expect(await readRenderedHoldingsOrder(page)).toEqual(['AAPL', 'GOOG', 'MSFT']);
+
+  // First click materializes the array (lazy-write preserved on load).
+  await page.click('[data-testid="holdings-move-up-h-2"]');
+  await page.waitForFunction(
+    () => {
+      const raw = localStorage.getItem('property_tracker_portfolio_v1');
+      if (!raw) return false;
+      const d = JSON.parse(raw);
+      return Array.isArray(d.holdings_order) && d.holdings_order[0] === 'h-2';
+    },
+    { timeout: 5000 }
+  );
+
+  const order = await readStoredOrder(page, 'holdings_order');
+  expect(order).toEqual(['h-2', 'h-1', 'h-3']);
+  // Cash + debts arrays remain absent (cross-collection independence).
+  expect(await readStoredOrder(page, 'cash_accounts_order')).toBeUndefined();
+  expect(await readStoredOrder(page, 'debts_order')).toBeUndefined();
+});
+
