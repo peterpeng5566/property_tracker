@@ -272,6 +272,13 @@
               :class="currentPage === 'backups' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
               class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
               x-text="t('nav.backups')"></button>
+      <!-- Rebalance tab (v1.8 — ADR 0017, ticket 02). Reads the active plan
+           and renders per-rule × per-matched-record candidate actions. -->
+      <button @click="currentPage = 'rebalance'"
+              :class="currentPage === 'rebalance' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
+              class="px-4 py-3 text-sm font-medium border-b-2 transition-colors"
+              data-testid="nav-rebalance"
+              x-text="t('nav.rebalance')"></button>
     </div>
   </nav>
 
@@ -951,6 +958,22 @@
                    data-testid="plan-rule-name-error"></p>
               </div>
 
+              <!-- v1.8 — target_weight_pct makes the rule rebalance-eligible
+                   (ADR 0017 §1). Optional; empty keeps the rule drift-only
+                   (v1.4 behaviour preserved). -->
+              <div class="mb-4">
+                <label class="block text-xs text-slate-500 mb-1"
+                       x-text="t('plan.editor.targetWeight')"></label>
+                <input type="number"
+                       :value="rule.target_weight_pct"
+                       @input="setRuleTargetWeight(rIdx, $event.target.value)"
+                       data-testid="plan-rule-target-weight"
+                       placeholder="— %"
+                       min="0" max="100" step="0.5"
+                       class="text-sm w-32 border border-slate-200 focus:border-slate-400 focus:outline-none px-3 py-2 rounded-md tabular text-right">
+                <span class="text-xs text-slate-400 ml-1">%</span>
+              </div>
+
               <!-- when -->
               <div class="mb-4">
                 <p class="text-xs text-slate-500 mb-2" x-text="t('plan.editor.ruleWhen')"></p>
@@ -1048,6 +1071,152 @@
         </div>
       </section>
       </template>
+    </div>
+
+    <!-- Rebalance page (v1.8 — ADR 0017, ticket 02).
+         Reads the active plan, calls Rebalance.computeCandidates
+         (lib/rebalance.js), and renders per-rule × per-matched-record
+         candidate rows with the 52-week position indicator. Read-only
+         advice; users edit Holdings / Cash pages to act on the rows. -->
+    <div x-show="currentPage === 'rebalance'" data-testid="rebalance-page" x-cloak>
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold" x-text="t('nav.rebalance')"></h2>
+      </div>
+
+      <!-- Empty state: no active plan. -->
+      <div x-show="!activePlan()"
+           data-testid="rebalance-no-plan"
+           class="bg-white border border-dashed border-slate-300 rounded-2xl p-8 text-center">
+        <p class="text-sm text-slate-600 mb-3" x-text="t('rebalance.noPlan.title')"></p>
+        <p class="text-xs text-slate-500 mb-4" x-text="t('rebalance.noPlan.subtitle')"></p>
+        <button @click="currentPage = 'plans'"
+                class="text-sm bg-slate-900 text-white px-4 py-2 rounded-md hover:bg-slate-800 transition-colors"
+                x-text="t('rebalance.noPlan.cta')"></button>
+      </div>
+
+      <!-- Main content: active plan exists. -->
+      <div x-show="activePlan()">
+        <!-- Page header: total drift + sum of rule weights + active plan. -->
+        <div class="bg-white border border-slate-200 rounded-2xl p-4 mb-4">
+          <div class="flex items-center gap-6 text-sm">
+            <div>
+              <span class="text-xs text-slate-500" x-text="t('rebalance.header.activePlan')"></span>
+              <span class="ml-2 font-medium" x-text="activePlan() ? activePlan().name : ''"></span>
+            </div>
+            <div data-testid="rebalance-total-drift">
+              <span class="text-xs text-slate-500" x-text="t('rebalance.header.totalDrift')"></span>
+              <span class="ml-2 text-base font-semibold"
+                    x-text="getRebalanceTotalDrift().drift === 0 ? '0' : getRebalanceTotalDrift().drift.toFixed(0)"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Empty state: active plan exists but no eligible rules. -->
+        <div x-show="activePlan() && !hasRebalanceEligibleRules()"
+             data-testid="rebalance-no-eligible-rules"
+             class="bg-white border border-dashed border-slate-300 rounded-2xl p-8 text-center">
+          <p class="text-sm text-slate-600 mb-3" x-text="t('rebalance.noEligibleRules.title')"></p>
+          <p class="text-xs text-slate-500 mb-4" x-text="t('rebalance.noEligibleRules.subtitle')"></p>
+          <button @click="currentPage = 'plans'"
+                  class="text-sm bg-slate-900 text-white px-4 py-2 rounded-md hover:bg-slate-800 transition-colors"
+                  x-text="t('rebalance.noEligibleRules.cta')"></button>
+        </div>
+
+        <!-- Per-rule sections (one per eligible rule). -->
+        <div x-show="hasRebalanceEligibleRules()">
+          <template x-for="ruleCandidate in getRebalanceCandidates()" :key="ruleCandidate.ruleId">
+            <div class="bg-white border border-slate-200 rounded-2xl p-4 mb-4"
+                 :data-testid="'rebalance-rule-section'"
+                 :data-rule-id="ruleCandidate.ruleId">
+              <!-- Rule section header -->
+              <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center gap-2">
+                  <span class="font-medium text-sm" x-text="ruleCandidate.ruleName"></span>
+                  <span class="text-xs text-slate-500"
+                        x-text="(ruleCandidate.targetWeightPct != null) ? ruleCandidate.targetWeightPct.toFixed(1) + '%' : ''"></span>
+                </div>
+                <div class="text-xs text-slate-500 flex items-center gap-4"
+                     x-data="{
+                       summary: getRebalanceSummaryText(ruleCandidate)
+                     }">
+                  <span>
+                    <span x-text="t('rebalance.ruleSection.currentValue')"></span>:
+                    <span class="text-slate-900" x-text="summary.current_str"></span>
+                  </span>
+                  <span>
+                    <span x-text="t('rebalance.ruleSection.targetValue')"></span>:
+                    <span class="text-slate-900" x-text="summary.target_str"></span>
+                  </span>
+                </div>
+              </div>
+
+              <!-- No matched records for this rule. -->
+              <div x-show="!ruleCandidate.matchedRecords || ruleCandidate.matchedRecords.length === 0"
+                   data-testid="rebalance-no-matched"
+                   class="text-xs text-slate-400 italic py-4">
+                <p x-text="t('rebalance.noMatched.title')"></p>
+                <p class="mt-1" x-text="t('rebalance.noMatched.subtitle')"></p>
+              </div>
+
+              <!-- Candidate rows table. -->
+              <div x-show="ruleCandidate.matchedRecords && ruleCandidate.matchedRecords.length > 0"
+                   class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="text-xs text-slate-500 border-b border-slate-200">
+                      <th class="text-left px-3 py-2 font-medium" x-text="ruleCandidate.kind === 'cash' ? 'Account' : 'Ticker'"></th>
+                      <th class="text-right px-3 py-2 font-medium" x-text="t('rebalance.candidate.currentValue')"></th>
+                      <th class="text-right px-3 py-2 font-medium" x-show="ruleCandidate.kind === 'holding'"
+                          x-text="t('rebalance.candidate.currentPrice')"></th>
+                      <th class="text-center px-3 py-2 font-medium" x-show="ruleCandidate.kind === 'holding'">52W</th>
+                      <th class="text-right px-3 py-2 font-medium" x-text="t('rebalance.candidate.targetValue')"></th>
+                      <th class="text-right px-3 py-2 font-medium" x-text="t('rebalance.candidate.delta')"></th>
+                      <th class="text-left px-3 py-2 font-medium">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="record in ruleCandidate.matchedRecords" :key="record.recordId">
+                      <tr class="border-b border-slate-100 hover:bg-slate-50"
+                          :data-testid="'rebalance-rule-candidate-' + record.recordId">
+                        <td class="px-3 py-2">
+                          <span x-text="record.ticker || record.name || record.recordId"></span>
+                          <span class="text-xs text-slate-400 ml-1" x-text="record.currency"></span>
+                        </td>
+                        <td class="px-3 py-2 text-right tabular"
+                            x-text="formatAmountNative(record.currentValue, record.currency)"></td>
+                        <td class="px-3 py-2 text-right tabular"
+                            x-show="ruleCandidate.kind === 'holding'"
+                            x-text="record.currentPrice != null ? formatAmountNative(record.currentPrice, record.currency) : ''"></td>
+                        <td class="px-3 py-2 text-center" x-show="ruleCandidate.kind === 'holding'">
+                          <div class="week52-bar inline-block"
+                               x-show="record.high_52w != null && record.low_52w != null">
+                            <div class="week52-track">
+                              <div class="week52-marker" :style="week52Style(record)"></div>
+                            </div>
+                            <div class="week52-labels">
+                              <span x-text="formatAmountNative(record.low_52w, record.currency)"></span>
+                              <span x-text="formatAmountNative(record.high_52w, record.currency)"></span>
+                            </div>
+                          </div>
+                          <span class="text-xs text-slate-400"
+                                x-show="record.high_52w == null || record.low_52w == null">—</span>
+                        </td>
+                        <td class="px-3 py-2 text-right tabular"
+                            x-text="formatAmountNative(record.targetValue, record.currency)"></td>
+                        <td class="px-3 py-2 text-right tabular font-medium"
+                            :class="(record.delta && record.delta.deltaValue >= 0) ? 'text-emerald-600' : 'text-rose-600'"
+                            x-text="(record.delta && record.delta.deltaValue >= 0 ? '+' : '') + formatAmountNative(Math.abs(record.delta ? record.delta.deltaValue : 0), record.currency)"></td>
+                        <td class="px-3 py-2 text-xs text-slate-600"
+                            x-text="formatRebalanceAction(record)"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
     </div>
 
     <!-- Backups page (v1.3 — ADR 0012, ticket #03).
@@ -2102,6 +2271,7 @@
       'nav.cashDebt': 'Cash & Debts',
       'nav.categories': 'Categories',
       'nav.backups': 'Backups',
+      'nav.rebalance': 'Rebalance',
       'summary.netWorth': 'Total Net Worth',
       'summary.netWorthSub': '{a} holdings + {c} cash − {d} debts',
       'summary.holdingsValue': 'Holdings Value',
@@ -2242,6 +2412,8 @@
       'plan.editor.weightSum': 'Sum: {sum}%',
       'plan.editor.weightSumOk': 'Sum: 100% ✓',
       'plan.editor.addCategoryToWhen': '+ Add Category',
+      'plan.editor.targetWeight': '目標權重（用於再平衡）',
+      'plan.editor.targetWeight': 'Target weight (rebalance)',
       'plan.editor.removeCategory': 'Remove category',
       'plan.editor.targetCategory': 'Target category',
       'plan.editor.addValue': '+ Add Value',
@@ -2399,6 +2571,36 @@
       'snapshots.chart.legend.netWorth': 'Net Worth',
       'snapshots.chart.legend.holdingsValue': 'Holdings Value',
       'snapshots.chart.singlePoint': 'Only one snapshot — take another to see a trend.',
+      // v1.8 ticket 02 — rebalance advisor
+      'rebalance.noPlan.title': 'No active plan',
+      'rebalance.noPlan.subtitle': 'Create a plan and set it active to get rebalance advice.',
+      'rebalance.noPlan.cta': 'Go to Plans',
+      'rebalance.noEligibleRules.title': 'No rebalance-eligible rules',
+      'rebalance.noEligibleRules.subtitle': 'Add a target_weight_pct to one or more rules to enable rebalance.',
+      'rebalance.noEligibleRules.cta': 'Edit plan',
+      'rebalance.noMatched.title': 'No matched records',
+      'rebalance.noMatched.subtitle': 'Adjust the rule filters or add holdings to see candidate actions.',
+      'rebalance.header.totalDrift': 'Total drift',
+      'rebalance.header.totalWeight': 'Sum of rule weights',
+      'rebalance.header.missing': 'Missing weight',
+      'rebalance.header.activePlan': 'Active plan',
+      'rebalance.ruleSection.targetWeight': 'Target weight',
+      'rebalance.ruleSection.targetValue': 'Target value',
+      'rebalance.ruleSection.currentValue': 'Current value',
+      'rebalance.ruleSection.delta': 'Delta',
+      'rebalance.candidate.currentValue': 'Current',
+      'rebalance.candidate.currentPrice': 'Price',
+      'rebalance.candidate.targetValue': 'Target',
+      'rebalance.candidate.delta': 'Delta',
+      'rebalance.candidate.targetShares': 'Target shares',
+      'rebalance.action.buy': 'Buy {n} shares',
+      'rebalance.action.sell': 'Sell {n} shares',
+      'rebalance.action.add': 'Add {amount}',
+      'rebalance.action.reduce': 'Reduce {amount}',
+      'rebalance.action.buyOf': 'Buy {n} shares of {ticker}',
+      'rebalance.action.sellOf': 'Sell {n} shares of {ticker}',
+      'rebalance.action.addTo': 'Add {amount} to {name}',
+      'rebalance.action.reduceFrom': 'Reduce {amount} from {name}',
     },
     zh: {
       'app.title': 'Property Tracker',
@@ -2407,6 +2609,7 @@
       'nav.cashDebt': '現金與負債',
       'nav.categories': 'Categories',
       'nav.backups': '備份與還原',
+      'nav.rebalance': '再平衡',
       'nav.snapshots': '快照',
       'snapshots.title': '快照歷史',
       'snapshots.subtitle': '建立快照以記錄當下的資產淨值。超過上限時最舊的快照會自動移除。',
@@ -2458,6 +2661,36 @@
       'snapshots.chart.legend.netWorth': '總淨值',
       'snapshots.chart.legend.holdingsValue': '股票市值',
       'snapshots.chart.singlePoint': '目前只有一個快照——再建立一個才能看出趨勢。',
+      // v1.8 ticket 02 — rebalance advisor
+      'rebalance.noPlan.title': '尚未啟用任何 Plan',
+      'rebalance.noPlan.subtitle': '先建立一個 Plan 並設為啟用，才能取得再平衡建議。',
+      'rebalance.noPlan.cta': '前往 Plans',
+      'rebalance.noEligibleRules.title': '沒有可重新平衡的 Rule',
+      'rebalance.noEligibleRules.subtitle': '為 Rule 加上 target_weight_pct 以啟用再平衡。',
+      'rebalance.noEligibleRules.cta': '編輯 Plan',
+      'rebalance.noMatched.title': '沒有符合條件的持有',
+      'rebalance.noMatched.subtitle': '調整 Rule 篩選條件或新增持有，即可看到候選操作。',
+      'rebalance.header.totalDrift': '總漂移',
+      'rebalance.header.totalWeight': 'Rule 總權重',
+      'rebalance.header.missing': '缺少權重',
+      'rebalance.header.activePlan': '目前 Plan',
+      'rebalance.ruleSection.targetWeight': '目標權重',
+      'rebalance.ruleSection.targetValue': '目標值',
+      'rebalance.ruleSection.currentValue': '現值',
+      'rebalance.ruleSection.delta': '差額',
+      'rebalance.candidate.currentValue': '現值',
+      'rebalance.candidate.currentPrice': '價格',
+      'rebalance.candidate.targetValue': '目標',
+      'rebalance.candidate.delta': '差額',
+      'rebalance.candidate.targetShares': '目標張數',
+      'rebalance.action.buy': '買進 {n} 張',
+      'rebalance.action.sell': '賣出 {n} 張',
+      'rebalance.action.add': '存入 {amount}',
+      'rebalance.action.reduce': '提出 {amount}',
+      'rebalance.action.buyOf': '買進 {ticker} {n} 張',
+      'rebalance.action.sellOf': '賣出 {ticker} {n} 張',
+      'rebalance.action.addTo': '存入 {amount} 進 {name}',
+      'rebalance.action.reduceFrom': '提出 {amount} 從 {name}',
       'summary.netWorth': '總資產 Net Worth',
       'summary.netWorthSub': '{a} holdings + {c} 現金 − {d} 負債',
       'summary.holdingsValue': 'Holdings 市值',
@@ -4808,6 +5041,30 @@
         rule.distribute[keys[0]][vId] = isNaN(w) ? 0 : w;
       },
 
+      // v1.8 — set target_weight_pct on a rule (ADR 0017 §1). Empty
+      // string → unset (rule remains drift-only). Non-numeric / out
+      // of range → caller uses the validator's inline error (the
+      // distribute-sum check already disables Save when the rule
+      // doesn't sum to 100%, so the same UI affordance prevents invalid
+      // targets from being saved).
+      setRuleTargetWeight(ruleIdx, value) {
+        if (!this.planDraft) return;
+        const rule = this.planDraft.rules[ruleIdx];
+        if (!rule) return;
+        if (value === '' || value === null || value === undefined) {
+          delete rule.target_weight_pct;
+          return;
+        }
+        const w = parseFloat(value);
+        if (Number.isFinite(w) && w >= 0 && w <= 100) {
+          rule.target_weight_pct = w;
+        } else {
+          // Partial / invalid input — keep the bad value in the draft so
+          // the user sees it; validateRule will reject on save.
+          rule.target_weight_pct = value;
+        }
+      },
+
       removeRuleDistributeValue(ruleIdx, vId) {
         if (!this.planDraft) return;
         const rule = this.planDraft.rules[ruleIdx];
@@ -5039,6 +5296,186 @@
       // ---- v1.1: 52W range bar (spec §4.3, ADR 0009 §9). Source of truth: lib/market-display.js.
       week52Style(h) { return MarketDisplay.week52Style(h); },
 
+      // ---- v1.8: Rebalance advisor (ADR 0017, ticket 02) ----
+      // Source of truth for the math lives in lib/rebalance.js. The Alpine
+      // methods below are thin shims: each closes over this.data.* and the
+      // this.fxRate() getter so the v1.8 rebalance page can render.
+      // Personal-scale data; no memoization needed (driftCards is also
+      // unmemoized — back-to-back Alpine getter calls in the same render
+      // are cheap for N rules × M records).
+
+      // Build a unified {id, kind, currency, value, attributes, ...} record
+      // list for the rebalance advisor. Holdings + cash (debts excluded —
+      // rebalance is about positive cash + portfolio holdings, not debt
+      // reduction, which has separate mechanics). Each record carries the
+      // kind tag so computeCandidates can route even-split math correctly.
+      _buildRebalanceRecords() {
+        const records = [];
+        for (const h of (this.data.holdings || [])) {
+          if (h.inactive) continue;
+          const value = (typeof h.shares === 'number' && typeof h.current_price === 'number')
+            ? h.shares * h.current_price : 0;
+          records.push({
+            id: h.id,
+            kind: 'holding',
+            currency: h.currency,
+            value,
+            shares: h.shares,
+            current_price: h.current_price,
+            ticker: h.ticker,
+            attributes: h.attributes || {},
+          });
+        }
+        for (const c of (this.data.cash_accounts || [])) {
+          if (c.inactive) continue;
+          records.push({
+            id: c.id,
+            kind: 'cash',
+            currency: c.currency,
+            value: c.balance,
+            balance: c.balance,
+            name: c.name,
+            attributes: c.attributes || {},
+          });
+        }
+        return records;
+      },
+
+      // Total portfolio value in baseline (TWD) currency. Rebalance math
+      // operates in baseline; per-record values are converted back to
+      // native currency for display (ADR 0017 §6).
+      _rebalanceTotalBaseline() {
+        const records = this._buildRebalanceRecords();
+        const fxRate = this.fxRate();
+        return records.reduce(
+          (s, r) => s + Format.toTWD(r.value, r.currency, fxRate),
+          0
+        );
+      },
+
+      // Returns the rebalance candidate list per the active plan. [] when
+      // no active plan, no rules, or no eligible rules. Each per-record
+      // candidate is enriched with display fields (ticker, name, current
+      // price, 52w range) from the original holding/cash record so the
+      // markup doesn't need to re-look-up the record by id.
+      getRebalanceCandidates() {
+        const plan = this.activePlan();
+        if (!plan) return [];
+        if (!Array.isArray(plan.rules) || plan.rules.length === 0) return [];
+        const candidates = Rebalance.computeCandidates(plan, {
+          records: this._buildRebalanceRecords(),
+          totalValue: this._rebalanceTotalBaseline(),
+          fxRate: this.fxRate(),
+        });
+        // Enrich each per-record candidate with display fields.
+        for (const ruleCandidate of candidates) {
+          ruleCandidate.targetWeightPct = (() => {
+            const r = (plan.rules || []).find(r => r.id === ruleCandidate.ruleId);
+            return r ? r.target_weight_pct : null;
+          })();
+          for (const rec of ruleCandidate.matchedRecords) {
+            const original = this.getRebalanceRecord(rec.recordId);
+            if (!original) continue;
+            if (original.kind === 'holding') {
+              rec.ticker = original.record.ticker;
+              rec.currentPrice = rec.currentPrice;
+              rec.high_52w = original.record.high_52w;
+              rec.low_52w = original.record.low_52w;
+            } else {
+              rec.name = original.record.name;
+            }
+            // Wrap delta in an object so the markup can read
+            // record.delta.deltaValue / deltaShares / deltaAmount.
+            rec.delta = {
+              deltaValue: rec.delta,
+              deltaShares: rec.deltaShares,
+              deltaAmount: rec.deltaAmount,
+            };
+          }
+        }
+        return candidates;
+      },
+
+      // Returns { drift, totalRuleWeight, missing } for the page header.
+      getRebalanceTotalDrift() {
+        const plan = this.activePlan();
+        if (!plan) return { drift: 0, totalRuleWeight: 0, missing: 100 };
+        if (!Array.isArray(plan.rules) || plan.rules.length === 0) {
+          return { drift: 0, totalRuleWeight: 0, missing: 100 };
+        }
+        return Rebalance.computeTotalDrift(plan, {
+          records: this._buildRebalanceRecords(),
+          totalValue: this._rebalanceTotalBaseline(),
+          fxRate: this.fxRate(),
+        });
+      },
+
+      // True when the active plan exists and has at least one rule with
+      // target_weight_pct set. Drives the empty-state branching.
+      hasRebalanceEligibleRules() {
+        const plan = this.activePlan();
+        if (!plan || !Array.isArray(plan.rules)) return false;
+        return plan.rules.some(r =>
+          typeof r.target_weight_pct === 'number' && Number.isFinite(r.target_weight_pct)
+        );
+      },
+
+      // Per-rule summary text for the section header. Returns
+      // { current_str, target_str, delta_str, drift_pct_str }.
+      getRebalanceSummaryText(ruleCandidate) {
+        const baseline = this.displayCurrency;
+        const total = this._rebalanceTotalBaseline();
+        const current = ruleCandidate.currentValue;
+        const target = ruleCandidate.targetValue;
+        const delta = ruleCandidate.delta;
+        const fmt = (v) => this.formatAmount(v, baseline);
+        const driftPct = total > 0 ? (Math.abs(delta) / total) * 100 : 0;
+        return {
+          current_str: fmt(current),
+          target_str: fmt(target),
+          delta_str: (delta >= 0 ? '+' : '') + fmt(delta),
+          drift_pct_str: driftPct.toFixed(1) + '%',
+        };
+      },
+
+      // Per-record action text for the candidate row. Returns the
+      // i18n-formatted string for "Buy N shares of X" / etc.
+      formatRebalanceAction(candidate) {
+        if (candidate.kind === 'holding') {
+          const delta = candidate.delta || {};
+          const shares = Math.abs(delta.deltaShares || 0);
+          const ticker = candidate.ticker || candidate.id;
+          if ((delta.deltaShares || 0) > 0) {
+            return this.t('rebalance.action.buyOf', { n: shares, ticker });
+          } else if ((delta.deltaShares || 0) < 0) {
+            return this.t('rebalance.action.sellOf', { n: shares, ticker });
+          }
+          return this.t('rebalance.action.buyOf', { n: 0, ticker });
+        } else {
+          // cash
+          const delta = candidate.delta || {};
+          const amount = this.formatAmountNative(Math.abs(delta.deltaAmount || 0), candidate.currency);
+          const name = candidate.name || candidate.id;
+          if ((delta.deltaAmount || 0) > 0) {
+            return this.t('rebalance.action.addTo', { amount, name });
+          } else if ((delta.deltaAmount || 0) < 0) {
+            return this.t('rebalance.action.reduceFrom', { amount, name });
+          }
+          return this.t('rebalance.action.addTo', { amount: '$0', name });
+        }
+      },
+
+      // Find the original holding/cash record by id (for display name lookup).
+      getRebalanceRecord(id) {
+        if (!id) return null;
+        const h = (this.data.holdings || []).find(r => r.id === id);
+        if (h) return { kind: 'holding', record: h };
+        const c = (this.data.cash_accounts || []).find(r => r.id === id);
+        if (c) return { kind: 'cash', record: c };
+        return null;
+      },
+
+
       // Internal TWD aggregations live in lib/calc.js. The Alpine methods
       // below are thin shims: each closes over this.data.* and the
       // this.fxRate() / this.displayCurrency getters so the x-text bindings
@@ -5080,6 +5517,15 @@
       // without spinning up a browser.
       formatAmount(amount, sourceCurrency) {
         return window.formatAmount(amount, sourceCurrency, this.displayCurrency, this.fxRate());
+      },
+
+      // v1.8 — format an amount in the SOURCE currency (not display
+      // currency). Used by the Rebalance page so per-record values appear
+      // in the record's native currency (per ADR 0017 §6: "Per-region
+      // native currency for trade advice"). The existing formatAmount
+      // above converts to display currency; this one doesn't.
+      formatAmountNative(amount, sourceCurrency) {
+        return window.formatAmount(amount, sourceCurrency, sourceCurrency, this.fxRate());
       },
 
       // ---- Actions ----
