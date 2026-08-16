@@ -5,6 +5,12 @@
 # account). Use wrangler.toml.example as the template; keep this file local.
 wrangler.toml
 
+# config.js — per-user runtime config carrying the Cloudflare Worker URL.
+# Synthesised by .github/workflows/deploy.yml at deploy time from the
+# YAHOO_PROXY_URL secret. Keeping it out of the tracked tree prevents the
+# Worker URL from leaking to anyone with read access to the repo.
+config.js
+
 # Wrangler local dev cache (miniflare state from `wrangler dev`)
 .wrangler/
 
