@@ -132,10 +132,11 @@ For the on-disk schema (fields, types, migration rules), see [docs/data-file-for
 
 ## Roadmap
 
-_Last updated at v1.6 close-out._ The remaining open items are in the per-version issue trackers under `.scratch/`:
+_Last updated at v1.7 close-out._ The remaining open items are in the per-version issue trackers under `.scratch/`:
 
 - `.scratch/v1.4-target-allocation-plans/map.md` — leaves "snapshot + active plan drift history" as open fog (a future effort, not on a version).
 - `.scratch/v1.6-record-ordering/map.md` — v1.6 ships with 4 resolved tickets (data + lib + 3 UI pages + ADR/glossary/smoke). Categories / Plans reorder is deferred (ADR 0015 §5). Drag-and-drop is deferred (open until user complaint).
+- `.scratch/v1.7-category-sync/map.md` — v1.7 ships with 2 resolved tickets (data + merge + tombstone + 3 settings edit-path stamps + ADR 0016 + glossary; backward-compat + 6 browser integration scenarios). Categories rename ties follow the same newer-wins rule as holdings/cash/debts/plans (ADR 0016 §9); pre-v1.7 clients lack tombstone mechanism (ADR 0016 §8); per-field Settings merge and per-value Categories merge are deferred as overkill.
 
 ## Docs
 
