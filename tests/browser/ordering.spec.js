@@ -321,6 +321,47 @@ async function readRenderedHoldingsOrder(page) {
   });
 }
 
+// Helper: navigate to the Cash & Debts page so the data-testid selectors
+// attach. Two reusable helpers for reading the rendered account/debt names.
+async function gotoCashDebtPage(page) {
+  await page.goto('http://localhost:8000/portfolio.html');
+  await page.waitForFunction(() => !!window.Alpine);
+  await page.evaluate(() => {
+    const root = document.querySelector('[x-data]');
+    const data = window.Alpine.$data(root);
+    data.currentPage = 'cash_debt';
+  });
+  // Wait for at least one cash row button to render.
+  await page.waitForSelector('[data-testid^="cash-move-up-"]', { state: 'attached' });
+}
+
+async function readRenderedCashOrder(page) {
+  return page.evaluate(() => {
+    const rows = document.querySelectorAll('[data-testid^="cash-move-up-"]');
+    const names = [];
+    for (const btn of rows) {
+      const tr = btn.closest('tr');
+      // Order column is leftmost; name is in the 2nd cell.
+      const nameEl = tr.querySelector('td:nth-child(2) .font-medium');
+      if (nameEl) names.push(nameEl.textContent.trim());
+    }
+    return names;
+  });
+}
+
+async function readRenderedDebtsOrder(page) {
+  return page.evaluate(() => {
+    const rows = document.querySelectorAll('[data-testid^="debts-move-up-"]');
+    const names = [];
+    for (const btn of rows) {
+      const tr = btn.closest('tr');
+      const nameEl = tr.querySelector('td:nth-child(2) .font-medium');
+      if (nameEl) names.push(nameEl.textContent.trim());
+    }
+    return names;
+  });
+}
+
 test('Holdings UI: no order array → click ↑ on row 2 → row 2 swaps with row 1, array materializes', async ({ page }) => {
   // User has 3 holdings, has never reordered → holdings_order is absent.
   const fixture = { ...PORTFOLIO_FIXTURE };
@@ -487,4 +528,311 @@ test('Holdings UI: delete a middle holding → table re-renders without it; arra
 
   // Table re-renders without GOOG.
   expect(await readRenderedHoldingsOrder(page)).toEqual(['AAPL', 'MSFT']);
+});
+
+// --- T03 scenarios --------------------------------------------------------
+// T03 follows the same pattern as T02 but applies the Order column to
+// the Cash and Debts tables on the Cash & Debts page. Each section
+// maintains its own order array (cash_accounts_order / debts_order);
+// cross-section independence is verified at the end.
+
+// Cash fixture: 3 accounts with a pre-populated cash_accounts_order array.
+const CASH_FIXTURE = {
+  ...PORTFOLIO_FIXTURE,
+  // Re-declare so the spread doesn't merge arrays under different keys.
+  cash_accounts: [
+    { id: 'c-1', name: 'Checking', balance: 1000, currency: 'TWD',
+      attributes: {}, updated_at: '2025-01-01T00:00:00.000Z',
+      device_id: 'smoke', inactive: false },
+    { id: 'c-2', name: 'Savings', balance: 5000, currency: 'TWD',
+      attributes: {}, updated_at: '2025-01-01T00:00:00.000Z',
+      device_id: 'smoke', inactive: false },
+    { id: 'c-3', name: 'Brokerage', balance: 2500, currency: 'TWD',
+      attributes: {}, updated_at: '2025-01-01T00:00:00.000Z',
+      device_id: 'smoke', inactive: false },
+  ],
+  cash_accounts_order: ['c-1', 'c-2', 'c-3'],
+  debts: [
+    { id: 'd-1', name: 'Credit card', balance: 2000, currency: 'TWD',
+      attributes: {}, updated_at: '2025-01-01T00:00:00.000Z',
+      device_id: 'smoke', inactive: false },
+    { id: 'd-2', name: 'Mortgage', balance: 8000, currency: 'TWD',
+      attributes: {}, updated_at: '2025-01-01T00:00:00.000Z',
+      device_id: 'smoke', inactive: false },
+    { id: 'd-3', name: 'Car loan', balance: 4000, currency: 'TWD',
+      attributes: {}, updated_at: '2025-01-01T00:00:00.000Z',
+      device_id: 'smoke', inactive: false },
+  ],
+  debts_order: ['d-1', 'd-2', 'd-3'],
+};
+
+test('Cash: no order array → click ↓ on row 1 → row 1 swaps with row 2, array materializes', async ({ page }) => {
+  // No cash_accounts_order yet — user has never reordered cash.
+  const fixture = { ...CASH_FIXTURE };
+  delete fixture.cash_accounts_order;
+  await page.addInitScript(`
+    localStorage.setItem(${JSON.stringify(STORAGE_KEY)}, JSON.stringify(${JSON.stringify(fixture)}));
+  `);
+  await gotoCashDebtPage(page);
+
+  // Confirm initial state: array absent, table renders in insertion order.
+  expect(await readStoredOrder(page, 'cash_accounts_order')).toBeUndefined();
+  expect(await readRenderedCashOrder(page)).toEqual(['Checking', 'Savings', 'Brokerage']);
+
+  // Click ↓ on row 1 (c-1 / Checking).
+  await page.click('[data-testid="cash-move-down-c-1"]');
+
+  // Wait for save to localStorage.
+  await page.waitForFunction(
+    () => {
+      const raw = localStorage.getItem('property_tracker_portfolio_v1');
+      if (!raw) return false;
+      const d = JSON.parse(raw);
+      return Array.isArray(d.cash_accounts_order) && d.cash_accounts_order[0] === 'c-2';
+    },
+    { timeout: 5000 }
+  );
+
+  // Order array materialized with c-1 at position 1 (after c-2).
+  const order = await readStoredOrder(page, 'cash_accounts_order');
+  expect(order).toEqual(['c-2', 'c-1', 'c-3']);
+
+  // Table re-renders with Savings at the top.
+  expect(await readRenderedCashOrder(page)).toEqual(['Savings', 'Checking', 'Brokerage']);
+});
+
+test('Cash: existing array → click ↑ on row 3 → row 3 swaps with row 2', async ({ page }) => {
+  // Order array pre-materialized in insertion order.
+  await page.addInitScript(`
+    localStorage.setItem(${JSON.stringify(STORAGE_KEY)}, JSON.stringify(${JSON.stringify(CASH_FIXTURE)}));
+  `);
+  await gotoCashDebtPage(page);
+
+  // Click ↑ on row 3 (Brokerage / c-3).
+  await page.click('[data-testid="cash-move-up-c-3"]');
+
+  await page.waitForFunction(
+    () => {
+      const raw = localStorage.getItem('property_tracker_portfolio_v1');
+      if (!raw) return false;
+      const d = JSON.parse(raw);
+      return d.cash_accounts_order && d.cash_accounts_order[1] === 'c-3';
+    },
+    { timeout: 5000 }
+  );
+
+  const order = await readStoredOrder(page, 'cash_accounts_order');
+  expect(order).toEqual(['c-1', 'c-3', 'c-2']);
+
+  // Table reflects the swap.
+  expect(await readRenderedCashOrder(page)).toEqual(['Checking', 'Brokerage', 'Savings']);
+});
+
+test('Cash: top row ↑ disabled; bottom row ↓ disabled; single row both disabled', async ({ page }) => {
+  // NOTE: We don't use addInitScript here because the single-row variant
+  // needs to mutate localStorage mid-test + reload, and addInitScript
+  // re-runs on every navigation, clobbering the mutation. Instead, seed
+  // localStorage via evaluate AFTER the first navigation, then reload —
+  // localStorage persists across reloads without re-seeding. Same pattern
+  // as T02's `holdings_order: persists across page reload` test.
+  autoAcceptDialogs(page);
+  await page.goto('http://localhost:8000/portfolio.html');
+  await page.evaluate((fixture) => {
+    localStorage.setItem('property_tracker_portfolio_v1', JSON.stringify(fixture));
+  }, CASH_FIXTURE);
+  await page.reload();
+  await page.waitForFunction(() => !!window.Alpine);
+  await page.evaluate(() => {
+    const root = document.querySelector('[x-data]');
+    const data = window.Alpine.$data(root);
+    data.currentPage = 'cash_debt';
+  });
+  await page.waitForSelector('[data-testid="cash-move-up-c-1"]', { state: 'attached' });
+
+  // Top row (c-1): ↑ disabled, ↓ enabled.
+  await expect(page.locator('[data-testid="cash-move-up-c-1"]')).toBeDisabled();
+  await expect(page.locator('[data-testid="cash-move-down-c-1"]')).toBeEnabled();
+
+  // Middle row (c-2): both enabled.
+  await expect(page.locator('[data-testid="cash-move-up-c-2"]')).toBeEnabled();
+  await expect(page.locator('[data-testid="cash-move-down-c-2"]')).toBeEnabled();
+
+  // Bottom row (c-3): ↑ enabled, ↓ disabled.
+  await expect(page.locator('[data-testid="cash-move-up-c-3"]')).toBeEnabled();
+  await expect(page.locator('[data-testid="cash-move-down-c-3"]')).toBeDisabled();
+
+  // Single-row check: collapse cash to 1 account, both buttons disabled.
+  const singleCash = {
+    ...CASH_FIXTURE,
+    cash_accounts: [CASH_FIXTURE.cash_accounts[0]],
+    cash_accounts_order: ['c-1'],
+  };
+  await page.evaluate((single) => {
+    localStorage.setItem('property_tracker_portfolio_v1', JSON.stringify(single));
+  }, singleCash);
+  await page.reload();
+  await page.waitForFunction(() => !!window.Alpine);
+  await page.evaluate(() => {
+    const root = document.querySelector('[x-data]');
+    const data = window.Alpine.$data(root);
+    data.currentPage = 'cash_debt';
+  });
+  await page.waitForSelector('[data-testid="cash-move-up-c-1"]', { state: 'attached' });
+
+  await expect(page.locator('[data-testid="cash-move-up-c-1"]')).toBeDisabled();
+  await expect(page.locator('[data-testid="cash-move-down-c-1"]')).toBeDisabled();
+});
+
+test('Debts: no order array → click ↓ on row 1 → row 1 swaps with row 2, array materializes', async ({ page }) => {
+  // No debts_order yet — user has never reordered debts.
+  const fixture = { ...CASH_FIXTURE };
+  delete fixture.debts_order;
+  await page.addInitScript(`
+    localStorage.setItem(${JSON.stringify(STORAGE_KEY)}, JSON.stringify(${JSON.stringify(fixture)}));
+  `);
+  await gotoCashDebtPage(page);
+
+  expect(await readStoredOrder(page, 'debts_order')).toBeUndefined();
+  expect(await readRenderedDebtsOrder(page)).toEqual(['Credit card', 'Mortgage', 'Car loan']);
+
+  // Click ↓ on row 1 (d-1 / Credit card).
+  await page.click('[data-testid="debts-move-down-d-1"]');
+
+  await page.waitForFunction(
+    () => {
+      const raw = localStorage.getItem('property_tracker_portfolio_v1');
+      if (!raw) return false;
+      const d = JSON.parse(raw);
+      return Array.isArray(d.debts_order) && d.debts_order[0] === 'd-2';
+    },
+    { timeout: 5000 }
+  );
+
+  const order = await readStoredOrder(page, 'debts_order');
+  expect(order).toEqual(['d-2', 'd-1', 'd-3']);
+
+  expect(await readRenderedDebtsOrder(page)).toEqual(['Mortgage', 'Credit card', 'Car loan']);
+});
+
+test('Debts: existing array → click ↑ on row 3 → row 3 swaps with row 2', async ({ page }) => {
+  await page.addInitScript(`
+    localStorage.setItem(${JSON.stringify(STORAGE_KEY)}, JSON.stringify(${JSON.stringify(CASH_FIXTURE)}));
+  `);
+  await gotoCashDebtPage(page);
+
+  // Click ↑ on row 3 (Car loan / d-3).
+  await page.click('[data-testid="debts-move-up-d-3"]');
+
+  await page.waitForFunction(
+    () => {
+      const raw = localStorage.getItem('property_tracker_portfolio_v1');
+      if (!raw) return false;
+      const d = JSON.parse(raw);
+      return d.debts_order && d.debts_order[1] === 'd-3';
+    },
+    { timeout: 5000 }
+  );
+
+  const order = await readStoredOrder(page, 'debts_order');
+  expect(order).toEqual(['d-1', 'd-3', 'd-2']);
+
+  expect(await readRenderedDebtsOrder(page)).toEqual(['Credit card', 'Car loan', 'Mortgage']);
+});
+
+test('Debts: top row ↑ disabled; bottom row ↓ disabled; single row both disabled', async ({ page }) => {
+  // NOTE: Same pattern as Cash test — use evaluate/mutate-then-reload
+  // instead of addInitScript to avoid clobbering the single-row mutation.
+  autoAcceptDialogs(page);
+  await page.goto('http://localhost:8000/portfolio.html');
+  await page.evaluate((fixture) => {
+    localStorage.setItem('property_tracker_portfolio_v1', JSON.stringify(fixture));
+  }, CASH_FIXTURE);
+  await page.reload();
+  await page.waitForFunction(() => !!window.Alpine);
+  await page.evaluate(() => {
+    const root = document.querySelector('[x-data]');
+    const data = window.Alpine.$data(root);
+    data.currentPage = 'cash_debt';
+  });
+  await page.waitForSelector('[data-testid="debts-move-up-d-1"]', { state: 'attached' });
+
+  // Top row (d-1): ↑ disabled, ↓ enabled.
+  await expect(page.locator('[data-testid="debts-move-up-d-1"]')).toBeDisabled();
+  await expect(page.locator('[data-testid="debts-move-down-d-1"]')).toBeEnabled();
+
+  // Middle row (d-2): both enabled.
+  await expect(page.locator('[data-testid="debts-move-up-d-2"]')).toBeEnabled();
+  await expect(page.locator('[data-testid="debts-move-down-d-2"]')).toBeEnabled();
+
+  // Bottom row (d-3): ↑ enabled, ↓ disabled.
+  await expect(page.locator('[data-testid="debts-move-up-d-3"]')).toBeEnabled();
+  await expect(page.locator('[data-testid="debts-move-down-d-3"]')).toBeDisabled();
+
+  // Single-row check: collapse debts to 1 entry, both buttons disabled.
+  const singleDebt = {
+    ...CASH_FIXTURE,
+    debts: [CASH_FIXTURE.debts[0]],
+    debts_order: ['d-1'],
+  };
+  await page.evaluate((single) => {
+    localStorage.setItem('property_tracker_portfolio_v1', JSON.stringify(single));
+  }, singleDebt);
+  await page.reload();
+  await page.waitForFunction(() => !!window.Alpine);
+  await page.evaluate(() => {
+    const root = document.querySelector('[x-data]');
+    const data = window.Alpine.$data(root);
+    data.currentPage = 'cash_debt';
+  });
+  await page.waitForSelector('[data-testid="debts-move-up-d-1"]', { state: 'attached' });
+
+  await expect(page.locator('[data-testid="debts-move-up-d-1"]')).toBeDisabled();
+  await expect(page.locator('[data-testid="debts-move-down-d-1"]')).toBeDisabled();
+});
+
+test('Cash & Debts: cross-section independence \u2014 reordering cash does NOT change debt order', async ({ page }) => {
+  await page.addInitScript(`
+    localStorage.setItem(${JSON.stringify(STORAGE_KEY)}, JSON.stringify(${JSON.stringify(CASH_FIXTURE)}));
+  `);
+  await gotoCashDebtPage(page);
+
+  // Swap cash row 1 down.
+  await page.click('[data-testid="cash-move-down-c-1"]');
+  await page.waitForFunction(
+    () => {
+      const raw = localStorage.getItem('property_tracker_portfolio_v1');
+      if (!raw) return false;
+      const d = JSON.parse(raw);
+      return d.cash_accounts_order && d.cash_accounts_order[0] === 'c-2';
+    },
+    { timeout: 5000 }
+  );
+
+  // Cash array changed.
+  const cashOrder = await readStoredOrder(page, 'cash_accounts_order');
+  expect(cashOrder).toEqual(['c-2', 'c-1', 'c-3']);
+
+  // Debts array unchanged (cross-section independence).
+  const debtOrder = await readStoredOrder(page, 'debts_order');
+  expect(debtOrder).toEqual(['d-1', 'd-2', 'd-3']);
+
+  // Conversely, swap a debt row up and verify cash is untouched.
+  await page.click('[data-testid="debts-move-up-d-3"]');
+  await page.waitForFunction(
+    () => {
+      const raw = localStorage.getItem('property_tracker_portfolio_v1');
+      if (!raw) return false;
+      const d = JSON.parse(raw);
+      return d.debts_order && d.debts_order[1] === 'd-3';
+    },
+    { timeout: 5000 }
+  );
+
+  // Debts array changed.
+  const debtOrder2 = await readStoredOrder(page, 'debts_order');
+  expect(debtOrder2).toEqual(['d-1', 'd-3', 'd-2']);
+
+  // Cash array still at the post-first-swap state (untouched by the 2nd swap).
+  const cashOrder2 = await readStoredOrder(page, 'cash_accounts_order');
+  expect(cashOrder2).toEqual(['c-2', 'c-1', 'c-3']);
 });

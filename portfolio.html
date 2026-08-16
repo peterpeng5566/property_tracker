@@ -611,6 +611,11 @@
         <table class="w-full text-sm">
           <thead class="bg-slate-50 border-b border-slate-200">
             <tr>
+              <!-- v1.6 — manual record ordering (ADR 0015). New "Order"
+                   column on the leftmost position. Mirrors the Holdings
+                   table (T02). Cross-section independence: cash and
+                   debts each maintain a separate order array. -->
+              <th class="text-center px-2 py-3 font-medium text-slate-600 w-16" x-text="t('cash.col.order')"></th>
               <th class="text-left px-4 py-3 font-medium text-slate-600" x-text="t('cash.col.name')"></th>
               <th class="text-right px-4 py-3 font-medium text-slate-600" x-text="t('cash.col.balance')"></th>
               <th class="text-left px-4 py-3 font-medium text-slate-600" x-text="t('cash.col.currency')"></th>
@@ -618,9 +623,23 @@
             </tr>
           </thead>
           <tbody>
-            <template x-for="c in cashAccounts" :key="c.id">
+            <template x-for="(c, idx) in getOrderedCash()" :key="c.id">
               <tr class="border-b border-slate-100 last:border-0 hover:bg-slate-50"
                   :class="c.inactive ? 'opacity-50' : ''">
+                <td class="px-2 py-3 text-center">
+                  <div class="flex items-center justify-center gap-1">
+                    <button @click="moveCashUp(c.id)"
+                            :disabled="idx === 0"
+                            :data-testid="'cash-move-up-' + c.id"
+                            :title="idx === 0 ? t('cash.moveUpDisabled') : t('cash.moveUp')"
+                            class="text-slate-400 hover:text-slate-900 disabled:opacity-40 disabled:cursor-not-allowed text-sm leading-none">↑</button>
+                    <button @click="moveCashDown(c.id)"
+                            :disabled="idx === getOrderedCash().length - 1"
+                            :data-testid="'cash-move-down-' + c.id"
+                            :title="idx === getOrderedCash().length - 1 ? t('cash.moveDownDisabled') : t('cash.moveDown')"
+                            class="text-slate-400 hover:text-slate-900 disabled:opacity-40 disabled:cursor-not-allowed text-sm leading-none">↓</button>
+                  </div>
+                </td>
                 <td class="px-4 py-3">
                   <div class="font-medium" x-text="c.name"></div>
                   <div class="flex flex-wrap gap-1 mt-1" x-show="c.attributes && Object.keys(c.attributes).length > 0">
@@ -643,7 +662,7 @@
               </tr>
             </template>
             <tr x-show="cashAccounts.length === 0">
-              <td colspan="4" class="px-4 py-12 text-center text-slate-400" x-text="t('cash.empty')"></td>
+              <td colspan="5" class="px-4 py-12 text-center text-slate-400" x-text="t('cash.empty')"></td>
             </tr>
           </tbody>
         </table>
@@ -662,6 +681,10 @@
         <table class="w-full text-sm">
           <thead class="bg-slate-50 border-b border-slate-200">
             <tr>
+              <!-- v1.6 — manual record ordering (ADR 0015). New "Order"
+                   column on the leftmost position. Mirrors Cash (T03)
+                   and Holdings (T02). -->
+              <th class="text-center px-2 py-3 font-medium text-slate-600 w-16" x-text="t('debts.col.order')"></th>
               <th class="text-left px-4 py-3 font-medium text-slate-600" x-text="t('debts.col.name')"></th>
               <th class="text-right px-4 py-3 font-medium text-slate-600" x-text="t('debts.col.balance')"></th>
               <th class="text-left px-4 py-3 font-medium text-slate-600" x-text="t('debts.col.currency')"></th>
@@ -669,9 +692,23 @@
             </tr>
           </thead>
           <tbody>
-            <template x-for="d in debts" :key="d.id">
+            <template x-for="(d, idx) in getOrderedDebts()" :key="d.id">
               <tr class="border-b border-slate-100 last:border-0 hover:bg-slate-50"
                   :class="d.inactive ? 'opacity-50' : ''">
+                <td class="px-2 py-3 text-center">
+                  <div class="flex items-center justify-center gap-1">
+                    <button @click="moveDebtUp(d.id)"
+                            :disabled="idx === 0"
+                            :data-testid="'debts-move-up-' + d.id"
+                            :title="idx === 0 ? t('debts.moveUpDisabled') : t('debts.moveUp')"
+                            class="text-slate-400 hover:text-slate-900 disabled:opacity-40 disabled:cursor-not-allowed text-sm leading-none">↑</button>
+                    <button @click="moveDebtDown(d.id)"
+                            :disabled="idx === getOrderedDebts().length - 1"
+                            :data-testid="'debts-move-down-' + d.id"
+                            :title="idx === getOrderedDebts().length - 1 ? t('debts.moveDownDisabled') : t('debts.moveDown')"
+                            class="text-slate-400 hover:text-slate-900 disabled:opacity-40 disabled:cursor-not-allowed text-sm leading-none">↓</button>
+                  </div>
+                </td>
                 <td class="px-4 py-3">
                   <div class="font-medium" x-text="d.name"></div>
                   <div class="flex flex-wrap gap-1 mt-1" x-show="d.attributes && Object.keys(d.attributes).length > 0">
@@ -695,7 +732,7 @@
               </tr>
             </template>
             <tr x-show="debts.length === 0">
-              <td colspan="4" class="px-4 py-12 text-center text-slate-400" x-text="t('debts.empty')"></td>
+              <td colspan="5" class="px-4 py-12 text-center text-slate-400" x-text="t('debts.empty')"></td>
             </tr>
           </tbody>
         </table>
@@ -2092,6 +2129,11 @@
       'cash.col.name': 'Account Name',
       'cash.col.balance': 'Balance',
       'cash.col.currency': 'Currency',
+      'cash.col.order': 'Order',
+      'cash.moveUp': 'Move up',
+      'cash.moveDown': 'Move down',
+      'cash.moveUpDisabled': 'Already at the top',
+      'cash.moveDownDisabled': 'Already at the bottom',
       'cash.name': 'Account Name',
       'cash.balance': 'Balance',
       'cash.addTitle': 'New Cash Account',
@@ -2107,6 +2149,11 @@
       'debts.col.name': 'Debt Name',
       'debts.col.balance': 'Balance Owed',
       'debts.col.currency': 'Currency',
+      'debts.col.order': 'Order',
+      'debts.moveUp': 'Move up',
+      'debts.moveDown': 'Move down',
+      'debts.moveUpDisabled': 'Already at the top',
+      'debts.moveDownDisabled': 'Already at the bottom',
       'debts.name': 'Debt Name',
       'debts.balance': 'Balance Owed',
       'debts.addTitle': 'New Debt',
@@ -2438,6 +2485,11 @@
       'cash.col.name': '帳戶名稱',
       'cash.col.balance': '餘額',
       'cash.col.currency': '幣別',
+      'cash.col.order': '順序',
+      'cash.moveUp': '上移',
+      'cash.moveDown': '下移',
+      'cash.moveUpDisabled': '已在最頂端',
+      'cash.moveDownDisabled': '已在最底端',
       'cash.name': '帳戶名稱',
       'cash.balance': '餘額',
       'cash.addTitle': '新增現金帳戶',
@@ -2453,6 +2505,11 @@
       'debts.col.name': '負債名稱',
       'debts.col.balance': '欠款金額',
       'debts.col.currency': '幣別',
+      'debts.col.order': '順序',
+      'debts.moveUp': '上移',
+      'debts.moveDown': '下移',
+      'debts.moveUpDisabled': '已在最頂端',
+      'debts.moveDownDisabled': '已在最底端',
       'debts.name': '負債名稱',
       'debts.balance': '欠款金額',
       'debts.addTitle': '新增負債',
@@ -3700,27 +3757,38 @@
       getOrderedHoldings() {
         return Order.applyOrder(this.data.holdings, this.data.holdings_order);
       },
-      _moveHolding(id, direction) {
-        // Resolve the index in the *ordered* array (not raw data.holdings),
-        // then materialize the order array if absent, then swap.
-        const ordered = this.getOrderedHoldings();
-        const idx = ordered.findIndex(h => h.id === id);
+      getOrderedCash() {
+        return Order.applyOrder(this.data.cash_accounts, this.data.cash_accounts_order);
+      },
+      getOrderedDebts() {
+        return Order.applyOrder(this.data.debts, this.data.debts_order);
+      },
+      // Generic reorder helper: resolves the index in the *ordered* view,
+      // applies the swap, and materializes the order array on first click.
+      // Shared by all three collections (T02 holdings, T03 cash + debts).
+      _moveOrderItem(getOrdered, recordsKey, orderKey, id, direction) {
+        const ordered = getOrdered.call(this);
+        const idx = ordered.findIndex(r => r.id === id);
         if (idx === -1) return;
         const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
         if (targetIdx < 0 || targetIdx >= ordered.length) return; // boundary guard
         const targetId = ordered[targetIdx].id;
         // Materialize the order array if absent (ADR 0015 §3 — first click).
-        const currentOrder = Array.isArray(this.data.holdings_order)
-          ? this.data.holdings_order
-          : this.data.holdings.map(h => h.id);
+        const currentOrder = Array.isArray(this.data[orderKey])
+          ? this.data[orderKey]
+          : this.data[recordsKey].map(r => r.id);
         const fromIndex = currentOrder.indexOf(id);
         const toIndex = currentOrder.indexOf(targetId);
         if (fromIndex === -1 || toIndex === -1) return;
-        this.data.holdings_order = Order.moveItem(currentOrder, fromIndex, toIndex);
+        this.data[orderKey] = Order.moveItem(currentOrder, fromIndex, toIndex);
         this.save();
       },
-      moveHoldingUp(id) { this._moveHolding(id, 'up'); },
-      moveHoldingDown(id) { this._moveHolding(id, 'down'); },
+      moveHoldingUp(id)   { this._moveOrderItem(this.getOrderedHoldings, 'holdings', 'holdings_order', id, 'up'); },
+      moveHoldingDown(id) { this._moveOrderItem(this.getOrderedHoldings, 'holdings', 'holdings_order', id, 'down'); },
+      moveCashUp(id)      { this._moveOrderItem(this.getOrderedCash, 'cash_accounts', 'cash_accounts_order', id, 'up'); },
+      moveCashDown(id)    { this._moveOrderItem(this.getOrderedCash, 'cash_accounts', 'cash_accounts_order', id, 'down'); },
+      moveDebtUp(id)      { this._moveOrderItem(this.getOrderedDebts, 'debts', 'debts_order', id, 'up'); },
+      moveDebtDown(id)    { this._moveOrderItem(this.getOrderedDebts, 'debts', 'debts_order', id, 'down'); },
 
       // ---- Cash CRUD ----
       openAddCash() {
