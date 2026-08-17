@@ -132,6 +132,24 @@
       .refresh-btn-text { display: none; }
       .refresh-btn { padding-left: 0.5rem; padding-right: 0.5rem; }
     }
+
+    /* v1.9 — Mobile responsiveness (ADR 0018): custom + / − marker for
+       `<details>/<summary>` (R3-Q13=a). Hides the default Safari /
+       Chrome triangle marker and renders a CSS-controlled glyph so we
+       have predictable alignment across iOS Safari and Android Chrome.
+       Used by every mobile "stacked card → details" pattern in the
+       app (Holdings, Cash/Debts, Plans drift, Rebalance candidate). */
+    summary::-webkit-details-marker { display: none; }
+    summary { list-style: none; }
+    summary::before {
+      content: '+';
+      display: inline-block;
+      width: 1rem;
+      margin-right: 0.25rem;
+      font-weight: 600;
+      color: rgb(100 116 139); /* slate-500 */
+    }
+    details[open] summary::before { content: '−'; }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
@@ -458,12 +476,19 @@
                data-testid="drift-card-one-record-warning"
                x-text="t('plan.drift.oneRecordWarning')"></p>
 
+            <!-- v1.9 — Mobile-friendly stacked key-value (ADR 0018). The
+                 desktop table keeps its 4-col layout verbatim; on <md
+                 it disappears and is replaced by a list of stack rows
+                 (value name + drift delta per value). Target/actual
+                 numbers + the no-matching fade live in the same
+                 structure as the desktop table via Alpine reactive
+                 bindings. -->
             <!-- Values table (variant B; side-by-side columns) -->
             <!-- Spec Q7: target rows greyed out when no records match (the
                  user's target distribution looks inert because there's no
                  data to drift against). Declarative fade via opacity-40 on
                  the wrapper keeps the markup free of per-row booleans. -->
-            <table class="w-full text-sm" :class="card.hasNoMatching ? 'opacity-40' : ''">
+            <table class="hidden md:table w-full text-sm" :class="card.hasNoMatching ? 'opacity-40' : ''">
               <thead>
                 <tr class="text-xs uppercase tracking-wide text-slate-500 border-b border-slate-100">
                   <th class="text-left py-2 font-medium" x-text="t('plan.drift.value')"></th>
@@ -492,6 +517,36 @@
                 </template>
               </tbody>
             </table>
+
+            <!-- v1.9 — Mobile stacked key-value (replaces the desktop
+                 table at <md). Per value row: value name + delta
+                 color-coded; `<details>` opens to reveal target / actual
+                 numbers. -->
+            <div class="md:hidden divide-y divide-slate-100" :class="card.hasNoMatching ? 'opacity-40' : ''">
+              <template x-for="row in card.valueRows" :key="'m-' + row.value_id">
+                <div class="py-2">
+                  <div class="flex items-center justify-between gap-3"
+                       :data-testid="'m-drift-row-' + row.value_id">
+                    <span class="text-sm flex-1"
+                          :class="row.value_id === '_unassigned' ? 'text-xs italic text-slate-500' : ''"
+                          x-text="row.value_name"></span>
+                    <span class="text-sm tabular font-medium"
+                          :class="row.drift_class"
+                          :data-testid="'m-drift-delta-' + row.value_id"
+                      x-text="row.drift_str"></span>
+                  </div>
+                  <details class="mt-1">
+                    <summary class="text-xs text-slate-500 cursor-pointer select-none">Detail</summary>
+                    <div class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                      <div class="text-slate-500" x-text="t('plan.drift.target')"></div>
+                      <div class="tabular text-right text-slate-600" x-text="row.target_str"></div>
+                      <div class="text-slate-500" x-text="t('plan.drift.actual')"></div>
+                      <div class="tabular text-right font-medium" x-text="row.actual_str"></div>
+                    </div>
+                  </details>
+                </div>
+              </template>
+            </div>
 
             <!-- 0-matching footer (Q7 = a) -->
             <p x-show="card.hasNoMatching"
@@ -523,7 +578,7 @@
       </div>
 
       <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-        <table class="w-full text-sm">
+        <table class="hidden md:table w-full text-sm">
           <thead class="bg-slate-50 border-b border-slate-200">
             <tr>
               <!-- v1.6 — manual record ordering (ADR 0015). New "Order"
@@ -619,6 +674,112 @@
             </tr>
           </tbody>
         </table>
+
+        <!-- v1.9 — Holdings stacked card layout for mobile (<md).
+             Renders in place of the `<table>` (which is `hidden
+             md:table` so it's invisible < md). Same data source
+             (`getOrderedHoldings()`) — the desktop table reuses the
+             existing template above; the mobile cards use a parallel
+             template with the `m-` key prefix so Alpine's diff
+             doesn't confuse the two.
+
+             Per ADR 0018 §4 (R2-Q7=a): primary fields always visible
+             are ticker + shares + value + day-delta. Secondary fields
+             (cost / price / 52w / gainLoss / Active / Edit / Delete /
+             order buttons) live inside `<details>` and reveal on tap.
+             Action buttons inside `<details>` carry `min-h-[44px]` so
+             they meet the 44-pt touch target floor even though
+             they're "second tier". -->
+        <div class="md:hidden divide-y divide-slate-200">
+          <template x-for="(h, idx) in getOrderedHoldings()" :key="'m-' + h.id">
+            <div class="p-4"
+                 :class="{ 'opacity-50': h.inactive }"
+                 :data-testid="'holdings-card-row-' + h.id">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="font-semibold text-lg leading-tight" x-text="h.ticker"></div>
+                  <div class="mt-0.5 flex flex-wrap gap-1" x-show="h.attributes && Object.keys(h.attributes).length > 0">
+                    <template x-for="(valId, catId) in (h.attributes || {})" :key="catId + '-' + valId">
+                      <span class="text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded"
+                            x-text="getCategoryValueName(catId, valId)"></span>
+                    </template>
+                  </div>
+                </div>
+                <div class="text-right shrink-0">
+                  <div class="text-lg font-semibold tabular leading-tight"
+                       x-text="formatAmount(h.shares * h.current_price, h.currency)"></div>
+                  <div class="text-xs mt-0.5"
+                       :class="dayDeltaClass(h)"
+                       x-text="dayDeltaLabel(h)"></div>
+                </div>
+              </div>
+              <div class="mt-2 text-sm text-slate-600 tabular">
+                <span x-text="h.shares.toLocaleString()"></span>
+                <span class="text-slate-400 mx-1">·</span>
+                <span x-text="h.currency"></span>
+              </div>
+              <details class="mt-3">
+                <summary class="text-xs text-slate-500 cursor-pointer select-none">Details</summary>
+                <div class="mt-3 space-y-2 text-sm">
+                  <div class="flex justify-between">
+                    <span class="text-slate-500">Cost</span>
+                    <span class="tabular" x-text="formatAmount(h.cost, h.currency)"></span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span class="text-slate-500">Price</span>
+                    <span class="tabular" x-text="formatAmount(h.current_price, h.currency)"></span>
+                  </div>
+                  <div class="week52-bar" x-show="h.high_52w != null && h.low_52w != null">
+                    <div class="week52-track">
+                      <div class="week52-marker" :style="week52Style(h)"></div>
+                    </div>
+                    <div class="week52-labels">
+                      <span x-text="formatAmount(h.low_52w, h.currency)"></span>
+                      <span x-text="formatAmount(h.high_52w, h.currency)"></span>
+                    </div>
+                  </div>
+                  <div class="flex justify-between">
+                    <span class="text-slate-500">G/L</span>
+                    <span class="tabular"
+                          :class="gainLoss(h) >= 0 ? 'text-emerald-600' : 'text-rose-600'">
+                      <span x-text="(gainLoss(h) >= 0 ? '+' : '') + formatAmount(gainLoss(h), h.currency)"></span>
+                    </span>
+                  </div>
+                  <div class="flex flex-wrap gap-2 pt-3 border-t border-slate-100">
+                    <button @click="toggleInactive(h.id)"
+                            :class="h.inactive ? 'bg-slate-100 text-slate-500' : 'bg-emerald-50 text-emerald-700'"
+                            class="px-3 py-2 rounded-md text-xs font-medium min-h-[44px]"
+                            x-text="h.inactive ? t('holdings.inactive') : t('holdings.active')"></button>
+                    <button @click="openEdit(h)"
+                            class="px-3 py-2 rounded-md text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 min-h-[44px]"
+                            x-text="t('holdings.edit')"></button>
+                    <button @click="removeHolding(h.id)"
+                            class="px-3 py-2 rounded-md text-xs font-medium bg-rose-50 text-rose-700 hover:bg-rose-100 min-h-[44px]"
+                            x-text="t('holdings.delete')"></button>
+                  </div>
+                  <div class="flex gap-2 pt-1">
+                    <button @click="moveHoldingUp(h.id)"
+                            :disabled="idx === 0"
+                            :data-testid="'m-holdings-move-up-' + h.id"
+                            class="flex-1 px-3 py-2 rounded-md text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 min-h-[44px] disabled:opacity-40 disabled:cursor-not-allowed">
+                      <span x-text="'↑ ' + (idx === 0 ? t('holdings.moveUpDisabled') : t('holdings.moveUp'))"></span>
+                    </button>
+                    <button @click="moveHoldingDown(h.id)"
+                            :disabled="idx === getOrderedHoldings().length - 1"
+                            :data-testid="'m-holdings-move-down-' + h.id"
+                            class="flex-1 px-3 py-2 rounded-md text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 min-h-[44px] disabled:opacity-40 disabled:cursor-not-allowed">
+                      <span x-text="'↓ ' + (idx === getOrderedHoldings().length - 1 ? t('holdings.moveDownDisabled') : t('holdings.moveDown'))"></span>
+                    </button>
+                  </div>
+                </div>
+              </details>
+            </div>
+          </template>
+          <div x-show="holdings.length === 0"
+               data-testid="holdings-empty-mobile"
+               class="p-8 text-center text-slate-400"
+               x-text="t('holdings.empty')"></div>
+        </div>
       </div>
     </section>
     </div>
@@ -633,7 +794,7 @@
       </div>
 
       <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-        <table class="w-full text-sm">
+        <table class="hidden md:table w-full text-sm">
           <thead class="bg-slate-50 border-b border-slate-200">
             <tr>
               <!-- v1.6 — manual record ordering (ADR 0015). New "Order"
@@ -691,6 +852,85 @@
             </tr>
           </tbody>
         </table>
+
+        <!-- v1.9 — Cash stacked card layout for mobile (<md). Mirrors
+             the Holdings cards from commit 3, with a 💰 glyph at the
+             top-left to distinguish cash from debts at a glance (per
+             ADR 0018 cash-debt pattern, R3-Q11 = a). -->
+        <div class="md:hidden divide-y divide-slate-200">
+          <template x-for="(c, idx) in getOrderedCash()" :key="'m-c-' + c.id">
+            <div class="p-4"
+                 :class="{ 'opacity-50': c.inactive }"
+                 :data-testid="'cash-card-row-' + c.id">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="font-semibold text-base leading-tight flex items-center gap-1.5">
+                    <span aria-hidden="true">💰</span>
+                    <span x-text="c.name"></span>
+                  </div>
+                  <div class="mt-0.5 flex flex-wrap gap-1" x-show="c.attributes && Object.keys(c.attributes).length > 0">
+                    <template x-for="(valId, catId) in (c.attributes || {})" :key="catId + '-' + valId">
+                      <span class="text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded"
+                            x-text="getCategoryValueName(catId, valId)"></span>
+                    </template>
+                  </div>
+                </div>
+                <div class="text-right shrink-0">
+                  <div class="text-lg font-semibold tabular leading-tight"
+                       x-text="formatAmount(c.balance, c.currency)"></div>
+                  <div class="text-xs mt-0.5 text-slate-500" x-text="c.currency"></div>
+                </div>
+              </div>
+              <details class="mt-3">
+                <summary class="text-xs text-slate-500 cursor-pointer select-none">Details</summary>
+                <div class="mt-3 space-y-2 text-sm">
+                  <div class="flex justify-between" x-show="c.account_type">
+                    <span class="text-slate-500">Type</span>
+                    <span x-text="c.account_type"></span>
+                  </div>
+                  <div class="flex justify-between" x-show="c.interest_rate != null">
+                    <span class="text-slate-500">Interest rate</span>
+                    <span class="tabular" x-text="(c.interest_rate || 0).toFixed(2) + ' %'"></span>
+                  </div>
+                  <div class="flex justify-between" x-show="c.last_updated">
+                    <span class="text-slate-500">Updated</span>
+                    <span class="text-xs text-slate-600" x-text="c.last_updated ? new Date(c.last_updated).toLocaleDateString() : '—'"></span>
+                  </div>
+                  <div class="flex flex-wrap gap-2 pt-3 border-t border-slate-100">
+                    <button @click="toggleCashInactive(c.id)"
+                            :class="c.inactive ? 'bg-slate-100 text-slate-500' : 'bg-emerald-50 text-emerald-700'"
+                            class="px-3 py-2 rounded-md text-xs font-medium min-h-[44px]"
+                            x-text="c.inactive ? t('cash.inactive') : t('cash.active')"></button>
+                    <button @click="openEditCash(c)"
+                            class="px-3 py-2 rounded-md text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 min-h-[44px]"
+                            x-text="t('cash.edit')"></button>
+                    <button @click="removeCash(c.id)"
+                            class="px-3 py-2 rounded-md text-xs font-medium bg-rose-50 text-rose-700 hover:bg-rose-100 min-h-[44px]"
+                            x-text="t('cash.delete')"></button>
+                  </div>
+                  <div class="flex gap-2 pt-1">
+                    <button @click="moveCashUp(c.id)"
+                            :disabled="idx === 0"
+                            :data-testid="'m-cash-move-up-' + c.id"
+                            class="flex-1 px-3 py-2 rounded-md text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 min-h-[44px] disabled:opacity-40 disabled:cursor-not-allowed">
+                      <span x-text="'↑ ' + (idx === 0 ? t('cash.moveUpDisabled') : t('cash.moveUp'))"></span>
+                    </button>
+                    <button @click="moveCashDown(c.id)"
+                            :disabled="idx === getOrderedCash().length - 1"
+                            :data-testid="'m-cash-move-down-' + c.id"
+                            class="flex-1 px-3 py-2 rounded-md text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 min-h-[44px] disabled:opacity-40 disabled:cursor-not-allowed">
+                      <span x-text="'↓ ' + (idx === getOrderedCash().length - 1 ? t('cash.moveDownDisabled') : t('cash.moveDown'))"></span>
+                    </button>
+                  </div>
+                </div>
+              </details>
+            </div>
+          </template>
+          <div x-show="cashAccounts.length === 0"
+               data-testid="cash-empty-mobile"
+               class="p-8 text-center text-slate-400"
+               x-text="t('cash.empty')"></div>
+        </div>
       </div>
     </section>
 
@@ -703,7 +943,7 @@
       </div>
 
       <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-        <table class="w-full text-sm">
+        <table class="hidden md:table w-full text-sm">
           <thead class="bg-slate-50 border-b border-slate-200">
             <tr>
               <!-- v1.6 — manual record ordering (ADR 0015). New "Order"
@@ -761,6 +1001,90 @@
             </tr>
           </tbody>
         </table>
+
+        <!-- v1.9 — Debts stacked card layout for mobile (<md). Mirrors
+             the Holdings cards from commit 3, with a ⚠️ glyph + thin
+             amber left-border to differentiate debts from cash at a
+             glance (R3-Q11 = a). Rendered balance keeps the rose-600
+             sign convention used by the desktop table (-d.balance). -->
+        <div class="md:hidden divide-y divide-slate-200">
+          <template x-for="(d, idx) in getOrderedDebts()" :key="'m-d-' + d.id">
+            <div class="p-4 border-l-4 border-amber-300"
+                 :class="{ 'opacity-50': d.inactive }"
+                 :data-testid="'debt-card-row-' + d.id">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="font-semibold text-base leading-tight flex items-center gap-1.5">
+                    <span aria-hidden="true">⚠️</span>
+                    <span x-text="d.name"></span>
+                  </div>
+                  <div class="mt-0.5 flex flex-wrap gap-1" x-show="d.attributes && Object.keys(d.attributes).length > 0">
+                    <template x-for="(valId, catId) in (d.attributes || {})" :key="catId + '-' + valId">
+                      <span class="text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded"
+                            x-text="getCategoryValueName(catId, valId)"></span>
+                    </template>
+                  </div>
+                </div>
+                <div class="text-right shrink-0">
+                  <div class="text-lg font-semibold tabular leading-tight text-rose-600"
+                       x-text="formatAmount(-d.balance, d.currency)"></div>
+                  <div class="text-xs mt-0.5 text-slate-500" x-text="d.currency"></div>
+                </div>
+              </div>
+              <details class="mt-3">
+                <summary class="text-xs text-slate-500 cursor-pointer select-none">Details</summary>
+                <div class="mt-3 space-y-2 text-sm">
+                  <div class="flex justify-between" x-show="d.original != null">
+                    <span class="text-slate-500">Original</span>
+                    <span class="tabular" x-text="formatAmount(d.original, d.currency)"></span>
+                  </div>
+                  <div class="flex justify-between" x-show="d.apr != null">
+                    <span class="text-slate-500">APR</span>
+                    <span class="tabular" x-text="(d.apr || 0).toFixed(2) + ' %'"></span>
+                  </div>
+                  <div class="flex justify-between" x-show="d.min_payment != null">
+                    <span class="text-slate-500">Min payment</span>
+                    <span class="tabular" x-text="formatAmount(d.min_payment, d.currency)"></span>
+                  </div>
+                  <div class="flex justify-between" x-show="d.due_day != null">
+                    <span class="text-slate-500">Due day</span>
+                    <span class="tabular">Day <span x-text="d.due_day"></span></span>
+                  </div>
+                  <div class="flex flex-wrap gap-2 pt-3 border-t border-slate-100">
+                    <button @click="toggleDebtInactive(d.id)"
+                            :class="d.inactive ? 'bg-slate-100 text-slate-500' : 'bg-emerald-50 text-emerald-700'"
+                            class="px-3 py-2 rounded-md text-xs font-medium min-h-[44px]"
+                            x-text="d.inactive ? t('debts.inactive') : t('debts.active')"></button>
+                    <button @click="openEditDebt(d)"
+                            class="px-3 py-2 rounded-md text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 min-h-[44px]"
+                            x-text="t('debts.edit')"></button>
+                    <button @click="removeDebt(d.id)"
+                            class="px-3 py-2 rounded-md text-xs font-medium bg-rose-50 text-rose-700 hover:bg-rose-100 min-h-[44px]"
+                            x-text="t('debts.delete')"></button>
+                  </div>
+                  <div class="flex gap-2 pt-1">
+                    <button @click="moveDebtUp(d.id)"
+                            :disabled="idx === 0"
+                            :data-testid="'m-debts-move-up-' + d.id"
+                            class="flex-1 px-3 py-2 rounded-md text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 min-h-[44px] disabled:opacity-40 disabled:cursor-not-allowed">
+                      <span x-text="'↑ ' + (idx === 0 ? t('debts.moveUpDisabled') : t('debts.moveUp'))"></span>
+                    </button>
+                    <button @click="moveDebtDown(d.id)"
+                            :disabled="idx === getOrderedDebts().length - 1"
+                            :data-testid="'m-debts-move-down-' + d.id"
+                            class="flex-1 px-3 py-2 rounded-md text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 min-h-[44px] disabled:opacity-40 disabled:cursor-not-allowed">
+                      <span x-text="'↓ ' + (idx === getOrderedDebts().length - 1 ? t('debts.moveDownDisabled') : t('debts.moveDown'))"></span>
+                    </button>
+                  </div>
+                </div>
+              </details>
+            </div>
+          </template>
+          <div x-show="debts.length === 0"
+               data-testid="debts-empty-mobile"
+               class="p-8 text-center text-slate-400"
+               x-text="t('debts.empty')"></div>
+        </div>
       </div>
     </section>
     </div>
@@ -1176,10 +1500,17 @@
                 <p class="mt-1" x-text="t('rebalance.noMatched.subtitle')"></p>
               </div>
 
-              <!-- Candidate rows table. -->
+              <!-- v1.9 — Mobile candidate row cards (ADR 0018). Render
+                   in place of the `<table>` (which is `hidden md:table`
+                   so it disappears <md). Same data source
+                   (`ruleCandidate.matchedRecords`); the desktop table
+                   keeps the v1.8 layout verbatim. The original table
+                   wraps in `overflow-x-auto` so we leave that wrapper
+                   around the table to preserve the existing horizontal
+                   scroll behavior at ≥md. -->
               <div x-show="ruleCandidate.matchedRecords && ruleCandidate.matchedRecords.length > 0"
                    class="overflow-x-auto">
-                <table class="w-full text-sm">
+                <table class="hidden md:table w-full text-sm">
                   <thead>
                     <tr class="text-xs text-slate-500 border-b border-slate-200">
                       <th class="text-left px-3 py-2 font-medium" x-text="ruleCandidate.kind === 'cash' ? 'Account' : 'Ticker'"></th>
@@ -1230,6 +1561,65 @@
                     </template>
                   </tbody>
                 </table>
+
+                <!-- v1.9 — Per-record mobile cards. Source of truth for
+                     each row stays the same; mobile rendering uses the
+                     `recordId` as the `m-` keyed id to avoid Alpine
+                     aliasing the desktop iteration. Primary tier shows
+                     ticker + currency + delta + action text; secondary
+                     tier (`<details>`) opens for currentValue / current
+                     price / 52w bar / targetValue. The v1.8 52w bar
+                     regression at `tests/browser/rebalance.spec.js:209`
+                     (`left: 50%` + price-cell contains '600') continues
+                     to pass — `week52Style(record)` is shared between
+                     the two iterations, and `record.current_price` is
+                     now properly populated by the v1.8 enrichment. -->
+                <div class="md:hidden space-y-2">
+                  <template x-for="record in ruleCandidate.matchedRecords" :key="'m-' + record.recordId">
+                    <div class="bg-white border border-slate-200 rounded-lg p-3"
+                         :data-testid="'rebalance-candidate-card-' + record.recordId">
+                      <div class="flex items-start justify-between gap-3">
+                        <div class="min-w-0">
+                          <div class="font-semibold text-base" x-text="record.ticker || record.name || record.recordId"></div>
+                          <div class="text-xs text-slate-500 mt-0.5" x-text="record.currency"></div>
+                        </div>
+                        <div class="text-right shrink-0">
+                          <div class="text-base font-semibold tabular"
+                               :class="(record.delta && record.delta.deltaValue >= 0) ? 'text-emerald-600' : 'text-rose-600'"
+                               x-text="(record.delta && record.delta.deltaValue >= 0 ? '+' : '−') + formatAmountNative(record.delta && record.delta.deltaValue ? Math.abs(record.delta.deltaValue) : 0, record.currency)"></div>
+                        </div>
+                      </div>
+                      <div class="mt-2 text-sm text-slate-600" x-text="formatRebalanceAction(record)"></div>
+                      <details class="mt-2">
+                        <summary class="text-xs text-slate-500 cursor-pointer select-none">Details</summary>
+                        <div class="mt-2 space-y-2 text-sm">
+                          <div class="flex justify-between">
+                            <span class="text-slate-500">Current value</span>
+                            <span class="tabular" x-text="formatAmountNative(record.currentValue, record.currency)"></span>
+                          </div>
+                          <div class="flex justify-between" x-show="ruleCandidate.kind === 'holding'">
+                            <span class="text-slate-500">Current price</span>
+                            <span class="tabular"
+                                  x-text="record.current_price != null ? formatAmountNative(record.current_price, record.currency) : '—'"></span>
+                          </div>
+                          <div class="week52-bar" x-show="ruleCandidate.kind === 'holding' && record.high_52w != null && record.low_52w != null">
+                            <div class="week52-track">
+                              <div class="week52-marker" :style="week52Style(record)"></div>
+                            </div>
+                            <div class="week52-labels">
+                              <span x-text="formatAmountNative(record.low_52w, record.currency)"></span>
+                              <span x-text="formatAmountNative(record.high_52w, record.currency)"></span>
+                            </div>
+                          </div>
+                          <div class="flex justify-between">
+                            <span class="text-slate-500">Target value</span>
+                            <span class="tabular" x-text="formatAmountNative(record.targetValue, record.currency)"></span>
+                          </div>
+                        </div>
+                      </details>
+                    </div>
+                  </template>
+                </div>
               </div>
             </div>
           </template>

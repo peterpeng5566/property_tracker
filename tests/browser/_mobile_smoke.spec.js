@@ -386,14 +386,36 @@ test.describe(`portfolio.html mobile smoke (414×736)`, () => {
       await waitForAlpine(page);
       await navigateTo(page, 'cash_debt');
 
-      const tables = await page.evaluate(() => {
-        return Array.from(document.querySelectorAll('table.w-full.text-sm')).map(t => ({
-          display: getComputedStyle(t).display,
-        }));
+      // The page has many `table.w-full.text-sm` matches (Holdings,
+      // Plans drift, Home page group tables in the x-show-hidden
+      // parent, etc.). Scope the assertion to ONLY the tables inside
+      // the cash + debts sections to avoid asserting on tables that
+      // are hidden via the parent's x-show rather than their own
+      // classes.
+      const sections = await page.evaluate(() => {
+        // The cash and debts sections are wrapped in <section>
+        // elements; the second <section> on this page is "Debts".
+        // Find them via the empty-state rows (or via the `<h2>` text)
+        // and check the table inside.
+        const allSections = Array.from(document.querySelectorAll('section'));
+        // The two tables relevant here are the ones whose headers
+        // point to `t('cash.empty')` (within the cash section) and
+        // `t('debts.empty')` (within the debts section). We find them
+        // by walking up from the empty-state <td>/<div>.
+        const cashEmptyRow = Array.from(document.querySelectorAll('tr'))
+          .find(tr => tr.querySelector('td[colspan]') && /cash/i.test(tr.textContent || ''));
+        const debtsEmptyRow = Array.from(document.querySelectorAll('tr'))
+          .find(tr => tr.querySelector('td[colspan]') && /debts/i.test(tr.textContent || ''));
+        const cashTable = cashEmptyRow ? cashEmptyRow.closest('table') : null;
+        const debtsTable = debtsEmptyRow ? debtsEmptyRow.closest('table') : null;
+        return {
+          cashTableDisplay: cashTable ? getComputedStyle(cashTable).display : null,
+          debtsTableDisplay: debtsTable ? getComputedStyle(debtsTable).display : null,
+          allSectionsCount: allSections.length,
+        };
       });
-      // Expect both tables (cash + debts) to be hidden at < md.
-      expect(tables.length).toBeGreaterThanOrEqual(2);
-      expect(tables.every(t => t.display === 'none'), `all tables should be display:none; got: ${JSON.stringify(tables)}`).toBe(true);
+      expect(sections.cashTableDisplay, 'cash table should be display:none at < md').toBe('none');
+      expect(sections.debtsTableDisplay, 'debts table should be display:none at < md').toBe('none');
     });
   });
 
@@ -432,11 +454,17 @@ test.describe(`portfolio.html mobile smoke (414×736)`, () => {
       await waitForAlpine(page);
       await navigateTo(page, 'rebalance');
 
+      // Find the candidate table by walking up from a candidate-row
+      // testid, so we don't accidentally assert on a different page's
+      // table that hasn't been hidden (Holdings / Cash / Debts /
+      // Plans drift all live on this page in the DOM but in different
+      // parents).
       const tableDisplay = await page.evaluate(() => {
-        const t = document.querySelector('table.w-full.text-sm');
-        return t ? getComputedStyle(t).display : null;
+        const candidateRow = document.querySelector('[data-testid^="rebalance-rule-candidate-"]');
+        const table = candidateRow ? candidateRow.closest('table') : null;
+        return table ? getComputedStyle(table).display : null;
       });
-      expect(tableDisplay, 'rebalance table should be display:none at < md').toBe('none');
+      expect(tableDisplay, 'rebalance candidate table should be display:none at < md').toBe('none');
     });
   });
 
