@@ -502,32 +502,48 @@ test.describe(`portfolio.html mobile smoke (414×736)`, () => {
       await page.addInitScript(initScript(emptyFixture()));
       await waitForAlpine(page);
 
-      // Note: Playwright's `locator.click()` doesn't fire the @click
-      // handler on inline-SVG-icon buttons in headless Chromium at
-      // 414 px for this app (works for text-only buttons like the
-      // language toggle). We dispatch a synthetic click via JS to
-      // reach the same code path users hit on a real device.
-      await page.evaluate(() => {
-        const h = document.querySelector('[data-testid="header-hamburger"]');
-        h.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-      });
+      // Real `locator.click()` works here (no SVG icon, no click.outside
+      // race). Dispatching the click directly to the button via JS would
+      // also pass, but the real click verifies the real-device path.
+      await page.locator('[data-testid="header-hamburger"]').click();
       await expect(page.locator('[data-testid="mobile-nav-drawer"]')).toBeVisible();
+    });
+
+    // Regression: v1.9 hot fix — Alpine's `@click.outside` on the drawer
+    // once fired for the *same* click event that just opened the drawer,
+    // toggling `mobileNavOpen` true → false in a single tick. The drawer
+    // briefly appeared then disappeared, which the previous `toBeVisible()`
+    // test could not catch (it would observe the ~30 ms window of visibility).
+    // Assert on the *stable* state 500 ms after the click and on the
+    // `mobileNavOpen` flag, not just visibility.
+    test('at 414 px, a single real click on the hamburger LEAVES the drawer open (regression for @click.outside race)', async ({ page }) => {
+      await page.addInitScript(initScript(emptyFixture()));
+      await waitForAlpine(page);
+
+      await page.locator('[data-testid="header-hamburger"]').click();
+      // wait long enough that any race-condition close would have settled
+      await page.waitForTimeout(500);
+
+      const open = await page.evaluate(() => window.Alpine.$data(document.querySelector('[x-data]')).mobileNavOpen);
+      const drawerInDom = await page.evaluate(() => !!document.querySelector('[data-testid="mobile-nav-drawer"]'));
+      expect(open, 'mobileNavOpen should still be true 500 ms after the click').toBe(true);
+      expect(drawerInDom, 'drawer should still be in the DOM 500 ms after the click').toBe(true);
     });
 
     test('at 414 px, clicking the backdrop closes the drawer', async ({ page }) => {
       await page.addInitScript(initScript(emptyFixture()));
       await waitForAlpine(page);
 
-      await page.evaluate(() => {
-        const h = document.querySelector('[data-testid="header-hamburger"]');
-        h.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-      });
+      await page.locator('[data-testid="header-hamburger"]').click();
       await expect(page.locator('[data-testid="mobile-nav-drawer"]')).toBeVisible();
-      await page.evaluate(() => {
-        const b = document.querySelector('[data-testid="mobile-nav-backdrop"]');
-        b.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-      });
-      await expect(page.locator('[data-testid="mobile-nav-drawer"]')).toBeHidden();
+
+      // The backdrop is `fixed inset-0`; the drawer (`w-72 max-w-[85vw]`)
+      // sits on the right. Click the left edge of the viewport to hit
+      // backdrop only (not the drawer).
+      await page.mouse.click(20, 400);
+      await page.waitForTimeout(300);
+      const open = await page.evaluate(() => window.Alpine.$data(document.querySelector('[x-data]')).mobileNavOpen);
+      expect(open, 'mobileNavOpen should be false after backdrop click').toBe(false);
     });
   });
 
