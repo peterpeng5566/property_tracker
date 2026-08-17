@@ -1,4 +1,4 @@
-# 0018 — Mobile Responsiveness (414 px floor)
+# 0020 — Mobile Responsiveness (414 px floor)
 
 ## Status
 

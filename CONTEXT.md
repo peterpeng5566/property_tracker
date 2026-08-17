@@ -153,19 +153,19 @@ The 414 px (iPhone 6 Plus / Max baseline) horizontal floor below which the app s
 _Avoid_: small screen (vague), responsive (overloaded — describe the shape, not the technique)
 
 **Hamburger drawer**:
-The left-side trigger button (`☰` / `✕` glyph) in the header that toggles a right-side slide-in drawer (`w-72`, fixed top-right, `z-50`). Replaces the second-row 8-tab nav at < md so the header's right cluster (currency / language / refresh / sync) plus the drawer still fit within 414 px. Backdrop (`fixed inset-0 bg-black/40 z-40`) clicks close the drawer. Drawer buttons reuse existing navigate handlers plus `mobileNavOpen = false`. See ADR 0018.
+The left-side trigger button (`☰` / `✕` glyph) in the header that toggles a right-side slide-in drawer (`w-72`, fixed top-right, `z-50`). Replaces the second-row 8-tab nav at < md so the header's right cluster (currency / language / refresh / sync) plus the drawer still fit within 414 px. Backdrop (`fixed inset-0 bg-black/40 z-40`) clicks close the drawer. Drawer buttons reuse existing navigate handlers plus `mobileNavOpen = false`. See ADR 0020.
 _Avoid_: mobile menu (vague), hamburger menu (describes the trigger but not the slide-in behavior)
 
 **Stacked card layout**:
-Per-record card rendered instead of a `<table>` row at < md. The card's primary tier (ticker / shares / value / day-delta for Holdings; name + balance for Cash/Debts; value name + drift for Plans drift; ticker + delta + action for Rebalance candidate) is always visible. Secondary fields (cost / price / 52w bar / gain-loss / Active / Edit / Delete / order buttons for Holdings; account_type / interest_rate / last-updated for Cash; etc.) live inside `<details>` and reveal on tap. Implemented via dual markup: desktop `<tr>` wrapped with `hidden md:table`, mobile `<div>` wrapped with `md:hidden`. See ADR 0018.
+Per-record card rendered instead of a `<table>` row at < md. The card's primary tier (ticker / shares / value / day-delta for Holdings; name + balance for Cash/Debts; value name + drift for Plans drift; ticker + delta + action for Rebalance candidate) is always visible. Secondary fields (cost / price / 52w bar / gain-loss / Active / Edit / Delete / order buttons for Holdings; account_type / interest_rate / last-updated for Cash; etc.) live inside `<details>` and reveal on tap. Implemented via dual markup: desktop `<tr>` wrapped with `hidden md:table`, mobile `<div>` wrapped with `md:hidden`. See ADR 0020.
 _Avoid_: card view (overloaded with snapshot cards v1.5), mobile table (describes CSS, not data shape)
 
 **Details expansion**:
-HTML `<details>/<summary>` elements used inside every mobile card's secondary tier. CSS gives a custom `+` / `−` marker (browser default is hidden). Zero JavaScript state, native keyboard / screen-reader support, no Alpine binding required. See ADR 0018.
+HTML `<details>/<summary>` elements used inside every mobile card's secondary tier. CSS gives a custom `+` / `−` marker (browser default is hidden). Zero JavaScript state, native keyboard / screen-reader support, no Alpine binding required. See ADR 0020.
 _Avoid_: collapse (overloaded with Alpine `x-collapse`), accordion (implies multi-open behaviour), expandable card
 
 **Touch target**:
-The minimum size of an independent action button the user can reliably tap with a thumb. Per Apple HIG and Material Design consensus: ≥44×44 pt on standalone buttons. Inside a `<details>` block, buttons inherit the surrounding card padding for additional hit area so a slightly smaller button remains tappable. Buttons inside table rows on desktop rely on cell padding for effective hit area. See ADR 0018.
+The minimum size of an independent action button the user can reliably tap with a thumb. Per Apple HIG and Material Design consensus: ≥44×44 pt on standalone buttons. Inside a `<details>` block, buttons inherit the surrounding card padding for additional hit area so a slightly smaller button remains tappable. Buttons inside table rows on desktop rely on cell padding for effective hit area. See ADR 0020.
 _Avoid_: tap target, button size (vague), accessibility target (overloaded with screen-reader concerns)
 
 ## Snapshots

@@ -133,7 +133,7 @@
       .refresh-btn { padding-left: 0.5rem; padding-right: 0.5rem; }
     }
 
-    /* v1.9 — Mobile responsiveness (ADR 0018): custom + / − marker for
+    /* v1.9 — Mobile responsiveness (ADR 0020): custom + / − marker for
        `<details>/<summary>` (R3-Q13=a). Hides the default Safari /
        Chrome triangle marker and renders a CSS-controlled glyph so we
        have predictable alignment across iOS Safari and Android Chrome.
@@ -159,7 +159,7 @@
   <!-- Header -->
   <header class="bg-white border-b border-slate-200">
     <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between gap-2">
-      <!-- v1.9 — hamburger trigger (ADR 0018 ticket 02 commit 2).
+      <!-- v1.9 — hamburger trigger (ADR 0020 ticket 02 commit 2).
            LEFT side of header (R2-Q16=left); the right cluster already
            carries 4 buttons and would push further if the hamburger
            joined. Hidden ≥md via .md:hidden. Touch target ≥44 px
@@ -271,7 +271,7 @@
     </div>
   </div>
 
-  <!-- Tab bar — v1.9 (ADR 0018 ticket 02 commit 2): at <md the 8 tabs
+  <!-- Tab bar — v1.9 (ADR 0020 ticket 02 commit 2): at <md the 8 tabs
        overflow 414 px (audit hot-list #1). Hidden via per-button
        `hidden md:inline-block` (computed display: none at <md, so the
        regression net's `getComputedStyle().display !== 'none'`
@@ -476,7 +476,7 @@
                data-testid="drift-card-one-record-warning"
                x-text="t('plan.drift.oneRecordWarning')"></p>
 
-            <!-- v1.9 — Mobile-friendly stacked key-value (ADR 0018). The
+            <!-- v1.9 — Mobile-friendly stacked key-value (ADR 0020). The
                  desktop table keeps its 4-col layout verbatim; on <md
                  it disappears and is replaced by a list of stack rows
                  (value name + drift delta per value). Target/actual
@@ -683,7 +683,7 @@
              template with the `m-` key prefix so Alpine's diff
              doesn't confuse the two.
 
-             Per ADR 0018 §4 (R2-Q7=a): primary fields always visible
+             Per ADR 0020 §4 (R2-Q7=a): primary fields always visible
              are ticker + shares + value + day-delta. Secondary fields
              (cost / price / 52w / gainLoss / Active / Edit / Delete /
              order buttons) live inside `<details>` and reveal on tap.
@@ -856,7 +856,7 @@
         <!-- v1.9 — Cash stacked card layout for mobile (<md). Mirrors
              the Holdings cards from commit 3, with a 💰 glyph at the
              top-left to distinguish cash from debts at a glance (per
-             ADR 0018 cash-debt pattern, R3-Q11 = a). -->
+             ADR 0020 cash-debt pattern, R3-Q11 = a). -->
         <div class="md:hidden divide-y divide-slate-200">
           <template x-for="(c, idx) in getOrderedCash()" :key="'m-c-' + c.id">
             <div class="p-4"
@@ -1500,7 +1500,7 @@
                 <p class="mt-1" x-text="t('rebalance.noMatched.subtitle')"></p>
               </div>
 
-              <!-- v1.9 — Mobile candidate row cards (ADR 0018). Render
+              <!-- v1.9 — Mobile candidate row cards (ADR 0020). Render
                    in place of the `<table>` (which is `hidden md:table`
                    so it disappears <md). Same data source
                    (`ruleCandidate.matchedRecords`); the desktop table
@@ -2299,7 +2299,7 @@
 
   </main>
 
-  <!-- v1.9 — Mobile nav backdrop + drawer (ADR 0018 ticket 02 commit 2).
+  <!-- v1.9 — Mobile nav backdrop + drawer (ADR 0020 ticket 02 commit 2).
        Siblings to <main> so the backdrop can cover the full viewport
        (z-40) and the drawer slides in from the right at z-50. The
        hamburger trigger is .md:hidden so desktop users never toggle
@@ -3473,7 +3473,7 @@
       displayCurrency: 'TWD',
       language: 'en',
       currentPage: 'home',
-      // v1.9 — header hamburger drawer state (ADR 0018, ticket 02
+      // v1.9 — header hamburger drawer state (ADR 0020, ticket 02
       // commit 2). Toggled by the hamburger button (header left)
       // and the backdrop; closing also happens implicitly when a
       // drawer nav link invokes a navigateTo* helper. Drawer is

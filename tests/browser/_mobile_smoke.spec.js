@@ -128,7 +128,7 @@ function populatedHoldingsFixture() {
 }
 
 // 3 cash accounts + 2 debts — exercises the icon + amber border
-// distinction called out in ADR 0018.
+// distinction called out in ADR 0020.
 function populatedCashDebtsFixture() {
   return {
     version: '1.1',
