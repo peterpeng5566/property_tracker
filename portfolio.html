@@ -1292,7 +1292,7 @@
                 <input type="text"
                        x-model="rule.name"
                        data-testid="plan-rule-name"
-                       placeholder="e.g. Domestic equities"
+                       :placeholder="t('plan.editor.ruleNamePlaceholder')"
                        class="text-sm w-full max-w-md border border-slate-200 focus:border-slate-400 focus:outline-none px-3 py-2 rounded-md">
                 <p x-show="!rule.name || !rule.name.trim()"
                    class="text-xs text-rose-600 mt-1"
@@ -2400,7 +2400,7 @@
       <form @submit.prevent="saveHolding()" class="space-y-4">
         <div>
           <label class="block text-sm font-medium text-slate-700 mb-1" x-text="t('modal.ticker')"></label>
-          <input type="text" x-model="form.ticker" required placeholder="e.g., 2330.TW or AAPL"
+          <input type="text" x-model="form.ticker" required :placeholder="t('modal.tickerPlaceholder')"
                  class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
           <p class="text-xs text-slate-500 mt-1" x-text="t('modal.tickerHelp')"></p>
         </div>
@@ -2421,12 +2421,12 @@
         <div class="grid grid-cols-2 gap-3">
           <div>
             <label class="block text-sm font-medium text-slate-700 mb-1" x-text="t('modal.costPerShare')"></label>
-            <input type="number" x-model.number="form.cost" required min="0" step="0.01" placeholder="per share"
+            <input type="number" x-model.number="form.cost" required min="0" step="0.01" :placeholder="t('modal.costPerSharePlaceholder')"
                    class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
           </div>
           <div>
             <label class="block text-sm font-medium text-slate-700 mb-1" x-text="t('modal.currentPrice')"></label>
-            <input type="number" x-model.number="form.current_price" min="0" step="0.01" placeholder="per share"
+            <input type="number" x-model.number="form.current_price" min="0" step="0.01" :placeholder="t('modal.currentPricePlaceholder')"
                    class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
             <p class="text-xs text-slate-500 mt-1" x-text="t('modal.currentPriceHelp')"></p>
           </div>
@@ -2857,11 +2857,14 @@
       'modal.addTitle': 'New Holding',
       'modal.editTitle': 'Edit Holding',
       'modal.ticker': 'Ticker',
+      'modal.tickerPlaceholder': 'e.g., 2330.TW or AAPL',
       'modal.tickerHelp': 'TW stocks add .TW (e.g., 2330.TW), US stocks use ticker (e.g., AAPL)',
       'modal.shares': 'Shares',
       'modal.currency': 'Currency',
       'modal.costPerShare': 'Cost / share',
+      'modal.costPerSharePlaceholder': 'per share',
       'modal.currentPrice': 'Current Price / share',
+      'modal.currentPricePlaceholder': 'per share',
       'modal.currentPriceHelp': 'Manual for now; Yahoo Finance later',
       'modal.attributes': 'Attributes',
       'modal.cancel': 'Cancel',
@@ -2910,6 +2913,7 @@
       'plan.editor.moveUp': 'Move up',
       'plan.editor.moveDown': 'Move down',
       'plan.editor.ruleName': 'Rule name',
+      'plan.editor.ruleNamePlaceholder': 'e.g., Domestic equities',
       'plan.editor.ruleNameRequired': 'Rule name required',
       'plan.editor.ruleWhen': 'When (records must match)',
       'plan.editor.ruleDistribute': 'Distribute (target distribution)',
@@ -3278,11 +3282,14 @@
       'modal.addTitle': '新增 Holding',
       'modal.editTitle': '編輯 Holding',
       'modal.ticker': 'Ticker',
+      'modal.tickerPlaceholder': 'e.g., 2330.TW 或 AAPL',
       'modal.tickerHelp': '台股加 .TW（例如 2330.TW），美股直接 ticker（AAPL）',
       'modal.shares': '股數',
       'modal.currency': '幣別',
       'modal.costPerShare': '每股成本',
+      'modal.costPerSharePlaceholder': 'per share',
       'modal.currentPrice': '每股現價',
+      'modal.currentPricePlaceholder': 'per share',
       'modal.currentPriceHelp': '暫時手動輸入；未來 Yahoo Finance 自動更新',
       'modal.attributes': '屬性',
       'modal.cancel': '取消',
@@ -3324,6 +3331,7 @@
       'plan.editor.moveUp': '上移',
       'plan.editor.moveDown': '下移',
       'plan.editor.ruleName': 'Rule 名稱',
+      'plan.editor.ruleNamePlaceholder': 'e.g., 國內股票',
       'plan.editor.ruleNameRequired': 'Rule 名稱為必填',
       'plan.editor.ruleWhen': 'When（記錄需符合）',
       'plan.editor.ruleDistribute': 'Distribute（目標分配）',

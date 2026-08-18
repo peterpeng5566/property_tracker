@@ -31,6 +31,9 @@ const EN_NAME_PLACEHOLDER = 'e.g., Taishin Bank savings';
 const EN_DEBT_PLACEHOLDER = 'e.g., Mortgage, student loan, personal loan';
 const ZH_NAME_PLACEHOLDER = 'e.g., 台新銀行活存';
 const ZH_DEBT_PLACEHOLDER = 'e.g., 房貸、學貸、信貸';
+const EN_TICKER_PLACEHOLDER = 'e.g., 2330.TW or AAPL';
+const ZH_TICKER_PLACEHOLDER = 'e.g., 2330.TW 或 AAPL';
+const PER_SHARE_PLACEHOLDER = 'per share';
 
 function emptyFixture(language) {
   return {
@@ -91,6 +94,14 @@ async function openDebtModal(page) {
   await page.waitForTimeout(150);
 }
 
+async function openHoldingModal(page) {
+  await page.evaluate(() => {
+    const root = document.querySelector('[x-data]');
+    window.Alpine.$data(root).showModal = true;
+  });
+  await page.waitForTimeout(150);
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // E2E
 // ──────────────────────────────────────────────────────────────────────
@@ -130,5 +141,59 @@ test.describe('v1.10 — i18n modal placeholders (Cash + Debt)', () => {
 
     const placeholder = await page.locator('input[x-model="debtForm.name"]').getAttribute('placeholder');
     expect(placeholder, 'zh debts.name placeholder must come from i18n').toBe(ZH_DEBT_PLACEHOLDER);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // v1.10 ticket 02 — sibling of the Cash + Debt commit. The Add Holding
+  // modal's ticker / cost / current-price inputs were still hardcoded
+  // `placeholder="..."` in English.
+  // ──────────────────────────────────────────────────────────────────────
+
+  test('in EN locale, the Add Holding modal ticker placeholder is localised', async ({ page }) => {
+    await page.addInitScript(initScript(emptyFixture('en')));
+    await waitForAlpine(page);
+    await openHoldingModal(page);
+
+    const placeholder = await page.locator('input[x-model="form.ticker"]').getAttribute('placeholder');
+    expect(placeholder, 'EN modal.ticker placeholder must come from i18n').toBe(EN_TICKER_PLACEHOLDER);
+  });
+
+  test('in zh locale, the Add Holding modal ticker placeholder is localised', async ({ page }) => {
+    await page.addInitScript(initScript(emptyFixture('zh')));
+    await waitForAlpine(page);
+    await openHoldingModal(page);
+
+    const placeholder = await page.locator('input[x-model="form.ticker"]').getAttribute('placeholder');
+    expect(placeholder, 'zh modal.ticker placeholder must come from i18n').toBe(ZH_TICKER_PLACEHOLDER);
+  });
+
+  test('in EN locale, the Add Holding modal cost placeholder is localised', async ({ page }) => {
+    await page.addInitScript(initScript(emptyFixture('en')));
+    await waitForAlpine(page);
+    await openHoldingModal(page);
+
+    // NB: `x-model.number="form.cost"` — CSS attribute selectors can't
+    // contain `.` in the attribute name. Use `page.evaluate` +
+    // `getAttribute` (which accepts any attribute name) to read the
+    // placeholder directly.
+    const placeholder = await page.evaluate(() => {
+      const inputs = document.querySelectorAll('[x-show="showModal"] input');
+      const found = [...inputs].find(i => i.getAttribute('x-model.number') === 'form.cost');
+      return found ? found.getAttribute('placeholder') : null;
+    });
+    expect(placeholder, 'EN modal.costPerShare placeholder must come from i18n').toBe(PER_SHARE_PLACEHOLDER);
+  });
+
+  test('in zh locale, the Add Holding modal current-price placeholder is localised', async ({ page }) => {
+    await page.addInitScript(initScript(emptyFixture('zh')));
+    await waitForAlpine(page);
+    await openHoldingModal(page);
+
+    const placeholder = await page.evaluate(() => {
+      const inputs = document.querySelectorAll('[x-show="showModal"] input');
+      const found = [...inputs].find(i => i.getAttribute('x-model.number') === 'form.current_price');
+      return found ? found.getAttribute('placeholder') : null;
+    });
+    expect(placeholder, 'zh modal.currentPrice placeholder must come from i18n').toBe(PER_SHARE_PLACEHOLDER);
   });
 });
