@@ -141,7 +141,14 @@
        app (Holdings, Cash/Debts, Plans drift, Rebalance candidate). */
     summary::-webkit-details-marker { display: none; }
     summary { list-style: none; }
-    summary::before {
+    /* The header menu is the documented exception: its summary is a
+       single "⋯" glyph (no expand/collapse indicator needed). The
+       `:not(.header-menu)` opt-out was added in v1.13 after the
+       global rule was observed to leak into the header menu at 414px
+       (rendered as "+ ⋯" instead of "⋯"). Any future mobile-card
+       <details> without the .header-menu class still gets the +/−
+       indicator for free. */
+    :not(.header-menu) > summary::before {
       content: '+';
       display: inline-block;
       width: 1rem;
@@ -149,7 +156,7 @@
       font-weight: 600;
       color: rgb(100 116 139); /* slate-500 */
     }
-    details[open] summary::before { content: '−'; }
+    :not(.header-menu)[open] > summary::before { content: '−'; }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
@@ -173,12 +180,12 @@
         <span aria-hidden="true" x-text="mobileNavOpen ? '✕' : '☰'"></span>
       </button>
       <div>
-        <h1 class="text-xl font-semibold tracking-tight" x-text="t('app.title')"></h1>
-        <p class="text-xs text-slate-500 mt-0.5" x-text="summary"></p>
+        <h1 class="text-base md:text-xl font-semibold tracking-tight" x-text="t('app.title')"></h1>
+        <p class="hidden md:block text-xs text-slate-500 mt-0.5" x-text="summary"></p>
       </div>
       <div class="flex items-center gap-3 flex-wrap">
-        <!-- Language toggle -->
-        <div class="inline-flex rounded-md border border-slate-200 p-0.5 text-sm">
+        <!-- Language toggle (v1.13 — hidden at <md, present in drawer Settings) -->
+        <div class="hidden md:inline-flex rounded-md border border-slate-200 p-0.5 text-sm">
           <button @click="setLanguage('en')"
             :class="language==='en' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'"
             class="px-3 py-1 rounded transition-colors">EN</button>
@@ -196,7 +203,7 @@
                   'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100': refreshState === 'partial',
                   'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100': refreshState === 'error',
                 }"
-                class="refresh-btn text-sm px-3 py-1.5 border rounded-md transition-colors flex items-center gap-1.5">
+                class="refresh-btn text-sm px-3 py-1.5 border rounded-md transition-colors flex items-center gap-1.5 min-h-[44px] min-w-[44px]">
           <span aria-hidden="true">↻</span>
           <span class="refresh-btn-text" x-text="refreshLabel"></span>
         </button>
@@ -210,7 +217,7 @@
           </button>
         </template>
 
-        <!-- Sync (high-frequency inline) -->
+        <!-- Sync (high-frequency inline; v1.13 — icon-only at <md, full text ≥md) -->
         <button @click="headerClick()"
                 :class="{
                   'border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-slate-900': syncStatus === 'disconnected',
@@ -218,11 +225,14 @@
                   'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100': syncStatus === 'connected',
                   'border-sky-200 bg-sky-50 text-sky-700': syncStatus === 'connecting' || syncStatus === 'syncing',
                 }"
-                class="text-sm px-3 py-1.5 border rounded-md transition-colors"
-                x-text="syncStatusLabel"></button>
+                class="text-sm px-3 py-1.5 border rounded-md transition-colors inline-flex items-center gap-1.5 min-h-[44px] min-w-[44px]"
+                :aria-label="syncStatusLabel">
+          <span aria-hidden="true" x-text="syncStatusIcon"></span>
+          <span class="hidden md:inline" x-text="syncStatusText"></span>
+        </button>
 
-        <!-- Currency toggle (high-frequency inline) -->
-        <div class="inline-flex rounded-md border border-slate-200 p-0.5 text-sm">
+        <!-- Currency toggle (v1.13 — hidden at <md, present in drawer Settings) -->
+        <div class="hidden md:inline-flex rounded-md border border-slate-200 p-0.5 text-sm">
           <button @click="setCurrency('TWD')"
             :class="displayCurrency==='TWD' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'"
             class="px-3 py-1 rounded transition-colors">TWD</button>
@@ -231,8 +241,14 @@
             class="px-3 py-1 rounded transition-colors">USD</button>
         </div>
 
-        <!-- "..." menu (low-frequency: FX rate, import, export) -->
-        <details class="header-menu">
+        <!-- "..." menu (low-frequency: FX rate, import, export).
+             v1.13: @click.outside closes the menu when the user taps
+             anywhere outside <details>. We use $refs.menu.open so we
+             stay on the native <details> open/close semantics (no
+             re-implementation of toggle state). The summary is still
+             a child of <details>, so a click on the summary does NOT
+             register as .outside (verified by regression test). -->
+        <details class="header-menu" x-ref="menu" @click.outside="$refs.menu.open = false">
           <summary aria-label="More actions">⋯</summary>
           <div class="header-menu-items">
             <!-- FX rate (editable) -->
@@ -2387,6 +2403,38 @@
                 data-testid="mobile-nav-rebalance"
                 x-text="t('nav.rebalance')"></button>
       </nav>
+
+      <!-- v1.13: Settings section (mirror of the desktop header
+           EN/中 + TWD/USD controls). On mobile the header cluster
+           is reduced to icon-only (refresh + sync + ⋯); low-frequency
+           controls (language, currency) move here so they're still
+           reachable without a hamburger-then-scroll UX. -->
+      <div class="px-3 py-3 border-t border-slate-200 space-y-3">
+        <div class="px-2 text-xs text-slate-500 uppercase tracking-wide font-medium" x-text="t('nav.settings')"></div>
+        <div class="px-2 space-y-1">
+          <div class="text-xs text-slate-500" x-text="t('nav.language')"></div>
+          <div class="inline-flex rounded-md border border-slate-200 p-0.5 text-sm">
+            <button @click="setLanguage('en')"
+              :class="language==='en' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'"
+              class="px-3 py-1 rounded transition-colors">EN</button>
+            <button @click="setLanguage('zh')"
+              :class="language==='zh' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'"
+              class="px-3 py-1 rounded transition-colors">中</button>
+          </div>
+        </div>
+        <div class="px-2 space-y-1">
+          <div class="text-xs text-slate-500" x-text="t('nav.currency')"></div>
+          <div class="inline-flex rounded-md border border-slate-200 p-0.5 text-sm">
+            <button @click="setCurrency('TWD')"
+              :class="displayCurrency==='TWD' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'"
+              class="px-3 py-1 rounded transition-colors">TWD</button>
+            <button @click="setCurrency('USD')"
+              :class="displayCurrency==='USD' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'"
+              class="px-3 py-1 rounded transition-colors">USD</button>
+          </div>
+        </div>
+      </div>
+
       <div class="px-5 py-3 border-t border-slate-200 text-xs text-slate-500">
         <span class="font-mono" x-text="(data.meta && data.meta.device_id) || '—'"></span>
       </div>
@@ -2774,6 +2822,9 @@
       'nav.categories': 'Categories',
       'nav.backups': 'Backups',
       'nav.rebalance': 'Rebalance',
+      'nav.settings': 'Settings',
+      'nav.language': 'Language',
+      'nav.currency': 'Currency',
       'summary.netWorth': 'Total Net Worth',
       'summary.netWorthSub': '{a} holdings + {c} cash − {d} debts',
       'summary.holdingsValue': 'Holdings Value',
@@ -3118,6 +3169,9 @@
       'nav.categories': 'Categories',
       'nav.backups': '備份與還原',
       'nav.rebalance': '再平衡',
+      'nav.settings': '設定',
+      'nav.language': '語言',
+      'nav.currency': '幣別',
       'nav.snapshots': '快照',
       'snapshots.title': '快照歷史',
       'snapshots.subtitle': '建立快照以記錄當下的資產淨值。超過上限時最舊的快照會自動移除。',
@@ -3777,6 +3831,21 @@
       get syncStatusLabel() {
         const key = `sync.status.${this.syncStatus}`;
         return this.t(key);
+      },
+      // v1.13 — split the label into icon + text so the header
+      // button can render icon-only at <md (text hidden) and full
+      // at ≥md. The leading emoji is shared with the original label
+      // (e.g. "☁️ Not connected") so we re-derive it at render time
+      // rather than maintain a parallel i18n table.
+      get syncStatusIcon() {
+        const label = this.syncStatusLabel;
+        const m = label.match(/^(\p{Extended_Pictographic}+)\s*/u);
+        return m ? m[1] : '☁️';
+      },
+      get syncStatusText() {
+        const label = this.syncStatusLabel;
+        const m = label.match(/^\p{Extended_Pictographic}+\s*/u);
+        return m ? label.slice(m[0].length) : label;
       },
 
       // ---- Refresh prices (v1.1 — ADR 0009 §3) ----
