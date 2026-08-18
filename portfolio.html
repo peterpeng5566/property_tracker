@@ -2468,7 +2468,7 @@
           <label class="block text-sm font-medium text-slate-700 mb-1" x-text="t('cash.name')"></label>
           <input type="text" x-model="cashForm.name" required
                  class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
-                 placeholder="e.g., 台新銀行活存">
+                 :placeholder="t('cash.namePlaceholder')">
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
@@ -2521,7 +2521,7 @@
           <label class="block text-sm font-medium text-slate-700 mb-1" x-text="t('debts.name')"></label>
           <input type="text" x-model="debtForm.name" required
                  class="w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
-                 placeholder="e.g., 房貸、學貸、信貸">
+                 :placeholder="t('debts.namePlaceholder')">
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
@@ -2824,6 +2824,7 @@
       'cash.moveUpDisabled': 'Already at the top',
       'cash.moveDownDisabled': 'Already at the bottom',
       'cash.name': 'Account Name',
+      'cash.namePlaceholder': 'e.g., Taishin Bank savings',
       'cash.balance': 'Balance',
       'cash.addTitle': 'New Cash Account',
       'cash.editTitle': 'Edit Cash Account',
@@ -2844,6 +2845,7 @@
       'debts.moveUpDisabled': 'Already at the top',
       'debts.moveDownDisabled': 'Already at the bottom',
       'debts.name': 'Debt Name',
+      'debts.namePlaceholder': 'e.g., Mortgage, student loan, personal loan',
       'debts.balance': 'Balance Owed',
       'debts.addTitle': 'New Debt',
       'debts.editTitle': 'Edit Debt',
@@ -3243,6 +3245,7 @@
       'cash.moveUpDisabled': '已在最頂端',
       'cash.moveDownDisabled': '已在最底端',
       'cash.name': '帳戶名稱',
+      'cash.namePlaceholder': 'e.g., 台新銀行活存',
       'cash.balance': '餘額',
       'cash.addTitle': '新增現金帳戶',
       'cash.editTitle': '編輯現金帳戶',
@@ -3263,6 +3266,7 @@
       'debts.moveUpDisabled': '已在最頂端',
       'debts.moveDownDisabled': '已在最底端',
       'debts.name': '負債名稱',
+      'debts.namePlaceholder': 'e.g., 房貸、學貸、信貸',
       'debts.balance': '欠款金額',
       'debts.addTitle': '新增負債',
       'debts.editTitle': '編輯負債',
