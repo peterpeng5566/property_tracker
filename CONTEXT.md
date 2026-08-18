@@ -56,7 +56,7 @@ The currency a holding, cash account, or debt is denominated in. Set per record,
 _Avoid_: Source currency, original currency
 
 **Display currency**:
-The currency the user wants all monetary values shown in. Toggles between TWD and USD. Per-record fields (cost, current price) and aggregates (market value, gain/loss, cash, debts, net worth) both follow the toggle.
+The currency the user wants *portfolio totals* shown in. Toggles between TWD and USD. Only **position-level aggregates** (market value, gain/loss, cash balance, debt balance, net worth, home group totals) follow the toggle — these are converted from native currencies via FX and rendered in displayCurrency. **Per-share stock facts** (cost/share, price/share, 52w low/high) stay in the record's **native currency** (listing currency), so a USD-listed holding's cost/share shows `$50.00` whether displayCurrency is TWD or USD. The split reflects two questions: "how much USD do I need to buy this?" (native) vs "how does my portfolio roll up in my reporting currency?" (displayCurrency). See ADR 0021 (act vs measure); same rule first documented in ADR 0017 §6 for the Rebalance page.
 _Avoid_: Base currency, report currency
 
 **FX rate**:
