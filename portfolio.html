@@ -3584,7 +3584,32 @@
 
       // ---- Init ----
       init() {
+        // v1.12 (issue #01): idempotency guard.
+        // init() is called TWICE today: once by Alpine 3 auto-init
+        // (any method named init() on x-data is invoked after mount)
+        // and once by the explicit `x-init="init()"` directive on
+        // the root div. Both are required for the existing behaviour
+        // to keep working; we don't remove either one. But duplicate
+        // side effects (e.g. registering the same $watch twice —
+        // which causes syncNow() to fire twice on every status
+        // transition) are a real problem introduced by this fix.
+        // The flag short-circuits the second call before any state
+        // mutation or watch registration, so the bug class is fixed
+        // for any future watch too.
+        if (this._initialized) return;
+        this._initialized = true;
         this.load();
+        // Persist load-time migrations (ADR 0016 §2 backfill, v1.3
+        // additive field initialisation, v1.4 plan list, v1.5 snapshot
+        // cap normalise, v1.7 settings/categories timestamps). Without
+        // this, the in-memory `data` carries the migrated fields but
+        // localStorage stays un-migrated until the next user edit
+        // fires a save — which the v17-sync regression test was
+        // historically catching as a "settings.updated_at = undefined"
+        // after a fresh page load. The double-init side effect that
+        // made it work before the v1.12 idempotency guard is now
+        // gone; this explicit save() replaces it.
+        this.save();
         this.syncClientId = localStorage.getItem('property_tracker_sync_client_id') || '';
         this.syncClientIdDraft = this.syncClientId;
         this.autoSyncEnabled = localStorage.getItem('property_tracker_auto_sync') !== 'false';
@@ -3597,6 +3622,37 @@
             this.scheduleAutoPush();
           }
         }, { deep: true });
+        // v1.12 (issue #01): when syncStatus transitions from any
+        // non-connected state into 'connected', fire an auto-pull so
+        // the local view reflects the cloud's latest state — without
+        // requiring a manual "Sync now" click.
+        //
+        // Why a $watch on syncStatus and not a direct call from the
+        // OAuth callback? Both paths work, but the $watch is testable
+        // from the outside (Alpine.$data(root).syncStatus = 'connected'
+        // in the regression test) and centralises the "what to do when
+        // connected" rule.
+        //
+        // Rising-edge guard excludes the `syncing → connected`
+        // round-trip that syncNow() itself produces at the end of
+        // every call (otherwise the watch would loop forever:
+        // auto-pull → status flips syncing→connected → watch fires
+        // → another auto-pull). Confirmed by
+        // tests/browser/_sync_auto_pull_loop_guard.spec.js: without
+        // the exclusion the test sees 12 syncNow calls in 1.5 s;
+        // with it, exactly 1.
+        //
+        // The existing 100ms _lastSyncTimestamp guard inside the
+        // data-watcher suppresses the redundant push that would
+        // otherwise fire when syncNow() assigns `data = merged`.
+        // ADR 0002 promises "pull-on-open, push-on-save"; this fills
+        // in the pull half that init() historically left out.
+        this.$watch('syncStatus', (newVal, oldVal) => {
+          if (newVal !== 'connected') return;
+          if (oldVal === 'connected' || oldVal === 'syncing') return;
+          if (!this.syncAccessToken) return;
+          this.syncNow().catch(() => { /* error already in syncError */ });
+        });
         this.waitForGis();
       },
 
