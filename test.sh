@@ -57,7 +57,8 @@ tests/order.test.js \
   tests/serialize.test.js \
   tests/yahoo.test.js \
 tests/migration.test.js \
-tests/rebalance.test.js
+tests/rebalance.test.js \
+  tests/dispatch-event-guard.test.js
 
 echo ""
 echo "✓ All tests passed."
