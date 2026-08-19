@@ -2839,6 +2839,9 @@
       'header.retryFailed': 'Retry {n} failed',
       'header.refreshError': 'Refresh failed: {reason}',
       'header.refreshCancelHint': 'Click to cancel',
+      // v1.15 — completion toast (Q3 P1 layered feedback).
+      'header.refreshToastSuccess': 'Refreshed {n} holdings',
+      'header.refreshToastPartial': 'Refreshed {n} of {total} holdings, {m} failed',
       'header.dismiss': 'Dismiss',
       'holdings.title': 'Holdings',
       'holdings.add': '+ New Holding',
@@ -3267,6 +3270,9 @@
       'header.retryFailed': '重試 {n} 筆失敗',
       'header.refreshError': '重新整理失敗：{reason}',
       'header.refreshCancelHint': '點擊取消',
+      // v1.15 — completion toast (Q3 P1 layered feedback).
+      'header.refreshToastSuccess': '已更新 {n} 個標的',
+      'header.refreshToastPartial': '已更新 {total} 個標的中的 {n} 個，{m} 個失敗',
       'header.dismiss': '關閉',
       'holdings.title': 'Holdings',
       'holdings.add': '+ 新增 Holding',
@@ -3982,6 +3988,35 @@
         // Persist (save() strips in-memory flags; see lib/serialize.js).
         this.save();
         this.scheduleAutoPush();
+
+        // v1.15 — Announce completion via the existing restore-toast bridge
+        // (data-testid="restore-toast"). Skip when cancelled (silent per
+        // Q3 P1) or when no work was attempted (0-active-holdings early
+        // return is a silent no-op). Layered feedback:
+        //   - all success → success toast (emerald)
+        //   - partial     → warning toast (amber) + persistent amber Retry
+        //                   button (refreshState='partial' keeps it visible)
+        //   - full fail   → no toast; the rose banner from refreshButtonClick's
+        //                   pre-flight (portfolio.html:3870) is unchanged
+        // ADR 0022 documents the feedback layering decision.
+        if (!res.cancelled && res.attempts > 0) {
+          const succeeded = res.succeeded.length;
+          const failed = res.failed.length;
+          const total = targetSet.size;
+          if (failed === 0) {
+            this._showToast(
+              this.t('header.refreshToastSuccess', { n: succeeded }),
+              'success'
+            );
+          } else {
+            this._showToast(
+              this.t('header.refreshToastPartial', {
+                n: succeeded, total, m: failed,
+              }),
+              'warning'
+            );
+          }
+        }
       },
 
       // One-line delegation: refresh the tickers that the last run failed on.
