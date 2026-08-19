@@ -288,6 +288,128 @@ test('v1.7: settings stamp trigger — holdings edit does NOT bump settings.upda
   expect(errors).toEqual([]);
 });
 
+// --- v1.16 — refresh stamp trigger (sibling to v1.7 settings stamp) -------
+//
+// Pre-fix diagnosis: `_applyRefreshResult` updated `current_price` /
+// 52w / prev_close but left `holding.updated_at` untouched. mergeById
+// is a strict `>` tie-break, so the price-side refresh never
+// propagated across devices because `updated_at` was still whatever
+// the last manual edit (cost field at holding creation) set it to.
+//
+// v1.16 fix: Refresh bumps `holding.updated_at` (and stamps
+// `holding.device_id`) on each successful Yahoo fetch. Failed
+// fetches leave them untouched (the `_refresh_failed` in-memory
+// flag is unchanged per ADR 0009 §4).
+//
+// This sibling test mirrors the v1.7 settings stamp-trigger test:
+// the same fixture (loaded by addInitScript) is driven through
+// different write paths, and we assert which paths bump the
+// relevant timestamp and which don't.
+
+test('v1.16: refresh stamp trigger — refresh DOES bump holdings.updated_at + device_id; failed fetches do NOT', async ({ page }) => {
+  const errors = collectAppErrors(page);
+
+  // Fixture with TWO holdings so we can drive failure on one and
+  // success on the other in the same _applyRefreshResult call.
+  const fixture = makePreV17Fixture();
+  // Give the first holding a deliberately stale stamp + a known
+  // device_id so we can assert each gets bumped to "now" / DEVICE_ID.
+  fixture.holdings[0].updated_at = '2024-07-01T00:00:00.000Z';
+  fixture.holdings[0].device_id = 'stale-device-from-another-machine';
+  // Add a second holding so we can also verify non-target tickers are
+  // not touched (untouched set stays at its original updated_at).
+  fixture.holdings.push({
+    id: 'h-2',
+    ticker: 'NOTARGET',
+    shares: 5,
+    cost: 50,
+    currency: 'TWD',
+    current_price: 100,
+    updated_at: '2024-07-01T00:00:00.000Z',
+    device_id: 'stale-device-from-another-machine',
+    attributes: {},
+  });
+
+  await page.addInitScript(`
+    localStorage.setItem(${JSON.stringify(STORAGE_KEY)}, JSON.stringify(${JSON.stringify(fixture)}));
+  `);
+  await page.goto('http://localhost:8000/portfolio.html');
+  await page.waitForFunction(() => !!window.Alpine);
+
+  // Capture the device_id resolved at load time (DEVICE_ID is generated
+  // lazily when the fixture's seed 'device_id' key matches
+  // localStorage.getItem('device_id'); the fixture's `meta.device_id`
+  // is a separate key.
+  const liveDeviceId = await page.evaluate(() => localStorage.getItem('device_id'));
+  expect(liveDeviceId).toBeTruthy();
+
+  const stampBefore = await page.evaluate(() => {
+    const root = document.querySelector('[x-data]');
+    const data = window.Alpine.$data(root);
+    return data.data.holdings[0].updated_at;
+  });
+  expect(stampBefore).toBe('2024-07-01T00:00:00.000Z');
+
+  // Drive the seam directly: a single _applyRefreshResult call with
+  // one success and one failure on a target set covering both
+  // tickers. NO real Yahoo round-trip is involved (per the v1.15
+  // refresh-toast spec, this is the "stamp trigger" test family —
+  // we test the shim, not the pipeline).
+  await page.evaluate(() => {
+    const root = document.querySelector('[x-data]');
+    const data = window.Alpine.$data(root);
+    const targetSet = new Set(['2330.TW', 'NOTARGET']);
+    const results = {
+      '2330.TW': {
+        current_price: 615,
+        high_52w: 700,
+        low_52w: 500,
+        prev_close: 600,
+        marketState: 'REGULAR',
+        failed: false,
+      },
+      // NOTARGET simulates a Yahoo-side failure: r && r.failed === true.
+      NOTARGET: { failed: true },
+    };
+    const res = { cancelled: false, attempts: 2, succeeded: ['2330.TW'], failed: ['NOTARGET'] };
+    data._applyRefreshResult(targetSet, results, res);
+  });
+
+  // After the seam ran, we expect:
+  //   - 2330.TW: updated_at bumped to a fresh ISO; device_id stamped to liveDeviceId.
+  //   - NOTARGET: unchanged (failed path leaves updated_at untouched; only
+  //     _refresh_failed flips — which is in-memory only and stripped at save()).
+  //   - And the assignment has propagated to localStorage via the in-shim
+  //     save() call (which is what makes the sync side see the new stamp).
+  const after = await page.evaluate(() => {
+    const raw = localStorage.getItem('property_tracker_portfolio_v1');
+    return JSON.parse(raw);
+  });
+
+  const h0 = after.holdings.find((h) => h.id === 'h-1');
+  const h1 = after.holdings.find((h) => h.id === 'h-2');
+
+  // 1) Success path bumped `updated_at` to a new ISO strictly greater
+  //    than the seeded stale stamp, and stamped `device_id` to DEVICE_ID.
+  expect(h0.updated_at).not.toBe('2024-07-01T00:00:00.000Z');
+  expect(Number.isFinite(Date.parse(h0.updated_at))).toBe(true);
+  expect(Date.parse(h0.updated_at)).toBeGreaterThan(Date.parse('2024-07-01T00:00:00.000Z'));
+  expect(h0.device_id).toBe(liveDeviceId);
+  // Bonus: the price fields were applied too (sanity that the seam
+  // we tested still does its primary job).
+  expect(h0.current_price).toBe(615);
+  expect(h0.high_52w).toBe(700);
+  expect(h0.low_52w).toBe(500);
+  expect(h0.prev_close).toBe(600);
+
+  // 2) Failure path: NOTARGET was in the target set, but its fetch
+  //    failed. `updated_at` and `device_id` MUST be unchanged.
+  expect(h1.updated_at).toBe('2024-07-01T00:00:00.000Z');
+  expect(h1.device_id).toBe('stale-device-from-another-machine');
+
+  expect(errors).toEqual([]);
+});
+
 // --- Scenario 5 — deleteCategory tombstone --------------------------------
 
 test('v1.7: deleteCategory click pushes tombstone with type: "categories" into data.deletions[]', async ({ page }) => {

@@ -229,6 +229,11 @@ _Avoid_: settings sync (generic), config merge (overloaded)
 A documented upstream or environmental constraint that we cannot fix from our side and that we accept without a workaround in code. The canonical example as of v1.11 is Yahoo Finance IP-level rate-limiting of TWSE-listed bond ETFs (`00687B.TWO` / `00695B.TWO` / `00719B.TWO`) — the Cloudflare Worker proxy sits in front of Yahoo and inherits the 429; per-IP rate limiting on our side (ADR 0019) is independent and downstream of Yahoo's limit, not a contributing cause. The fix would be switching data sources (twse.com.tw / finmind.tw) — a feature, not a bug fix, so it stays out of scope. User-facing workaround: edit the holding → manual price entry via the holding modal's "Current Price / share" field. Each known limitation is filed under `.scratch/v1.11-known-limitations/issues/` with `Status: wontfix`.
 _Avoid_: known bug (suggests fix is in flight), known issue (overloaded), edge case (suggests code-level quirk)
 
+## Refresh
+
+**Refresh**:
+A user-triggered bulk read of prices (and 52-week high/low + prev close) for one or more holdings from the Yahoo proxy. Driven from the header *Refresh* button (always visible) or the amber *Retry N failed* button (partial-failure recovery). Refresh is treated as an edit for sync purposes: on success, each refreshed holding's `updated_at` is bumped to now and `device_id` is stamped to the current device — so per-record *Newer-wins merge* (ADR 0004) propagates fresher prices from the device that refreshed last, rather than carrying over the stale price the other device still holds. Failed fetches set `_refresh_failed = true` (in-memory only; stripped at `save()`) and leave `updated_at` untouched (portions of the badge stay attached to the next successful refresh or manual edit). Originating trigger is recorded in `device_id` for forensics.
+_Avoid_: Manual edit (Refresh is system-triggered, but counts as an edit for merge semantics), Snapshot (Refresh is per-holding and live; Snapshot is whole-portfolio and historical), Backup (Refresh is in-memory state; Backup is rollback snapshot), Auto-update (we don't have one — Refresh is the only way prices change)
 
 ## Safety net
 
