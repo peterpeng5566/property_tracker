@@ -96,50 +96,31 @@ Documented as a known limitation in
 
 ## Consequences
 
-### Snapshot's internal `holdings[].updated_at` reflects refresh-time, not snapshot-date
+- **Snapshot internals carry refresh-time `updated_at`, not snapshot-date.**
+  `lib/snapshot.js:115` deep-copies `portfolio`, so a snapshot taken after
+  Refresh shows holdings whose `updated_at` is the most recent successful
+  refresh (which can be earlier than the snapshot's `date`). Intentional —
+  the snapshot is a faithful record of "what live data looked like at this
+  moment". `computeDelta` uses `priceDelta` only, so functional impact is
+  zero. The ADR's `holdings.updated_at` semantics now cover three triggers:
+  (1) manual field edits / `toggleInactive` via the holding modal (line 4696),
+  (2) successful Refresh fetches (this ADR), (3) any future per-holding
+  mutation path that joins the same clock. The merger sees them all as
+  identical "an edit happened"; the originating trigger is recorded in
+  `device_id` for forensics.
 
-`lib/snapshot.js:115` deep-copies `portfolio` via
-`JSON.parse(JSON.stringify(portfolio))`. After Refresh, when the user takes
-a snapshot, the snapshot's internal `holdings[].updated_at` reflects the
-most recent successful refresh, which can be earlier than the snapshot's
-`date`.
+- **Cancelled refresh carries partial success only.** If `res.cancelled === true`
+  (user backed out mid-refresh), `_applyRefreshResult` still runs with the
+  partial results already in `results`. Holdings that succeeded before cancel
+  get the bump; failed ones don't. The v1.15 silent-cancel contract (no
+  toast) is preserved — saves/pushes from a cancelled refresh carry only the
+  partial success, which the user explicitly asked for by cancelling.
 
-This is **intentional** — the snapshot is a faithful record of "what live
-data looked like at this moment", and the refresh-time is the actual
-last-write timestamp of that record. `computeDelta` (lib/snapshot.js:88-89)
-uses `priceDelta` only, so functional impact is zero. Documented
-behaviour: viewing snapshot internals shows "as of last refresh", not
-"as of snapshot date".
-
-### `_refresh_failed` semantics unchanged
-
-The in-memory-only flag `holding._refresh_failed` (ADR 0009 §4) is still
-set only on failure, still stripped at `save()`, still drives the amber
-row badge and "Retry N failed" button. The new bump logic for the success
-path coexists cleanly — only the `if` branch touches `updated_at` /
-`device_id`.
-
-### Manual edit vs system-triggered refresh
-
-The merger sees both as identical "an edit happened". The user-facing
-distinction lives elsewhere:
-
-- `settings.updated_at` still bumps only at edit-path stamps (ADR 0016 §6)
-- `holdings.updated_at` now bumps at: (1) manual field edits via the
-  holding modal (line 4696), (2) `toggleInactive` (line 4696), and
-  (3) **successful Refresh fetches** (this ADR).
-
-Both (1)/(2) and (3) participate in per-record newer-wins merge
-identically. The originating trigger is recorded in
-`meta.device_id` for forensics.
-
-### Refresh-not-bumping-when-cancelled
-
-If `res.cancelled === true` (user backed out mid-refresh), `_applyRefreshResult`
-still runs with whatever partial results are already in `results`. Holdings
-that succeeded before cancel get the bump; failed ones don't. The v1.15
-silent-cancel contract (no toast) is preserved. Saves/pushes from a cancelled
-refresh carry the partial success only — the user explicitly asked for it.
+- **`_refresh_failed` semantics unchanged.** The in-memory-only flag still
+  flips only on failure, still gets stripped at `save()` (ADR 0009 §4),
+  still drives the amber row badge and "Retry N failed" button. The new
+  bump logic on the success path coexists cleanly — only the `if` branch
+  touches `updated_at` / `device_id`.
 
 ## References
 

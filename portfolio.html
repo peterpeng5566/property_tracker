@@ -3976,21 +3976,15 @@
             h.high_52w = r.high_52w;
             h.low_52w = r.low_52w;
             h.prev_close = r.prev_close;
-            // v1.16 — Refresh is treated as an edit for sync merge
-            // (ADR 0023). Bump the holding's `updated_at` and stamp
-            // `device_id` so per-record newer-wins (ADR 0004)
-            // propagates fresher prices across devices instead of
-            // silently dropping them on a tie. Failed fetches leave
-            // both untouched (see `else` branch below).
+            // v1.16 — Refresh is an edit for sync merge (ADR 0023).
             h.updated_at = new Date().toISOString();
             h.device_id = DEVICE_ID;
             h._refresh_failed = false;
             this.lastQuoteResults[h.ticker] = r;
           } else {
-            // Refresh fetch failed for this ticker — flip the in-memory
-            // badge (stripped at save(); ADR 0009 §4). Intentionally
-            // leaves updated_at and device_id untouched so a partial
-            // failure doesn't promote stale metadata to "fresh".
+            // v1.16 — partial failure (ADR 0023): only flip the
+            // in-memory badge (ADR 0009 §4); do not bump updated_at
+            // or stamp device_id.
             h._refresh_failed = true;
           }
         }

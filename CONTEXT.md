@@ -233,7 +233,7 @@ _Avoid_: known bug (suggests fix is in flight), known issue (overloaded), edge c
 
 **Refresh**:
 A user-triggered bulk read of prices (and 52-week high/low + prev close) for one or more holdings from the Yahoo proxy. Driven from the header *Refresh* button (always visible) or the amber *Retry N failed* button (partial-failure recovery). Refresh is treated as an edit for sync purposes: on success, each refreshed holding's `updated_at` is bumped to now and `device_id` is stamped to the current device — so per-record *Newer-wins merge* (ADR 0004) propagates fresher prices from the device that refreshed last, rather than carrying over the stale price the other device still holds. Failed fetches set `_refresh_failed = true` (in-memory only; stripped at `save()`) and leave `updated_at` untouched (portions of the badge stay attached to the next successful refresh or manual edit). Originating trigger is recorded in `device_id` for forensics.
-_Avoid_: Manual edit (Refresh is system-triggered, but counts as an edit for merge semantics), Snapshot (Refresh is per-holding and live; Snapshot is whole-portfolio and historical), Backup (Refresh is in-memory state; Backup is rollback snapshot), Auto-update (we don't have one — Refresh is the only way prices change)
+_Avoid_: Manual edit (Refresh is system-triggered, but counts as an edit for merge semantics), Snapshot (Refresh is per-holding and live; Snapshot is whole-portfolio and historical), Backup (Refresh is in-memory state; Backup is rollback snapshot)
 
 ## Safety net
 
