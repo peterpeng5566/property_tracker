@@ -336,10 +336,8 @@ test('v1.16: refresh stamp trigger — refresh DOES bump holdings.updated_at + d
   await page.goto('http://localhost:8000/portfolio.html');
   await page.waitForFunction(() => !!window.Alpine);
 
-  // Capture the device_id resolved at load time (DEVICE_ID is generated
-  // lazily when the fixture's seed 'device_id' key matches
-  // localStorage.getItem('device_id'); the fixture's `meta.device_id`
-  // is a separate key.
+  // Capture the DEVICE_ID resolved at load time (lazily generated from
+  // localStorage.getItem('device_id') at portfolio.html ~line 3482).
   const liveDeviceId = await page.evaluate(() => localStorage.getItem('device_id'));
   expect(liveDeviceId).toBeTruthy();
 
@@ -404,6 +402,11 @@ test('v1.16: refresh stamp trigger — refresh DOES bump holdings.updated_at + d
 
   // 2) Failure path: NOTARGET was in the target set, but its fetch
   //    failed. `updated_at` and `device_id` MUST be unchanged.
+  //    Guardrail: same as pre-fix behavior (the `else` branch never
+  //    touched these fields). Pinned so a future change can't
+  //    accidentally introduce a stamp on the failure path. The
+  //    distinguishing assertion for the v1.16 fix is #1 above
+  //    (success-path `updated_at` must bump).
   expect(h1.updated_at).toBe('2024-07-01T00:00:00.000Z');
   expect(h1.device_id).toBe('stale-device-from-another-machine');
 

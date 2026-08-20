@@ -1,11 +1,12 @@
-# v1.16 Refresh is an edit for sync merge
+# 0023 — Refresh is an edit for sync merge
 
-Status: accepted
-Date: 2026-08-19
+## Status
+
+Accepted (v1.16)
 
 ## Context
 
-v1.12 (commit `8ed4e74`, ADR 0022 sibling) added a Google Drive auto-pull:
+v1.12 sync auto-pull (commit `8ed4e74`) added a Google Drive auto-pull:
 when `syncStatus` rises to `connected`, the device automatically pulls the
 remote portfolio and merges it via `window.Sync.mergePortfolios` (ADR 0004,
 per-record `Newer-wins merge`). The mechanism itself works — verified by
