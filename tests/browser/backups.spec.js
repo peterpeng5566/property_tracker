@@ -188,6 +188,39 @@ function collectAppErrors(page) {
 }
 
 test.describe('portfolio.html backups page (ticket #03)', () => {
+  // Defense in depth: every test in this describe block uses
+  // `page.route('**/*', ...)` to mock Drive. The wildcard matches
+  // every request, including the page's own navigation. If a
+  // preceding test's route leaks into the next test's page (via
+  // Playwright context collapse or any other cross-test pollution),
+  // the Cloud sub-list would render before the test's own
+  // fetchCloudBackups() runs and the subsequent `page.evaluate` of
+  // the fetch promise would GC before resolution (the "Resulting
+  // promise was garbage collected" race). See
+  // .scratch/backups-cross-test-pollution/issues/01 for the full
+  // investigation; the failing test is `list refreshes after sign-in`
+  // at line ~284. unrouteAll({ behavior: 'ignoreErrors' }) is a
+  // no-op when no routes are registered, so it's safe to run after
+  // every test.
+  test.afterEach(async ({ page }) => {
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+  });
+
+  // Defense in depth (issue plan C): if the browser context is
+  // somehow reused across tests (Playwright context collapse is a
+  // known intermittent), localStorage / sessionStorage / cookies
+  // from the previous test would leak. Clearing them in beforeEach
+  // guarantees the page starts with the in-memory fixture only.
+  // The subsequent `addInitScript` re-applies the fixture after the
+  // page navigates, so this is a no-op when storage is already empty.
+  test.beforeEach(async ({ page }) => {
+    await page.context().clearCookies();
+    await page.evaluate(() => {
+      try { localStorage.clear(); } catch (_) { /* pre-navigation */ }
+      try { sessionStorage.clear(); } catch (_) { /* pre-navigation */ }
+    });
+  });
+
   test('list renders: 5 Layer 1 + 5 Layer 2 backups shown with timestamp + device + source', async ({ page }) => {
     const errors = collectAppErrors(page);
     const fixture = makeFixture({ localCount: 5, cloudCount: 5 });
@@ -328,6 +361,19 @@ test.describe('portfolio.html backups page (ticket #03)', () => {
     // cloud backups." because the user is not signed in yet.
     await expect(page.locator('text=Connect to Google Drive')).toBeVisible();
 
+    // Guard: the Cloud sub-list must be empty before the test's own
+    // fetchCloudBackups() runs. If a previous test's page.route('**/*')
+    // mock leaked into this page (via Playwright context collapse),
+    // the list would already be populated with the previous test's
+    // mock files and the subsequent `page.evaluate` would GC the
+    // resolved promise before Playwright captures it ("Resulting
+    // promise was garbage collected"). Asserting zero rows here makes
+    // that failure mode surface as a clean assertion failure rather
+    // than a Playwright timing race. See
+    // .scratch/backups-cross-test-pollution/issues/01.
+    const cloudRowsBefore = page.locator('[data-testid="cloud-backups"] [data-testid="backup-row"]');
+    await expect(cloudRowsBefore).toHaveCount(0);
+
     // Step 2: user signs in (we just set the token directly via Alpine).
     await page.evaluate(() => {
       const root = document.querySelector('[x-data]');
@@ -339,15 +385,24 @@ test.describe('portfolio.html backups page (ticket #03)', () => {
     // guard in fetchCloudBackups should NOT short-circuit — the user
     // just signed in and we need fresh data.
     await page.locator('button:has-text("Backups")').click();
+    // The bug: _cloudBackupsLoaded was set to true with empty
+    // _cloudBackups when no token. Re-clicking the Backups button
+    // calls fetchCloudBackups, which short-circuits because the
+    // cache is "loaded". The fix should re-fetch on every Backups
+    // nav click (or invalidate the cache when the token changes).
+    //
+    // Do NOT return the promise from `page.evaluate`: the click on
+    // Backups above already triggered fetchCloudBackups() with the
+    // new token, so the cache is loaded by the time we get here and
+    // this explicit call is a no-op that resolves in the same micro-
+    // task. V8 then GCs the resolved promise before Playwright's
+    // CDP bridge can capture it ("Resulting promise was garbage
+    // collected"). Fire and forget here; the UI assertion below
+    // proves the fetch completed by waiting for the rows to render.
     await page.evaluate(() => {
       const root = document.querySelector('[x-data]');
       const data = window.Alpine.$data(root);
-      // The bug: _cloudBackupsLoaded was set to true with empty
-      // _cloudBackups when no token. Re-clicking the Backups button
-      // calls fetchCloudBackups, which short-circuits because the
-      // cache is "loaded". The fix should re-fetch on every Backups
-      // nav click (or invalidate the cache when the token changes).
-      return data.fetchCloudBackups();
+      data.fetchCloudBackups().catch(() => {});
     });
 
     // The Cloud sub-list should now render the 3 mock files.

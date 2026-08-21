@@ -131,6 +131,16 @@ function collectAppErrors(page) {
 }
 
 test.describe('v1.12 sync auto-pull (regression for "open on second device does not pull latest")', () => {
+  // Defense in depth: this test uses `page.route('**/*', ...)` which
+  // is a wildcard. If the route leaks into the next test (which
+  // observe the Backups page's `fetchCloudBackups`), the previous
+  // test's mock would fire and the Backups page would render before
+  // the test's own fetchCloudBackups() runs. See
+  // .scratch/backups-cross-test-pollution/issues/01.
+  test.afterEach(async ({ page }) => {
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+  });
+
   test('connect to Drive triggers auto-pull — local view reflects remote\'s newer state', async ({ page }) => {
     const errors = collectAppErrors(page);
     const localFixture = makeLocalFixture();

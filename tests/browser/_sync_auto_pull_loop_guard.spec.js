@@ -41,6 +41,16 @@ const { test, expect } = require('@playwright/test');
 
 const STORAGE_KEY = 'property_tracker_portfolio_v1';
 
+// Defense in depth: this test uses `page.route('**/*', ...)` which is
+// a wildcard. If the route leaks into the next test (which observes
+// the Backups page's `fetchCloudBackups`), the previous test's mock
+// would fire and the Backups page would render before the test's own
+// fetchCloudBackups() runs. See
+// .scratch/backups-cross-test-pollution/issues/01.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
 test('v1.12 sync auto-pull: exactly one syncNow fires per connect transition (no loop)', async ({ page }) => {
   await page.addInitScript(`
     localStorage.setItem(${JSON.stringify(STORAGE_KEY)}, JSON.stringify({
