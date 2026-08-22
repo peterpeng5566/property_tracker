@@ -44,16 +44,27 @@ The `$` columns render in `settings.displayCurrency` (the same as Home's Net Wor
 - The user already has `settings.displayCurrency` as a portfolio-wide choice. Following it on Home keeps the mental model: "all the money on this page is in my chosen display currency."
 - Rebalance's per-row native pattern (ADR 0021) exists because the candidate row IS the trade advice ("buy 10 shares of AAPL at $150"), and the user wants to act in the record's native currency. Home's drift section is informational, not actionable — it just reports the money impact.
 
-### 4. Shared `drift_class` between `delta%` and `delta$` columns
+### 4. Drift threshold + per-row relative `delta%`
 
-The 5pp threshold from the existing v1.4 logic (`text-emerald-600` if `|delta%| ≤ 5`, else `text-red-600 font-semibold`) governs both `delta%` and `delta$` cells. Single source of truth; one magic number to tune.
+**Threshold**: `DRIFT_PP_THRESHOLD = 20` percentage points (was 5pp in v1.17). Lives at `portfolio.html` `DRIFT_PP_THRESHOLD`; single source of truth for the drift colour scheme. Emerald (`text-emerald-600`) when `|delta%| ≤ 20`; red bold (`text-red-600 font-semibold`) otherwise.
 
-**Rejected**: a separate `$` threshold (e.g., `|delta$| > 5% of net worth → red`). Reasons:
-- Two thresholds means two magic numbers; the 5pp threshold is the one that's already pinned by the v1.4 test contract and the user-facing colour scheme.
-- `%` and `$` are two representations of the same drift (one in percentage points, one in currency). Splitting the colour scheme introduces a "which one wins when they disagree?" UX question the user has to reason about.
-- One-shim seam: the existing `_driftCardRows` computes `drift_class` once per row, applies it to both cells. Refactoring to a per-cell colour class would duplicate the threshold check across two render paths.
+**Per-row `delta%` formula (v1.18 rev)**: `(actual_amount − target_amount) / target_amount × 100` — relative % deviation from target. Was `actual_pct − target_pct` (pp difference) in v1.17. The new formula shares the **same semantic** with `delta$`: positive = over-allocated, negative = under-allocated. Both cells now express "fraction by which actual deviates from target," just in different units.
 
-**Edge case — 0-matching rule**: when the rule matches no records, `actual%` is `—` (lib returns empty `{}` for `actual` and `drift`); `actual$` is 0 and `delta$` is `-target$`. The `$` column inherits the red class (because the rule has a target that nothing matches), but the `%` column has no class (neutral). **This is intentional.** The red `$` says "you should have $X but you have $0" — the `%` is neutral because there's no actual to compute a percentage against. ADR 0024 §5 documents this as informative signal, not a bug.
+**Card-header Δ formula (v1.18 rev)**: `matching − target` (positive = over, same sign as row `delta$`). Was `target − matching` (positive = under) in v1.17. Sign flipped for consistency with row `delta$`. Threshold reference: NONE — the card header Δ is a plain number.
+
+**Threshold applies to ONE surface only: row `delta%`.** Row `delta$` and card header Δ are plain numbers (no class, no threshold comparison). Same visual weight as Matching / Target / Actual. The user's mental model treats "$ value" as informational; the semantic signal lives in `delta%` only.
+
+**Removed**: `amt_drift_class` field on `_driftCardRows` row objects. The dual-class architecture (delta% + delta$ each with their own colour) was needed in v1.17 because both cells had a shared threshold; with v1.18's per-surface design, delta$ no longer carries a class.
+
+**Edge case — 0-matching rule**: detected via `drift.actual[vid] === undefined` (the v1.4 sentinel for "no records matched"). Row `delta%` renders em-dash with emerald; row `delta$` renders `-$target_amount` with NO class. Card header Δ renders `-$target_amount` (matching − target) with no class. The dollar story still surfaces the missed target amount; the percent story stays neutral because there's no actual to compare against. (This is more permissive than v1.17 which had `delta$` in red — the v1.18 model moves the "missed target" signal to `delta$` as a plain number, while `delta%` stays em-dash to preserve "no data" UX.)
+
+**Rejected**: keeping the 5pp threshold with a 0-match red override on `delta$`. Reasons:
+- The user explicitly requested the threshold bump (5pp was too sensitive — flagged too many false alarms at small positions).
+- The user explicitly requested `delta$` to be "just a number" (no threshold comparison, same as Matching / Target). The dual-class architecture was rejected.
+
+**Rejected**: putting `DRIFT_PP_THRESHOLD` in `lib/plan.js` (so the lib returns a pre-classified colour). Reasons:
+- The threshold is a UI-only concern. The lib returns numeric drift; the UI owns presentation. Mirrors ADR 0024 §3 (display-currency conversion lives in the shim).
+- Putting a magic number in the lib forces the lib to know about Tailwind class names, which leaks presentation into the data layer.
 
 ### 5. Negative `actual$` for debt records is preserved verbatim
 

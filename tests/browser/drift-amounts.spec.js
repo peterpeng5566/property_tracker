@@ -302,11 +302,17 @@ test.describe('portfolio.html drift amounts (v1.17 ticket 02)', () => {
     await expect(bondActual).toHaveText('$0.00');
     await expect(bondDrift).toHaveText('-$4.00W');
 
-    // Per ADR 0024 §4: delta% and delta$ share the same drift_class.
-    // Here stock drift (+140K) > 5pp threshold (in %) → both red.
+    // Per ADR 0024 §4 rev (v1.18): delta% is relative to target
+    //   stock: (200K − 60K) / 60K × 100 = +233.3% (way over 20pp) → red.
+    // delta$ is a PLAIN number (no class, no threshold comparison)
+    // — same visual weight as Target / Actual. The semantic signal
+    // lives in delta% only.
     const stockDeltaPct = card.locator('[data-testid=drift-delta-val-stock]');
     await expect(stockDeltaPct).toHaveClass(/text-red-600/);
-    await expect(stockDrift).toHaveClass(/text-red-600/);
+    // delta$ has no color class — assert it does NOT have red.
+    const stockDeltaAmtClass = await stockDrift.getAttribute('class');
+    expect(stockDeltaAmtClass || '').not.toMatch(/text-red-600/);
+    expect(stockDeltaAmtClass || '').not.toMatch(/text-emerald-600/);
 
     expect(errors).toEqual([]);
   });
@@ -331,7 +337,7 @@ test.describe('portfolio.html drift amounts (v1.17 ticket 02)', () => {
     expect(errors).toEqual([]);
   });
 
-  test('0-matching rule: delta$ is red, delta% is em-dash (ADR 0024 §4 edge case)', async ({ page }) => {
+  test('0-matching rule: delta% is em-dash (no class); delta$ shows -target_amount, neutral', async ({ page }) => {
     const errors = collectAppErrors(page);
     page.on('dialog', async (d) => { await d.accept(); });
     await page.addInitScript(initScript(makeFixtureZeroMatchAmount()));
@@ -345,14 +351,19 @@ test.describe('portfolio.html drift amounts (v1.17 ticket 02)', () => {
     const card = page.locator('[data-testid=drift-card]');
     await expect(card).toHaveCount(1);
 
-    // delta% row: em-dash (no class, just slate text).
+    // v1.18: delta% row: em-dash (no value to threshold against —
+    // 0 matching records means no relative % to compute).
     const stockDeltaPct = card.locator('[data-testid=drift-delta-val-stock]');
     await expect(stockDeltaPct).toHaveText('—');
-    // delta$ row: red (ADR 0024 §4 edge case — $ shows the missed target).
+    // v1.18: delta$ row: still shows -$3,000.00 (the missed target
+    // amount) but with NO class — it's a plain number now. The
+    // semantic signal moved entirely to delta%.
     const stockDeltaAmt = card.locator('[data-testid=drift-drift-amt-val-stock]');
     await expect(stockDeltaAmt).toBeVisible();
-    await expect(stockDeltaAmt).toHaveClass(/text-red-600/);
     await expect(stockDeltaAmt).toHaveText('-$3,000.00');
+    const stockDeltaAmtClass = await stockDeltaAmt.getAttribute('class');
+    expect(stockDeltaAmtClass || '').not.toMatch(/text-red-600/);
+    expect(stockDeltaAmtClass || '').not.toMatch(/text-emerald-600/);
 
     expect(errors).toEqual([]);
   });

@@ -117,8 +117,16 @@ A weighted breakdown of records within a single rule's filter, expressed as perc
 _Avoid_: Target (overloaded), allocation (overloaded)
 
 **Drift**:
-For a single rule, the difference between its target distribution and the actual distribution of matching records' values. Expressed as percentage points per value: `actual_pct - target_pct`. Positive = over-allocated; negative = under-allocated.
+For a single rule, the difference between its target distribution and the actual distribution of matching records' values. Two complementary surfaces:
+  - Row `delta%` = `(actual_amount − target_amount) / target_amount × 100` (relative %, positive = over-allocated). This is the *only* surface that compares against `DRIFT_PP_THRESHOLD` for color (emerald if within, red+bold otherwise).
+  - Row `delta$` = `actual_amount − target_amount` (absolute $, positive = over). Plain number — no class, no threshold. Same visual weight as Target / Actual.
+  - Card header Δ = `matching − target` (positive = over, same sign as row delta$). Plain number — no class, no threshold. Same visual weight as Matching / Target.
+The `$` and card-header Δ are informational; the semantic signal lives in `delta%`.
 _Avoid_: Deviation, variance (technical), gap
+
+**DRIFT_PP_THRESHOLD**:
+The single magic number (currently `20`, percentage points) used by Home Plan vs Actual to color the row `delta%` cell. `|delta%| ≤ DRIFT_PP_THRESHOLD` → emerald (`text-emerald-600`); otherwise red bold (`text-red-600 font-semibold`). The 0-match edge case (`actual[vid] === undefined`) bypasses the check and renders an em-dash with emerald. Lives at `portfolio.html` `DRIFT_PP_THRESHOLD: 20`; documented in ADR 0024 §4.
+_Avoid_: Tolerance, band, threshold (overloaded)
 
 **Plan target amount**:
 The total monetary value (in `settings.displayCurrency`) that one Plan rule is aiming to allocate, computed as `netWorth × rule.target_weight_pct / 100`. When `rule.target_weight_pct` is missing or `null`, the value is treated as `100%` for the Home Plan vs Actual view (different from the Rebalance page per ADR 0024 §2). The Plan target amount is divided across the rule's `distribute` values to produce each sub-item's target amount. The section header's `Σ target` displays the sum across all rules.

@@ -505,13 +505,15 @@
                     x-text="card.rule.name"
                     data-testid="drift-card-name"></h3>
               </div>
-              <!-- v1.17 (Q7c): 3-line summary. Matching is the existing
-                   %-matched total in displayCurrency; Target is the
-                   rule's target_amount; Δ is target − matching.
-                   Per ADR 0024 §4 (single 5pp threshold), the Δ line
-                   computes its drift_pct as (target − matching) /
-                   netWorth × 100, then applies the same 5pp threshold
-                   used by the row deltas. driftCardDelta(card) below
+              <!-- v1.17 (Q7c) + v1.18 (no threshold): 3-line summary.
+                   Matching is the rule's matching_total in displayCurrency;
+                   Target is rule_target_amount; Δ is matching − target
+                   (positive = over, same sign as row delta$).
+                   Per ADR 0024 §4 rev, the card header Δ is a PLAIN
+                   number — no threshold comparison, no color class.
+                   The semantic signal lives in the row delta% column
+                   (which is the only surface that compares against
+                   DRIFT_PP_THRESHOLD). driftCardDelta(card) below
                    holds the math; this template just renders. -->
               <div class="text-right shrink-0 tabular text-sm whitespace-nowrap"
                    data-testid="drift-card-summary">
@@ -528,9 +530,12 @@
                 </div>
                 <div x-show="card.drift.rule_target_amount !== undefined">
                   <span class="text-xs text-slate-500 mr-1" x-text="t('plan.drift.header.delta')"></span>
+                  <!-- v1.18: card header Δ is a plain number, no
+                       threshold / no class. Same visual weight as
+                       Matching / Target — the semantic signal lives in
+                       the row delta% column. -->
                   <span class="font-semibold"
                         data-testid="drift-card-delta-amount"
-                        :class="driftCardDelta(card).drift_class"
                         x-text="driftCardDelta(card).drift_str"></span>
                 </div>
               </div>
@@ -561,11 +566,12 @@
                   <th class="text-right py-2 font-medium w-16" x-text="t('plan.drift.target')"></th>
                   <th class="text-right py-2 font-medium w-16" x-text="t('plan.drift.actual')"></th>
                   <th class="text-right py-2 font-medium w-16" x-text="t('plan.drift.delta')"></th>
-                  <!-- v1.17 ticket 02 (ADR 0024): 3 new $-columns.
-                       Single shared drift_class between delta% and
-                       delta$ (5pp threshold) is applied per-row in the
-                       <td> below. The class is identical for both
-                       columns because the row's class is row-scoped. -->
+                  <!-- v1.17 ticket 02 + v1.18 (ADR 0024 §4 rev): 3 new $-columns.
+                       delta% applies DRIFT_PP_THRESHOLD (20pp) for color;
+                       delta$ is a plain number (no class, no threshold).
+                       The $ cell has the same visual weight as Target /
+                       Actual — informational. The semantic signal lives
+                       in delta% only. -->
                   <th class="text-right py-2 font-medium w-20" x-text="t('plan.drift.targetAmount')"></th>
                   <th class="text-right py-2 font-medium w-20" x-text="t('plan.drift.actualAmount')"></th>
                   <th class="text-right py-2 font-medium w-20" x-text="t('plan.drift.deltaAmount')"></th>
@@ -594,7 +600,6 @@
                         :data-testid="'drift-actual-amt-' + row.value_id"
                         x-text="row.actual_str_amt"></td>
                     <td class="py-1.5 text-right tabular font-medium"
-                        :class="row.amt_drift_class || row.drift_class"
                         :data-testid="'drift-drift-amt-' + row.value_id"
                         x-text="row.drift_str_amt"></td>
                   </tr>
@@ -639,7 +644,6 @@
                       <div class="tabular text-right font-medium" x-text="row.actual_str_amt"></div>
                       <div class="text-slate-500" x-text="t('plan.drift.deltaAmount')"></div>
                       <div class="tabular text-right font-medium"
-                           :class="row.amt_drift_class || row.drift_class"
                            x-text="row.drift_str_amt"></div>
                     </div>
                   </details>
@@ -3089,12 +3093,18 @@
       // reusing the existing value/target/actual/delta headers. The
       // card header gains Target + Δ lines, and the section header
       // gains Σ target + Σ target_weight_pct + an over-100% warning.
-      // The existing 'plan.drift.matching' key is reused for the
-      // Matching label on the new 3-line card header (single source of
-      // truth for that label).
+      //
+      // The Matching label on the card header uses its own key
+      // (plan.drift.header.matching) instead of reusing
+      // plan.drift.matching, because plan.drift.matching (lowercase)
+      // is the v1.4 column header for the matching-record row (a
+      // count / percentage context), while the card header label
+      // summarises the rule's matching_total (a dollar amount
+      // context) — different semantic, dedicated translation.
       'plan.drift.targetAmount': 'Target $',
       'plan.drift.actualAmount': 'Actual $',
       'plan.drift.deltaAmount': 'Δ $',
+      'plan.drift.header.matching': 'Matching',
       'plan.drift.header.target': 'Target',
       'plan.drift.header.delta': 'Δ',
       'plan.drift.header.totalTarget': 'Σ target',
@@ -3519,12 +3529,19 @@
       'plan.drift.emptyNoRules': '此 plan 尚未設定任何 rule。',
       'plan.drift.emptyNoMatching': '0 筆記錄符合此 rule。',
       'plan.drift.oneRecordWarning': '⚠ 只有 1 筆符合記錄 — drift 看起來極端但無法採取行動。',
-      // v1.17 ticket 02 — amount columns (mirror of EN; the existing
-      // 'plan.drift.matching' CJK = '符合記錄' is reused for the
-      // Matching label).
+      // v1.17 ticket 02 — amount columns (mirror of EN).
+      //
+      // The Matching label on the card header uses its own key
+      // (plan.drift.header.matching) instead of reusing
+      // plan.drift.matching, because plan.drift.matching CJK = '符合記錄'
+      // is the v1.4 column header for the matching-record row (a
+      // count context), while the card header label summarises the
+      // rule's matching_total (a dollar amount context) — different
+      // semantic, dedicated translation.
       'plan.drift.targetAmount': '目標金額',
       'plan.drift.actualAmount': '目前金額',
       'plan.drift.deltaAmount': '差額金額',
+      'plan.drift.header.matching': '目前',
       'plan.drift.header.target': '目標',
       'plan.drift.header.delta': '差額',
       'plan.drift.header.totalTarget': '總目標',
@@ -6013,6 +6030,15 @@
       // to driftForRule so the lib returns the new target/actual/drift
       // amount fields. The shim still owns the display string
       // formatting (TWD → displayCurrency).
+      //
+      // v1.18 (ADR 0024 §4 rev): drift threshold magic number.
+      // Per-row delta% = (actual_amount − target_amount) / target_amount
+      // × 100. The row delta% is the ONLY surface that compares against
+      // this threshold for color. The row delta$ and the card header Δ
+      // are plain numbers (no class) — same as Target / Matching. This
+      // matches the user's mental model: "$ value" is informational,
+      // "% deviation from target" is the semantic signal.
+      DRIFT_PP_THRESHOLD: 20,
       driftCards() {
         const plan = this.activePlan();
         if (!plan) return [];
@@ -6046,6 +6072,16 @@
       // case is handled by hasNoMatching on the card (the entire card
       // table greys via opacity-40 on the <tr>) — individual rows
       // keep their normal colour so absolute numbers stay readable.
+      //
+      // v1.18 (ADR 0024 §4 rev): row delta% is now
+      //   (actual_amount − target_amount) / target_amount × 100
+      // i.e., relative % deviation from target, same sign as delta$
+      // (positive = over-allocated). The threshold check applies
+      // ONLY to delta% (drift_class). Row delta$ and the card header
+      // Δ are plain numbers (no class) — same visual weight as
+      // Matching / Target. The 0-match edge case still renders an
+      // em-dash for delta% (no value to threshold against) and
+      // neutralises the delta$ cell (no class).
       _driftCardRows(rule, drift, cats, netWorth) {
         const targetCatId = Object.keys(rule.distribute)[0];
         const cat = cats.find(c => c.id === targetCatId);
@@ -6061,27 +6097,43 @@
         for (const vid of targetIds) {
           const target = rule.distribute[targetCatId][vid];
           const actual = drift.actual[vid];
-          const d = drift.drift[vid];
-          // Per ADR 0024 §4: shared threshold between delta% and
-          // delta$ (5pp), with one documented exception — the 0-match
-          // edge case. When `d` is undefined (no matching records),
-          // the % column has no value to threshold against (em-dash),
-          // so we keep its existing v1.4 emerald class for the em-dash
-          // itself; but the $ column shows `-target_amount` which is
-          // non-zero, so it inherits red. Two row fields carry the
-          // colors — `drift_class` (delta% cell) and
-          // `amt_drift_class` (delta$ cell).
-          let driftClass, amtDriftClass;
-          if (d === undefined || Number.isNaN(d)) {
-            // 0-match edge case (ADR 0024 §4).
-            driftClass = 'text-emerald-600';     // % em-dash, same as v1.4
-            amtDriftClass = 'text-red-600 font-semibold'; // $ shows -target
-          } else if (Math.abs(d) <= 5) {
+          const d = drift.drift[vid]; // v1.4 pp difference, no longer displayed
+          // v1.18: derive relative % from amount fields. Three cases
+          // produce em-dash (deltaPctRel = undefined):
+          //   1. 0-match: lib sets actual_amount = 0 for distribute
+          //      keys but actual[vid] is still undefined (the v1.4
+          //      sentinel for "no records matched"). Naively
+          //      computing (0 − target) / target would give −100%
+          //      which is wrong — there's no actual to compare
+          //      against. Use the v1.4 sentinel to detect.
+          //   2. distribute weight = 0 for this value → $0 target, no
+          //      meaningful relative %.
+          //   3. older callers (no netWorth provided) → hasAmounts
+          //      false → target_amount undefined.
+          let deltaPctRel;
+          if (actual === undefined) {
+            // case 1: 0-match edge case.
+            deltaPctRel = undefined;
+          } else if (!hasAmounts || typeof drift.target_amount[vid] !== 'number') {
+            // case 3: older caller without amount fields.
+            deltaPctRel = undefined;
+          } else if (drift.target_amount[vid] === 0) {
+            // case 2: $0 target.
+            deltaPctRel = undefined;
+          } else {
+            const a = drift.actual_amount[vid] || 0;
+            deltaPctRel = ((a - drift.target_amount[vid]) / drift.target_amount[vid]) * 100;
+          }
+          // Threshold applies ONLY to delta% (drift_class). delta$
+          // gets no class — it's just a number, same as Target.
+          let driftClass;
+          if (deltaPctRel === undefined) {
+            // 0-match / no-target edge case — em-dash, neutral.
             driftClass = 'text-emerald-600';
-            amtDriftClass = 'text-emerald-600';
+          } else if (Math.abs(deltaPctRel) <= this.DRIFT_PP_THRESHOLD) {
+            driftClass = 'text-emerald-600';
           } else {
             driftClass = 'text-red-600 font-semibold';
-            amtDriftClass = 'text-red-600 font-semibold';
           }
           // v1.17 amount columns: TWD baseline → displayCurrency.
           // actual_amount and drift_amount are absent in the 0-match
@@ -6096,12 +6148,13 @@
             value_name: valueById[vid] || vid,
             target_str: target.toFixed(1) + '%',
             actual_str: actual === undefined ? '—' : actual.toFixed(1) + '%',
-            drift_str: d === undefined || Number.isNaN(d) ? '—' : (d > 0 ? '+' : '') + d.toFixed(1) + '%',
+            // v1.18: delta% is relative to target (positive = over).
+            drift_str: deltaPctRel === undefined ? '—' : (deltaPctRel > 0 ? '+' : '') + deltaPctRel.toFixed(1) + '%',
             target_str_amt: targetTwd === null ? '—' : this.formatAmount(targetTwd, 'TWD'),
             actual_str_amt: actualTwd === undefined ? '—' : this.formatAmount(actualTwd, 'TWD'),
+            // v1.18: delta$ is a plain number (positive = over), no class.
             drift_str_amt: driftTwd === undefined ? '—' : (driftTwd > 0 ? '+' : '') + this.formatAmount(driftTwd, 'TWD'),
             drift_class: driftClass,
-            amt_drift_class: amtDriftClass,
             is_grey: false,
           });
         }
@@ -6157,32 +6210,29 @@
         };
       },
 
-      // v1.17 (Q7c): the 3rd card-header line. Returns
-      //   { drift_str, drift_class }
-      // where drift_str is `target − matching` in displayCurrency with
-      // a +/- sign (matches the row-delta string format), and
-      // drift_class is the row's drift_class re-applied at the rule
-      // level. Per ADR 0024 §4, the 5pp threshold is the single
-      // magic number; we compute a rule-level delta_pct as
-      // `(target − matching) / netWorth × 100` and apply the same
-      // threshold. Zero delta → emerald; small → emerald; >5pp →
-      // red. The check is wrapped in Number.isFinite to handle the
-      // edge case where rule_target_amount is missing (older 4-arg
-      // driftForRule calls) — in that case the line is hidden by
-      // x-show and the helper returns the emerald default.
+      // v1.17 (Q7c) + v1.18 (no threshold): the 3rd card-header line.
+      // Returns { drift_str } only — no drift_class. The card header
+      // Δ is a plain number with a +/- sign (same visual weight as
+      // Matching / Target). The user's mental model treats "$ value"
+      // as informational; the semantic signal lives in the row
+      // delta% column, which is the only surface that compares
+      // against DRIFT_PP_THRESHOLD.
+      //
+      // Sign convention (v1.18): positive = over-allocated
+      // (`matching − target`), matching the row delta$ sign. This is
+      // the OPPOSITE sign of v1.17's `target − matching` (positive =
+      // under-allocated). The flip aligns the card-header Δ with the
+      // row delta$ — same direction, same label (Δ).
       driftCardDelta(card) {
         const target = card && card.drift && card.drift.rule_target_amount;
         const matching = card && card.drift && card.drift.matching_total;
         if (typeof target !== 'number' || typeof matching !== 'number') {
-          return { drift_str: '—', drift_class: 'text-emerald-600' };
+          return { drift_str: '—' };
         }
-        const d = target - matching;
-        const netWorth = this.netWorth();
-        const deltaPct = netWorth !== 0 ? (d / netWorth) * 100 : 0;
-        const driftClass = Math.abs(deltaPct) <= 5 ? 'text-emerald-600' : 'text-red-600 font-semibold';
+        const d = matching - target; // v1.18: positive = over
         const prefix = d > 0 ? '+' : (d < 0 ? '-' : '');
         const absStr = this.formatAmount(Math.abs(d), 'TWD');
-        return { drift_str: prefix + absStr, drift_class: driftClass };
+        return { drift_str: prefix + absStr };
       },
 
       // ---- Calculations ----
