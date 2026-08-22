@@ -165,6 +165,16 @@ together for UX consistency but are independent code changes.
 - `tests/rebalance.test.js`: 6 even-split tests updated.
 - `tests/rebalance-parity.test.js` (NEW, renamed from the v1.20
   red-cap probe): 6 regression tests.
+- **v1.20 close-out**: both `_splitTargetsByBucket` and
+  `lib/plan.js driftForRule` consume `Plan.bucketTargetsForRule(rule,
+  ruleTargetTwd)` (added to `lib/plan.js` Distribution section). The
+  per-value-id target formula now has one implementation; the
+  `tests/rebalance-parity.test.js` 6 regression tests shrink to one
+  structural assertion (helper output = Home `target_amount` =
+  Rebalance per-row target). Scenarios move to `tests/plan.test.js`
+  Slice 14 (4 tests for the helper) and `tests/rebalance.test.js`
+  (1 native-currency back-conversion test). See
+  `.scratch/v1.20-rebalance-bucket-target-display/issues/03-extract-bucket-targets-helper.md`.
 
 ## References
 

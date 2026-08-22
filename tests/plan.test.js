@@ -1,8 +1,8 @@
 // tests/plan.test.js — Unit tests for lib/plan.js (v1.4)
 //
 // Covers: validatePlan / validateRule / recordsMatchingRule /
-// calcDistribution / driftForRule / driftForPlan / validatePlans /
-// plansReferencingCategory / plansReferencingValue.
+// calcDistribution / bucketTargetsForRule / driftForRule / driftForPlan /
+// validatePlans / plansReferencingCategory / plansReferencingValue.
 //
 // Source of truth: lib/plan.js +
 //   .scratch/v1.4-target-allocation-plans/issues/01-plan-data-model.md
@@ -32,6 +32,7 @@ const {
   validateRule,
   recordsMatchingRule,
   calcDistribution,
+  bucketTargetsForRule,
   driftForRule,
   driftForPlan,
   validatePlans,
@@ -1511,4 +1512,72 @@ test('driftForRule v1.17: Σ actual_amount across distribute value_ids + unassig
   const sumActual = out.actual_amount.stock + out.actual_amount.bond;
   assert.equal(sumActual, out.matching_total);
   assert.equal(sumActual, 150000);
+});
+
+// ---- Slice 14: bucketTargetsForRule primitive (v1.20 close-out) ----
+//
+// Single source of truth for the per-value-id target split shared by
+// Home drift (driftForRule) and Rebalance candidates (_splitTargetsByBucket).
+// Replaces the 4 cross-surface parity tests in tests/rebalance-parity.test.js
+// (now a single structural test) with direct helper tests. ADR 0024 §3 +
+// ADR 0026 §1 user invariant ("same dollar on both surfaces") is now
+// structurally enforced — driftForRule and _splitTargetsByBucket both
+// call this helper.
+
+test('bucketTargetsForRule: 75/25 distribute with mismatched bucket counts (user scenario)', () => {
+  // User's reported v1.20 bug scenario: distribute weights don't match
+  // record counts (1 US + 4 TW with distribute 75/25). The helper
+  // computes the math; record counts don't enter.
+  const out = bucketTargetsForRule({ distribute: { region: { US: 75, TW: 25 } } }, 600000);
+  assert.equal(out.US, 450000);
+  assert.equal(out.TW, 150000);
+});
+
+test('bucketTargetsForRule: mirror weights produce identical math regardless of record count', () => {
+  // Pre-v1.20 incidental case: 3 US + 1 TW with distribute 75/25 — the
+  // v1.8 even-split accidentally matched here. Helper output is unchanged.
+  const out = bucketTargetsForRule({ distribute: { region: { US: 75, TW: 25 } } }, 1200000);
+  assert.equal(out.US, 900000);
+  assert.equal(out.TW, 300000);
+});
+
+test('bucketTargetsForRule: single value_id 100% → whole rule target per bucket', () => {
+  // Single value_id at 100% weight: the whole rule is one bucket.
+  // Per-row targetValue = full rule_target (v1.20 ADR 0026 §3).
+  const out = bucketTargetsForRule({ distribute: { region: { US: 100 } } }, 30000);
+  assert.deepEqual(out, { US: 30000 });
+});
+
+test('bucketTargetsForRule: missing/invalid distribute → empty object (caller decides fallback)', () => {
+  // Helper returns {} on missing/empty/non-object distribute; caller
+  // decides the fallback (Rebalance uses synthetic _all bucket; Home
+  // exits early). The helper doesn't know about either.
+  assert.deepEqual(bucketTargetsForRule(null, 1000), {});
+  assert.deepEqual(bucketTargetsForRule({}, 1000), {});
+  assert.deepEqual(bucketTargetsForRule({ distribute: {} }, 1000), {});
+  assert.deepEqual(bucketTargetsForRule({ distribute: { region: null } }, 1000), {});
+  // Array is rejected — distribute must be a plain object per
+  // Plan.validateRule; defensive guard for schema misuse.
+  assert.deepEqual(bucketTargetsForRule({ distribute: ['US', 'TW'] }, 1000), {});
+});
+
+test('bucketTargetsForRule + driftForRule integration: helper output equals driftForRule.target_amount', () => {
+  // Locks the structural choice on the Home surface: target_amount is
+  // produced by bucketTargetsForRule. If driftForRule ever drifts from
+  // the helper, this test fails. Mirrors the structural assertion in
+  // tests/rebalance-parity.test.js (Rebalance side).
+  const rule = {
+    id: 'r1', name: 'Test', target_weight_pct: 30,
+    when: {},
+    distribute: { region: { US: 75, TW: 25 } },
+  };
+  const records = [
+    { id: 'us', currency: 'USD', value: 1000000, attributes: { region: 'US' } },
+    { id: 'tw', currency: 'TWD', value: 1000000, attributes: { region: 'TW' } },
+  ];
+  // netWorth = 2M TWD; rule_target = 30% × 2M = 600k TWD.
+  const helper = bucketTargetsForRule(rule, 600000);
+  const drift = driftForRule(rule, records, undefined, FX, 2000000);
+  assert.equal(drift.target_amount.US, helper.US);
+  assert.equal(drift.target_amount.TW, helper.TW);
 });

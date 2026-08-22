@@ -750,3 +750,33 @@ test('v1.20: per-row deltaShares uses the record’s current_price (not a fixed 
   assert.equal(byId.tw1.deltaShares, 200);
   assert.equal(byId.tw2.deltaShares, 50);
 });
+
+// ---- v1.20 close-out: bucket targets shared with Home (ADR 0026 §1) ----
+
+test('v1.20 close-out: per-row Target $ = bucket target back-converted to each row’s native currency', () => {
+  // Locks the Rebalance side of the cross-surface invariant: each
+  // row's targetValue (in native currency) is the bucket_target (TWD)
+  // back-converted to the row's currency. The bucket_target comes
+  // from Plan.bucketTargetsForRule (the same helper Home's
+  // driftForRule consumes); if Rebalance drifts from the helper, this
+  // test fails. Mirrors the structural assertion in
+  // tests/rebalance-parity.test.js.
+  const plan = makePlan([
+    ruleEligible('r1', 'US bucket', 30, {}, { region: { US: 100 } }),
+  ]);
+  // 1 USD record (1k USD = 32k TWD) + 1 TWD-currency record (5k TWD)
+  // both tagged US. totalValue (baseline TWD) = (1k + 5k) × FX = 192k.
+  // rule_target = 30% × 192k = 57.6k TWD; bucket target = 100% × 57.6k = 57.6k TWD.
+  const records = [
+    holding('us_usd', 'USD', 10, 100, { region: 'US' }), // 1000 USD = 32000 TWD
+    cash('us_twd', 'TWD', 5000, { region: 'US' }),       //  5000 TWD
+  ];
+  const totalValue = (1_000 + 5_000) * FX;
+  const out = computeCandidates(plan, { records, totalValue, fxRate: FX });
+  const byId = Object.fromEntries(out[0].matchedRecords.map(c => [c.recordId, c]));
+
+  // bucket_target = 57.6k TWD; back-converted to each row's native currency.
+  // us_usd: 57600 / FX = 1800 USD; us_twd: 57600 TWD.
+  assert.equal(byId.us_usd.targetValue, 57_600 / FX);
+  assert.equal(byId.us_twd.targetValue, 57_600);
+});
