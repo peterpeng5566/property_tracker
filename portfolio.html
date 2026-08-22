@@ -459,6 +459,33 @@
         </div>
       </div>
 
+      <!-- v1.17 (ADR 0024 §6): section summary. Σ target +
+           Σ target_weight_pct, plus an over-100% warning. Hidden when
+           no active plan / no rules. Note: x-show evaluates the
+           conditional but Alpine still evaluates inner expressions,
+           so the inner accesses use optional chaining to avoid
+           null-property errors when driftSectionSummary() returns
+           null. The weight value is NOT styled — only the warning
+           text gets `text-rose-600` per ADR 0024 §6. -->
+      <div class="text-xs text-slate-600 mb-3 flex flex-wrap items-center gap-x-4 gap-y-1"
+           x-show="driftSectionSummary()"
+           data-testid="drift-section-summary">
+        <span>
+          <span class="text-slate-500" x-text="t('plan.drift.header.totalTarget')"></span>
+          <span class="ml-1 font-semibold tabular" x-text="driftSectionSummary()?.totalTargetStr"></span>
+        </span>
+        <span>
+          <span class="text-slate-500" x-text="t('plan.drift.header.totalWeight')"></span>
+          <span class="ml-1 font-semibold tabular text-slate-900"
+                data-testid="drift-section-total-weight"
+                x-text="driftSectionSummary()?.totalWeightStr"></span>
+        </span>
+        <span x-show="driftSectionSummary()?.isOverWeight"
+              class="text-rose-600 font-medium"
+              data-testid="drift-section-over-weight-warning"
+              x-text="t('plan.drift.header.overWeightWarning')"></span>
+      </div>
+
       <!-- "Plan has no rules" defensive placeholder -->
       <div x-show="activePlan() && activePlan().rules.length === 0"
            class="bg-white rounded-2xl border border-slate-200 p-6 text-sm text-slate-500 italic"
@@ -478,12 +505,35 @@
                     x-text="card.rule.name"
                     data-testid="drift-card-name"></h3>
               </div>
-              <p class="text-sm text-slate-700 whitespace-nowrap shrink-0 tabular"
-                 data-testid="drift-card-matching">
-                <span class="text-xs text-slate-500 mr-1" x-text="t('plan.drift.matching')"></span>
-                <span class="font-semibold"
-                      x-text="formatAmount(card.drift.matching_total, 'TWD')"></span>
-              </p>
+              <!-- v1.17 (Q7c): 3-line summary. Matching is the existing
+                   %-matched total in displayCurrency; Target is the
+                   rule's target_amount; Δ is target − matching.
+                   Per ADR 0024 §4 (single 5pp threshold), the Δ line
+                   computes its drift_pct as (target − matching) /
+                   netWorth × 100, then applies the same 5pp threshold
+                   used by the row deltas. driftCardDelta(card) below
+                   holds the math; this template just renders. -->
+              <div class="text-right shrink-0 tabular text-sm whitespace-nowrap"
+                   data-testid="drift-card-summary">
+                <div data-testid="drift-card-matching">
+                  <span class="text-xs text-slate-500 mr-1" x-text="t('plan.drift.header.matching')"></span>
+                  <span class="font-semibold"
+                        x-text="formatAmount(card.drift.matching_total, 'TWD')"></span>
+                </div>
+                <div x-show="card.drift.rule_target_amount !== undefined">
+                  <span class="text-xs text-slate-500 mr-1" x-text="t('plan.drift.header.target')"></span>
+                  <span class="font-semibold"
+                        data-testid="drift-card-target-amount"
+                        x-text="formatAmount(card.drift.rule_target_amount, 'TWD')"></span>
+                </div>
+                <div x-show="card.drift.rule_target_amount !== undefined">
+                  <span class="text-xs text-slate-500 mr-1" x-text="t('plan.drift.header.delta')"></span>
+                  <span class="font-semibold"
+                        data-testid="drift-card-delta-amount"
+                        :class="driftCardDelta(card).drift_class"
+                        x-text="driftCardDelta(card).drift_str"></span>
+                </div>
+              </div>
             </header>
 
             <!-- 1-record edge case warning (Q8 = a) -->
@@ -511,6 +561,14 @@
                   <th class="text-right py-2 font-medium w-16" x-text="t('plan.drift.target')"></th>
                   <th class="text-right py-2 font-medium w-16" x-text="t('plan.drift.actual')"></th>
                   <th class="text-right py-2 font-medium w-16" x-text="t('plan.drift.delta')"></th>
+                  <!-- v1.17 ticket 02 (ADR 0024): 3 new $-columns.
+                       Single shared drift_class between delta% and
+                       delta$ (5pp threshold) is applied per-row in the
+                       <td> below. The class is identical for both
+                       columns because the row's class is row-scoped. -->
+                  <th class="text-right py-2 font-medium w-20" x-text="t('plan.drift.targetAmount')"></th>
+                  <th class="text-right py-2 font-medium w-20" x-text="t('plan.drift.actualAmount')"></th>
+                  <th class="text-right py-2 font-medium w-20" x-text="t('plan.drift.deltaAmount')"></th>
                 </tr>
               </thead>
               <tbody>
@@ -529,6 +587,16 @@
                         :class="row.drift_class"
                         :data-testid="'drift-delta-' + row.value_id"
                         x-text="row.drift_str"></td>
+                    <td class="py-1.5 text-right tabular text-slate-600"
+                        :data-testid="'drift-target-amt-' + row.value_id"
+                        x-text="row.target_str_amt"></td>
+                    <td class="py-1.5 text-right tabular font-medium"
+                        :data-testid="'drift-actual-amt-' + row.value_id"
+                        x-text="row.actual_str_amt"></td>
+                    <td class="py-1.5 text-right tabular font-medium"
+                        :class="row.amt_drift_class || row.drift_class"
+                        :data-testid="'drift-drift-amt-' + row.value_id"
+                        x-text="row.drift_str_amt"></td>
                   </tr>
                 </template>
               </tbody>
@@ -558,6 +626,21 @@
                       <div class="tabular text-right text-slate-600" x-text="row.target_str"></div>
                       <div class="text-slate-500" x-text="t('plan.drift.actual')"></div>
                       <div class="tabular text-right font-medium" x-text="row.actual_str"></div>
+                      <div class="text-slate-500" x-text="t('plan.drift.delta')"></div>
+                      <div class="tabular text-right font-medium"
+                           :class="row.drift_class"
+                           x-text="row.drift_str"></div>
+                      <!-- v1.17 ticket 02 (ADR 0024): 3 new $-rows in
+                           the mobile <details>. Same shared drift_class
+                           as the desktop delta$ cell. -->
+                      <div class="text-slate-500" x-text="t('plan.drift.targetAmount')"></div>
+                      <div class="tabular text-right text-slate-600" x-text="row.target_str_amt"></div>
+                      <div class="text-slate-500" x-text="t('plan.drift.actualAmount')"></div>
+                      <div class="tabular text-right font-medium" x-text="row.actual_str_amt"></div>
+                      <div class="text-slate-500" x-text="t('plan.drift.deltaAmount')"></div>
+                      <div class="tabular text-right font-medium"
+                           :class="row.amt_drift_class || row.drift_class"
+                           x-text="row.drift_str_amt"></div>
                     </div>
                   </details>
                 </div>
@@ -3001,6 +3084,22 @@
       'plan.drift.emptyNoRules': 'This plan has no rules yet.',
       'plan.drift.emptyNoMatching': '0 records match this rule.',
       'plan.drift.oneRecordWarning': '⚠ Only 1 matching record — drift is extreme but not actionable.',
+      // v1.17 ticket 02 — amount columns on the Home drift report
+      // (ADR 0024). The 7-column desktop table gains 3 new $-columns
+      // reusing the existing value/target/actual/delta headers. The
+      // card header gains Target + Δ lines, and the section header
+      // gains Σ target + Σ target_weight_pct + an over-100% warning.
+      // The existing 'plan.drift.matching' key is reused for the
+      // Matching label on the new 3-line card header (single source of
+      // truth for that label).
+      'plan.drift.targetAmount': 'Target $',
+      'plan.drift.actualAmount': 'Actual $',
+      'plan.drift.deltaAmount': 'Δ $',
+      'plan.drift.header.target': 'Target',
+      'plan.drift.header.delta': 'Δ',
+      'plan.drift.header.totalTarget': 'Σ target',
+      'plan.drift.header.totalWeight': 'Σ target_weight_pct',
+      'plan.drift.header.overWeightWarning': 'Σ target_weight_pct exceeds 100% — review your plan',
       'groupBy.title': 'Group by Category',
       'groupBy.holdingsSub': 'Holdings',
       'groupBy.cashSub': 'Cash',
@@ -3420,6 +3519,17 @@
       'plan.drift.emptyNoRules': '此 plan 尚未設定任何 rule。',
       'plan.drift.emptyNoMatching': '0 筆記錄符合此 rule。',
       'plan.drift.oneRecordWarning': '⚠ 只有 1 筆符合記錄 — drift 看起來極端但無法採取行動。',
+      // v1.17 ticket 02 — amount columns (mirror of EN; the existing
+      // 'plan.drift.matching' CJK = '符合記錄' is reused for the
+      // Matching label).
+      'plan.drift.targetAmount': '目標金額',
+      'plan.drift.actualAmount': '目前金額',
+      'plan.drift.deltaAmount': '差額金額',
+      'plan.drift.header.target': '目標',
+      'plan.drift.header.delta': '差額',
+      'plan.drift.header.totalTarget': '總目標',
+      'plan.drift.header.totalWeight': '總權重',
+      'plan.drift.header.overWeightWarning': '總權重超過 100% — 請檢查計畫',
       'groupBy.title': '依類別分組',
       'groupBy.holdingsSub': 'Holdings',
       'groupBy.cashSub': '現金',
@@ -5898,19 +6008,25 @@
       // object from the lib plus derived display rows so the markup
       // doesn't have to compute drift/cents/sign in the template.
       // Hidden when no active plan or 0 rules.
+      //
+      // v1.17 (ADR 0024): threads the active plan's net worth through
+      // to driftForRule so the lib returns the new target/actual/drift
+      // amount fields. The shim still owns the display string
+      // formatting (TWD → displayCurrency).
       driftCards() {
         const plan = this.activePlan();
         if (!plan) return [];
         if (!Array.isArray(plan.rules) || plan.rules.length === 0) return [];
         const { records, attrs } = this._buildDriftRecords();
         const cats = this.data.categories || [];
+        const netWorth = this.netWorth();
         return plan.rules.map(rule => {
           const matching = Plan.recordsMatchingRule(rule, records, attrs);
-          const drift = Plan.driftForRule(rule, records, attrs, this.fxRate());
+          const drift = Plan.driftForRule(rule, records, attrs, this.fxRate(), netWorth);
           const card = {
             rule,
             drift,
-            valueRows: this._driftCardRows(rule, drift, cats),
+            valueRows: this._driftCardRows(rule, drift, cats, netWorth),
             matchingCount: matching.length,
             isOneRecord: matching.length === 1,
             hasNoMatching: matching.length === 0,
@@ -5923,18 +6039,21 @@
       // ascending (Q4 = a). Each row carries:
       //   value_id, value_name, target_str, actual_str, drift_str,
       //   drift_class, is_grey
+      //   + v1.17: target_str_amt, actual_str_amt, drift_str_amt
+      //   (TWD baseline converted to displayCurrency via formatAmount)
       // The _unassigned row is appended last (after sorting); its
       // drift is '—' (Q6 = a). The greyed-target row in the 0-match
       // case is handled by hasNoMatching on the card (the entire card
       // table greys via opacity-40 on the <tr>) — individual rows
       // keep their normal colour so absolute numbers stay readable.
-      _driftCardRows(rule, drift, cats) {
+      _driftCardRows(rule, drift, cats, netWorth) {
         const targetCatId = Object.keys(rule.distribute)[0];
         const cat = cats.find(c => c.id === targetCatId);
         const valueById = {};
         if (cat && Array.isArray(cat.values)) {
           for (const v of cat.values) valueById[v.id] = v.name;
         }
+        const hasAmounts = drift && drift.target_amount && drift.actual_amount && drift.drift_amount;
         const rows = [];
         // value_ids present in target (the rule's distribution keys)
         // — these get sorted alphabetically and rendered normally.
@@ -5943,29 +6062,127 @@
           const target = rule.distribute[targetCatId][vid];
           const actual = drift.actual[vid];
           const d = drift.drift[vid];
+          // Per ADR 0024 §4: shared threshold between delta% and
+          // delta$ (5pp), with one documented exception — the 0-match
+          // edge case. When `d` is undefined (no matching records),
+          // the % column has no value to threshold against (em-dash),
+          // so we keep its existing v1.4 emerald class for the em-dash
+          // itself; but the $ column shows `-target_amount` which is
+          // non-zero, so it inherits red. Two row fields carry the
+          // colors — `drift_class` (delta% cell) and
+          // `amt_drift_class` (delta$ cell).
+          let driftClass, amtDriftClass;
+          if (d === undefined || Number.isNaN(d)) {
+            // 0-match edge case (ADR 0024 §4).
+            driftClass = 'text-emerald-600';     // % em-dash, same as v1.4
+            amtDriftClass = 'text-red-600 font-semibold'; // $ shows -target
+          } else if (Math.abs(d) <= 5) {
+            driftClass = 'text-emerald-600';
+            amtDriftClass = 'text-emerald-600';
+          } else {
+            driftClass = 'text-red-600 font-semibold';
+            amtDriftClass = 'text-red-600 font-semibold';
+          }
+          // v1.17 amount columns: TWD baseline → displayCurrency.
+          // actual_amount and drift_amount are absent in the 0-match
+          // edge case (ADR 0024 §4 — see driftForRule impl). When
+          // netWorth wasn't provided (older callers), skip the
+          // amount fields and let the markup fall back to em-dash.
+          const targetTwd = hasAmounts ? (drift.target_amount[vid] || 0) : null;
+          const actualTwd = hasAmounts ? drift.actual_amount[vid] : undefined;
+          const driftTwd = hasAmounts ? drift.drift_amount[vid] : undefined;
           rows.push({
             value_id: vid,
             value_name: valueById[vid] || vid,
             target_str: target.toFixed(1) + '%',
             actual_str: actual === undefined ? '—' : actual.toFixed(1) + '%',
             drift_str: d === undefined || Number.isNaN(d) ? '—' : (d > 0 ? '+' : '') + d.toFixed(1) + '%',
-            drift_class: d === undefined || Number.isNaN(d) || Math.abs(d) <= 5 ? 'text-emerald-600' : 'text-red-600 font-semibold',
+            target_str_amt: targetTwd === null ? '—' : this.formatAmount(targetTwd, 'TWD'),
+            actual_str_amt: actualTwd === undefined ? '—' : this.formatAmount(actualTwd, 'TWD'),
+            drift_str_amt: driftTwd === undefined ? '—' : (driftTwd > 0 ? '+' : '') + this.formatAmount(driftTwd, 'TWD'),
+            drift_class: driftClass,
+            amt_drift_class: amtDriftClass,
             is_grey: false,
           });
         }
         // _unassigned row (if present); never grey, label localised.
+        // Per ADR 0024 §6: target_str_amt = '—' (unassigned has no
+        // target), actual_str_amt = sum of unassigned records in TWD
+        // (matching_total - filteredTotal), drift_str_amt = '—'.
         if (typeof drift.actual._unassigned === 'number') {
+          const unassignedTwd = hasAmounts && typeof drift.matching_total === 'number'
+            ? (drift.matching_total - Object.values(drift.actual_amount || {}).reduce((a, b) => a + b, 0))
+            : null;
           rows.push({
             value_id: '_unassigned',
             value_name: this.t('plan.drift.unassigned'),
             target_str: '—',
             actual_str: drift.actual._unassigned.toFixed(1) + '%',
             drift_str: '—',
+            target_str_amt: '—',
+            actual_str_amt: unassignedTwd === null ? '—' : this.formatAmount(unassignedTwd, 'TWD'),
+            drift_str_amt: '—',
             drift_class: 'text-slate-400',
             is_grey: false,
           });
         }
         return rows;
+      },
+
+      // v1.17 (ADR 0024 §6): section header summary. Returns
+      //   { totalTargetStr, totalWeightStr, isOverWeight }
+      // where totalTarget = Σ rule_target_amount (TWD baseline, then
+      // formatted to displayCurrency) and totalWeight = Σ
+      // target_weight_pct with missing treated as 100 (matches the
+      // lib's behaviour). The over-weight warning fires when the sum
+      // exceeds 100%.
+      driftSectionSummary() {
+        const plan = this.activePlan();
+        if (!plan) return null;
+        if (!Array.isArray(plan.rules) || plan.rules.length === 0) return null;
+        const netWorth = this.netWorth();
+        let totalTarget = 0;
+        let totalWeight = 0;
+        for (const rule of plan.rules) {
+          const tw = typeof rule.target_weight_pct === 'number' && Number.isFinite(rule.target_weight_pct)
+            ? rule.target_weight_pct
+            : 100;
+          totalWeight += tw;
+          totalTarget += (tw / 100) * netWorth;
+        }
+        return {
+          totalTargetStr: this.formatAmount(totalTarget, 'TWD'),
+          totalWeightStr: totalWeight.toFixed(1) + '%',
+          isOverWeight: totalWeight > 100,
+        };
+      },
+
+      // v1.17 (Q7c): the 3rd card-header line. Returns
+      //   { drift_str, drift_class }
+      // where drift_str is `target − matching` in displayCurrency with
+      // a +/- sign (matches the row-delta string format), and
+      // drift_class is the row's drift_class re-applied at the rule
+      // level. Per ADR 0024 §4, the 5pp threshold is the single
+      // magic number; we compute a rule-level delta_pct as
+      // `(target − matching) / netWorth × 100` and apply the same
+      // threshold. Zero delta → emerald; small → emerald; >5pp →
+      // red. The check is wrapped in Number.isFinite to handle the
+      // edge case where rule_target_amount is missing (older 4-arg
+      // driftForRule calls) — in that case the line is hidden by
+      // x-show and the helper returns the emerald default.
+      driftCardDelta(card) {
+        const target = card && card.drift && card.drift.rule_target_amount;
+        const matching = card && card.drift && card.drift.matching_total;
+        if (typeof target !== 'number' || typeof matching !== 'number') {
+          return { drift_str: '—', drift_class: 'text-emerald-600' };
+        }
+        const d = target - matching;
+        const netWorth = this.netWorth();
+        const deltaPct = netWorth !== 0 ? (d / netWorth) * 100 : 0;
+        const driftClass = Math.abs(deltaPct) <= 5 ? 'text-emerald-600' : 'text-red-600 font-semibold';
+        const prefix = d > 0 ? '+' : (d < 0 ? '-' : '');
+        const absStr = this.formatAmount(Math.abs(d), 'TWD');
+        return { drift_str: prefix + absStr, drift_class: driftClass };
       },
 
       // ---- Calculations ----

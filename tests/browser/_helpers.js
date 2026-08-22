@@ -28,4 +28,26 @@ async function cleanRoutes(page) {
   await page.unrouteAll({ behavior: 'ignoreErrors' });
 }
 
-module.exports = { cleanRoutes };
+// Capture pageerror + console errors that aren't pre-existing noise
+// (favicon 404, upstream Alpine x-show transition race — same as the
+// other browser specs tolerate). Used by every browser spec.
+function collectAppErrors(page) {
+  const errors = [];
+  page.on('pageerror', (e) => {
+    if (/u is not a function/i.test(e.message)) return;
+    errors.push(`pageerror: ${e.message}`);
+  });
+  page.on('console', (msg) => {
+    if (msg.type() !== 'error') return;
+    const text = msg.text();
+    if (/Failed to load resource/i.test(text)) {
+      if (/favicon\.ico$/i.test(msg.location()?.url || '')) return;
+      if (/status of [45][0-9]{2}/i.test(text)) return;
+    }
+    if (/tailwind|alpine\.js|googleapis\.com|gsi\/client|fonts\.(googleapis|gstatic)|accounts\.google|cdn\.jsdelivr/i.test(text)) return;
+    errors.push(`console.error: ${text}`);
+  });
+  return errors;
+}
+
+module.exports = { cleanRoutes, collectAppErrors };
