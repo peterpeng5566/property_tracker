@@ -1369,6 +1369,75 @@ test('driftForPlan v1.17: 4-arg call (no netWorth) → no new fields on any rule
   assert.equal('drift_amount' in out[0], false);
 });
 
+// ---- Slice 12.5: _unassigned bucket does NOT appear in actual_amount (ADR 0024 §6) ----
+
+test('driftForRule v1.17: _unassigned bucket is excluded from actual_amount', () => {
+  // The existing v1.4 drift sets `actual._unassigned` when matching records
+  // lack the target attribute (percentage form). v1.17 `actual_amount` is
+  // built only over distribute value_ids — the unassigned bucket has no
+  // target (it's not in `distribute`), so it cannot meaningfully participate
+  // in the target/actual/drift comparison. ADR 0024 §6 documents this as
+  // intentional: actual_amount stays consistent (no surprise keys), and
+  // the Alpine shim renders the unassigned row's $ column as `—`.
+  const records = [
+    { id: 'a', currency: 'TWD', value: 100 },  // has type
+    { id: 'b', currency: 'TWD', value: 50 },   // no type (unassigned)
+  ];
+  const attrs = {
+    a: { country: 'TW', type: 'stock' },
+    b: { country: 'TW' }, // no type
+  };
+  const rule = {
+    when: { country: ['TW'] },
+    distribute: { type: { stock: 60, bond: 40 } },
+    target_weight_pct: 100,
+  };
+  const out = driftForRule(rule, records, attrs, FX, 200000);
+  // % shape: actual has _unassigned (existing v1.4 behaviour).
+  assert.ok('_unassigned' in out.actual, 'actual has _unassigned (pct form)');
+  // $ shape: actual_amount has NO _unassigned key.
+  assert.equal('_unassigned' in out.actual_amount, false,
+    'actual_amount should not contain _unassigned');
+  // $ shape: actual_amount covers only distribute value_ids.
+  assert.deepEqual(Object.keys(out.actual_amount).sort(), ['bond', 'stock']);
+  assert.equal(out.actual_amount.stock, 100);
+  assert.equal(out.actual_amount.bond, 0);
+});
+
+test('driftForRule v1.17: when all matching records lack target attribute → actual_amount = {}', () => {
+  // Mirrors the v1.4 behaviour: all matching records lack the target
+  // attribute → actual._unassigned = 100, drift = {}. v1.17 extends this:
+  // actual_amount stays empty (nothing to sum per distribute vid) and
+  // drift_amount is computed against the rule's target. Hand-computed:
+  // rule_target_amount = 100K (100% of 100K net worth); target_amount =
+  // { stock: 60K, bond: 40K }; actual_amount = {} (no records with
+  // target attribute); drift_amount = { stock: -60K, bond: -40K }.
+  const records = [
+    { id: 'a', currency: 'TWD', value: 100 },
+    { id: 'b', currency: 'TWD', value: 50 },
+  ];
+  const attrs = {
+    a: { country: 'TW' }, // no type
+    b: { country: 'TW' }, // no type
+  };
+  const rule = {
+    when: { country: ['TW'] },
+    distribute: { type: { stock: 60, bond: 40 } },
+    target_weight_pct: 100,
+  };
+  const out = driftForRule(rule, records, attrs, FX, 100000);
+  assert.equal(out.matching_total, 150);
+  assert.deepEqual(out.actual, { _unassigned: 100 });
+  assert.deepEqual(out.drift, {});
+  // v1.17: actual_amount is empty (no records with target attribute),
+  // but target_amount + drift_amount are still computed.
+  assert.deepEqual(out.actual_amount, {});
+  assert.equal(out.target_amount.stock, 60000);
+  assert.equal(out.target_amount.bond, 40000);
+  assert.equal(out.drift_amount.stock, -60000);
+  assert.equal(out.drift_amount.bond, -40000);
+});
+
 // ---- Slice 13: actual_amount total symmetry (within-rule) ----
 
 test('driftForRule v1.17: Σ actual_amount across distribute value_ids + unassigned = matching_total', () => {
