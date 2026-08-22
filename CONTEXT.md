@@ -151,8 +151,12 @@ Read-only advisor that consumes the active plan's *Rebalance-eligible rule*s and
 _Avoid_: Trading bot, execute trades, broker integration
 
 **Rebalance-eligible rule**:
-A `data.plans[].rules[]` entry whose `target_weight_pct` is set to a finite number in `[0, 100]`. Rules without the field remain drift-only rules for the existing Plans feature (per `Plan.validateRule`). One rule is the source of truth for both drift (via `distribute`) and rebalance (via `target_weight_pct`); adding the field is opt-in.
+A `data.plans[].rules[]` entry whose `target_weight_pct` is set to a finite number in `[0, 100]` **AND** whose `show_in_rebalance === true`. Rules missing either condition remain drift-only rules for the existing Plans feature (per `Plan.validateRule` and `lib/rebalance.js _isEligible`). One rule is the source of truth for both drift (via `distribute`) and rebalance (via `target_weight_pct` + `show_in_rebalance`); both opt-ins are independent — a rule can be a drift tracker without being rebalance-eligible, and vice-versa. See ADR 0017 §1 (original predicate) + ADR 0025 (the toggle extension).
 _Avoid_: Active rule, weighted rule, rebalance target
+
+**Show in rebalance**:
+A per-rule boolean opt-in (`rule.show_in_rebalance`) that gates whether the rule appears on the Rebalance page. Defaults to `false` for new rules and is treated as `false` for pre-v1.19 rules without the field. Decoupled from `target_weight_pct` — a rule can have weight but no toggle, or vice-versa, or both. Home (Plan vs Actual) ignores this field. ADR 0025.
+_Avoid_: Rebalance opt-in, page toggle, visibility flag (vague)
 
 **Candidate action**:
 A single (rule, record) row on the Rebalance page showing the per-holding or per-cash-account advice for one rebalance-eligible rule's matched records. Even-split of the rule's *Rebalance target value* across its N matched records per R4-Q1 (each record's `target_value = rule_target_value / N`). All candidates are independent rows; the user picks which to execute. When 2+ rules match the same holding, the page shows N separate rows (one per rule), each in the respective rule's section.

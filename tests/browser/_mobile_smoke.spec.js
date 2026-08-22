@@ -199,6 +199,7 @@ function rebalanceFixture() {
       when: { 'cat-region': ['val-TW'] },
       distribute: { 'cat-type': { 'val-stock': 100 } },
       target_weight_pct: 100,
+      show_in_rebalance: true, // v1.19 (ADR 0025): opt-in toggle
     }],
   }];
   f.active_plan_id = planId;

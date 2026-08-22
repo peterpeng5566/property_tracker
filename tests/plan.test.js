@@ -100,6 +100,14 @@ test('newRule: returns an object with id, name: "", when: {}, distribute: {}', (
   assert.deepEqual(r.distribute, {});
 });
 
+// v1.19 (ADR 0025): newRule defaults show_in_rebalance to false. The
+// Rebalance page is opt-in; the user must tick the per-rule checkbox
+// in the plan editor to enable it.
+test('newRule: v1.19 — defaults show_in_rebalance to false (Rebalance off by default)', () => {
+  const r = newRule();
+  assert.equal(r.show_in_rebalance, false);
+});
+
 test('newPlan / newRule: each call returns a distinct id', () => {
   const a = newPlan('A');
   const b = newPlan('A');
@@ -195,6 +203,47 @@ test('validateRule: bad target_weight_pct does not break distribute validation',
   assert.ok(out.errors.some(e => /target_weight_pct/.test(e)), 'has target_weight_pct error');
   assert.ok(out.errors.some(e => /name/.test(e)), 'still reports missing name');
   assert.ok(out.errors.some(e => /sum to 100/.test(e)), 'still reports bad distribute sum');
+});
+
+// ---- validateRule: show_in_rebalance (v1.19, ADR 0025) ----
+
+// show_in_rebalance is OPTIONAL — absent / null / undefined is fine.
+test('validateRule: show_in_rebalance absent → valid (legacy rules unaffected)', () => {
+  const r = { name: 'X', when: {}, distribute: { type: { stock: 100 } } };
+  const out = validateRule(r);
+  assert.equal(out.valid, true);
+});
+
+test('validateRule: show_in_rebalance: null → valid', () => {
+  const r = { name: 'X', when: {}, distribute: { type: { stock: 100 } }, show_in_rebalance: null };
+  const out = validateRule(r);
+  assert.equal(out.valid, true);
+});
+
+test('validateRule: show_in_rebalance: true → valid', () => {
+  const r = { name: 'X', when: {}, distribute: { type: { stock: 100 } }, show_in_rebalance: true };
+  const out = validateRule(r);
+  assert.equal(out.valid, true);
+});
+
+test('validateRule: show_in_rebalance: false → valid (explicit opt-out)', () => {
+  const r = { name: 'X', when: {}, distribute: { type: { stock: 100 } }, show_in_rebalance: false };
+  const out = validateRule(r);
+  assert.equal(out.valid, true);
+});
+
+test('validateRule: show_in_rebalance: "true" (string) → invalid', () => {
+  const r = { name: 'X', when: {}, distribute: { type: { stock: 100 } }, show_in_rebalance: 'true' };
+  const out = validateRule(r);
+  assert.equal(out.valid, false);
+  assert.ok(out.errors.some(e => /show_in_rebalance/.test(e)), 'has show_in_rebalance error');
+});
+
+test('validateRule: show_in_rebalance: 1 (number) → invalid', () => {
+  const r = { name: 'X', when: {}, distribute: { type: { stock: 100 } }, show_in_rebalance: 1 };
+  const out = validateRule(r);
+  assert.equal(out.valid, false);
+  assert.ok(out.errors.some(e => /show_in_rebalance/.test(e)), 'has show_in_rebalance error');
 });
 
 // ---- validateRule ----

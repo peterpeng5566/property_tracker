@@ -88,6 +88,10 @@ function makePlan(rules) {
 }
 
 // A complete rebalance-eligible rule:
+//   - has a finite `target_weight_pct` (ADR 0017 §1)
+//   - has `show_in_rebalance: true` (v1.19, ADR 0025)
+// Tests that want to exercise the toggle-off / default-off path should
+// not use this factory; build the rule inline instead.
 function ruleEligible(id, name, target_weight_pct, when, distribute) {
   return {
     id,
@@ -95,6 +99,7 @@ function ruleEligible(id, name, target_weight_pct, when, distribute) {
     target_weight_pct,
     when,
     distribute: distribute || { type: { stock: 100 } },
+    show_in_rebalance: true,
   };
 }
 
@@ -537,4 +542,119 @@ test('executeCandidate: multi-record state → only the target record is updated
   assert.equal(out.holdings[0].shares, 10); // h1 unchanged
   assert.equal(out.holdings[1].shares, 25); // h2 + 5
   assert.equal(out.cash_accounts[0].balance, 1000); // c1 unchanged
+});
+
+// ---- Eligibility: show_in_rebalance (v1.19, ADR 0025) ----
+
+// The toggle decouples rebalance eligibility from "has target_weight_pct".
+// Even with a perfectly valid target_weight_pct, the rule is NOT
+// rebalance-eligible unless `show_in_rebalance === true`. This blocks
+// rules that should only be drift-tracked from showing up on the
+// Rebalance page.
+test('v1.19 toggle: rule with target_weight_pct but show_in_rebalance=false → not eligible', () => {
+  const plan = makePlan([{
+    id: 'r1', name: 'Drift-only leaf',
+    when: {}, distribute: { type: { stock: 100 } },
+    target_weight_pct: 50,
+    show_in_rebalance: false,
+  }]);
+  const out = computeCandidates(plan, {
+    records: [holding('h1', 'TWD', 10, 100)],
+    totalValue: 10000,
+    fxRate: FX,
+  });
+  assert.deepEqual(out, []);
+});
+
+test('v1.19 toggle: rule with target_weight_pct but show_in_rebalance absent → not eligible (default off)', () => {
+  // Pre-v1.19 rules have no `show_in_rebalance` field. They must NOT
+  // auto-promote to rebalance-eligible on upgrade — the user explicitly
+  // asked for "default is not showing".
+  const plan = makePlan([{
+    id: 'r1', name: 'Legacy leaf',
+    when: {}, distribute: { type: { stock: 100 } },
+    target_weight_pct: 50,
+    // no show_in_rebalance
+  }]);
+  const out = computeCandidates(plan, {
+    records: [holding('h1', 'TWD', 10, 100)],
+    totalValue: 10000,
+    fxRate: FX,
+  });
+  assert.deepEqual(out, []);
+});
+
+test('v1.19 toggle: rule with target_weight_pct + show_in_rebalance=true → eligible', () => {
+  const plan = makePlan([{
+    id: 'r1', name: 'Opted-in leaf',
+    when: {}, distribute: { type: { stock: 100 } },
+    target_weight_pct: 50,
+    show_in_rebalance: true,
+  }]);
+  const out = computeCandidates(plan, {
+    records: [holding('h1', 'TWD', 10, 100)],
+    totalValue: 10000,
+    fxRate: FX,
+  });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].ruleId, 'r1');
+});
+
+test('v1.19 toggle: show_in_rebalance="true" (string) is NOT eligible (strict === true)', () => {
+  // The lib does an exact `=== true` check so a stringly-typed "true"
+  // doesn't accidentally enable rebalance. Defensive against future API
+  // callers that might serialise the field as a JSON string.
+  const plan = makePlan([{
+    id: 'r1', name: 'String "true" leaf',
+    when: {}, distribute: { type: { stock: 100 } },
+    target_weight_pct: 50,
+    show_in_rebalance: 'true',
+  }]);
+  const out = computeCandidates(plan, {
+    records: [holding('h1', 'TWD', 10, 100)],
+    totalValue: 10000,
+    fxRate: FX,
+  });
+  assert.deepEqual(out, []);
+});
+
+test('v1.19 toggle: show_in_rebalance=1 (number) is NOT eligible (strict === true)', () => {
+  const plan = makePlan([{
+    id: 'r1', name: 'Number 1 leaf',
+    when: {}, distribute: { type: { stock: 100 } },
+    target_weight_pct: 50,
+    show_in_rebalance: 1,
+  }]);
+  const out = computeCandidates(plan, {
+    records: [holding('h1', 'TWD', 10, 100)],
+    totalValue: 10000,
+    fxRate: FX,
+  });
+  assert.deepEqual(out, []);
+});
+
+test('v1.19 toggle: computeTotalDrift honours the toggle — un-toggled rules excluded', () => {
+  // One opted-in rule (50%) + one drift-only rule (also has weight but
+  // not toggled). computeTotalDrift should only sum the opted-in rule.
+  const plan = {
+    id: 'p1', name: 'Mixed',
+    rules: [
+      { id: 'r1', name: 'Stocks',
+        when: { type: ['stock'] }, distribute: { type: { stock: 100 } },
+        target_weight_pct: 50, show_in_rebalance: true },
+      { id: 'r2', name: 'Cash (drift only)',
+        when: { type: ['cash'] }, distribute: { type: { cash: 100 } },
+        target_weight_pct: 50, show_in_rebalance: false },
+    ],
+  };
+  const records = [
+    holding('h1', 'TWD', 50, 100, { type: 'stock' }), // 5000
+    cash('c1', 'TWD', 5000, { type: 'cash' }),        // 5000
+  ];
+  const out = computeTotalDrift(plan, { records, totalValue: 10000, fxRate: FX });
+  // r1: target=5000 (50% of 10000), current=5000 → delta=0
+  // r2: drift-only (toggle off) → excluded
+  assert.equal(out.drift, 0);
+  assert.equal(out.totalRuleWeight, 50); // only r1 counts
+  assert.equal(out.missing, 50);          // 100 - 50
 });

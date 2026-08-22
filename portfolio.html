@@ -1419,6 +1419,27 @@
                 <span class="text-xs text-slate-400 ml-1">%</span>
               </div>
 
+              <!-- v1.19 — show_in_rebalance is the user opt-in for the
+                   Rebalance page (ADR 0025). Defaults to OFF (newRule()
+                   sets it to false; pre-v1.19 rules with no field are
+                   treated as off by lib/rebalance.js). Untick to hide
+                   the rule from the Rebalance page while keeping it as a
+                   drift-tracker on Home. -->
+              <div class="mb-4">
+                <label class="flex items-center gap-2 cursor-pointer"
+                       data-testid="plan-rule-show-in-rebalance-row">
+                  <input type="checkbox"
+                         :checked="rule.show_in_rebalance === true"
+                         @change="setRuleShowInRebalance(rIdx, $event.target.checked)"
+                         data-testid="plan-rule-show-in-rebalance"
+                         class="h-4 w-4 border border-slate-300 rounded text-slate-900 focus:ring-slate-400">
+                  <span class="text-sm text-slate-700"
+                        x-text="t('plan.editor.showInRebalance')"></span>
+                </label>
+                <p class="text-xs text-slate-500 mt-1 ml-6"
+                   x-text="t('plan.editor.showInRebalanceHelp')"></p>
+              </div>
+
               <!-- when -->
               <div class="mb-4">
                 <p class="text-xs text-slate-500 mb-2" x-text="t('plan.editor.ruleWhen')"></p>
@@ -3063,6 +3084,11 @@
       'plan.editor.addCategoryToWhen': '+ Add Category',
       'plan.editor.targetWeight': '目標權重（用於再平衡）',
       'plan.editor.targetWeight': 'Target weight (rebalance)',
+      // v1.19 — per-rule Rebalance page visibility toggle (ADR 0025).
+      // Default is OFF; ticking the checkbox opts the rule into the
+      // Rebalance page without changing drift behaviour on Home.
+      'plan.editor.showInRebalance': 'Show in rebalance page',
+      'plan.editor.showInRebalanceHelp': 'Tick to include this rule on the Rebalance page. Leave unticked to keep it as a drift-only rule on Home.',
       'plan.editor.removeCategory': 'Remove category',
       'plan.editor.targetCategory': 'Target category',
       'plan.editor.addValue': '+ Add Value',
@@ -3247,7 +3273,7 @@
       'rebalance.noPlan.subtitle': 'Create a plan and set it active to get rebalance advice.',
       'rebalance.noPlan.cta': 'Go to Plans',
       'rebalance.noEligibleRules.title': 'No rebalance-eligible rules',
-      'rebalance.noEligibleRules.subtitle': 'Add a target_weight_pct to one or more rules to enable rebalance.',
+      'rebalance.noEligibleRules.subtitle': 'Set a target_weight_pct and tick "Show in rebalance page" on one or more rules to enable rebalance.',
       'rebalance.noEligibleRules.cta': 'Edit plan',
       'rebalance.noMatched.title': 'No matched records',
       'rebalance.noMatched.subtitle': 'Adjust the rule filters or add holdings to see candidate actions.',
@@ -3340,7 +3366,7 @@
       'rebalance.noPlan.subtitle': '先建立一個 Plan 並設為啟用，才能取得再平衡建議。',
       'rebalance.noPlan.cta': '前往 Plans',
       'rebalance.noEligibleRules.title': '沒有可重新平衡的 Rule',
-      'rebalance.noEligibleRules.subtitle': '為 Rule 加上 target_weight_pct 以啟用再平衡。',
+      'rebalance.noEligibleRules.subtitle': '設定 target_weight_pct 並勾選「顯示於再平衡頁」即可啟用再平衡。',
       'rebalance.noEligibleRules.cta': '編輯 Plan',
       'rebalance.noMatched.title': '沒有符合條件的持有',
       'rebalance.noMatched.subtitle': '調整 Rule 篩選條件或新增持有，即可看到候選操作。',
@@ -3507,6 +3533,9 @@
       'plan.editor.weightSum': '加總:{sum}%',
       'plan.editor.weightSumOk': '加總:100% ✓',
       'plan.editor.addCategoryToWhen': '+ 新增 Category',
+      // v1.19 — per-rule Rebalance page visibility toggle (ADR 0025).
+      'plan.editor.showInRebalance': '顯示於再平衡頁',
+      'plan.editor.showInRebalanceHelp': '勾選後此 Rule 會出現在再平衡頁。不勾選則只作為 Home 上的 drift 規則使用。',
       'plan.editor.removeCategory': '移除 category',
       'plan.editor.targetCategory': '目標 category',
       'plan.editor.addValue': '+ 新增值',
@@ -5879,6 +5908,18 @@
         }
       },
 
+      // v1.19 — set show_in_rebalance on a rule (ADR 0025). Always
+      // writes a boolean so lib/rebalance.js's strict `=== true`
+      // eligibility check has a clean storage shape. New rules arrive
+      // via Plan.newRule() with `show_in_rebalance: false`; the
+      // checkbox in the rule editor flips it to true.
+      setRuleShowInRebalance(ruleIdx, value) {
+        if (!this.planDraft) return;
+        const rule = this.planDraft.rules[ruleIdx];
+        if (!rule) return;
+        rule.show_in_rebalance = value === true;
+      },
+
       removeRuleDistributeValue(ruleIdx, vId) {
         if (!this.planDraft) return;
         const rule = this.planDraft.rules[ruleIdx];
@@ -6364,14 +6405,24 @@
         });
       },
 
-      // True when the active plan exists and has at least one rule with
-      // target_weight_pct set. Drives the empty-state branching.
+      // True when the active plan exists and has at least one rule that
+      // passes the lib/rebalance.js `_isEligible` predicate (finite
+      // `target_weight_pct` in [0, 100] AND v1.19 `show_in_rebalance ===
+      // true`). Drives the empty-state branching. MUST stay in sync with
+      // lib/rebalance.js `_isEligible(rule)` — the predicate is the same
+      // shape, inlined here so the Alpine reactivity check is O(rules)
+      // rather than calling into computeCandidates each tick.
       hasRebalanceEligibleRules() {
         const plan = this.activePlan();
         if (!plan || !Array.isArray(plan.rules)) return false;
-        return plan.rules.some(r =>
-          typeof r.target_weight_pct === 'number' && Number.isFinite(r.target_weight_pct)
-        );
+        return plan.rules.some(r => {
+          if (!r) return false;
+          const tw = r.target_weight_pct;
+          if (typeof tw !== 'number' || !Number.isFinite(tw)) return false;
+          if (tw < 0 || tw > 100) return false;
+          if (r.show_in_rebalance !== true) return false;
+          return true;
+        });
       },
 
       // Per-rule summary text for the section header. Returns

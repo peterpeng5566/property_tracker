@@ -137,6 +137,7 @@ test.describe('portfolio.html rebalance page (v1.8 ticket #02)', () => {
         when: { 'cat-region': ['val-TW'] },
         distribute: { 'cat-type': { 'val-stock': 100 } },
         target_weight_pct: 100,
+        show_in_rebalance: true, // v1.19 (ADR 0025): opt-in toggle
       }],
     }];
     fixture.active_plan_id = planId;
@@ -185,6 +186,7 @@ test.describe('portfolio.html rebalance page (v1.8 ticket #02)', () => {
         when: { 'cat-region': ['val-TW'] },
         distribute: { 'cat-type': { 'val-stock': 100 } },
         target_weight_pct: 100,
+        show_in_rebalance: true, // v1.19
       }],
     }];
     fixture.active_plan_id = 'plan-1';
@@ -238,6 +240,7 @@ test.describe('portfolio.html rebalance page (v1.8 ticket #02)', () => {
         when: { 'cat-type': ['val-cash'] },
         distribute: { 'cat-type': { 'val-cash': 100 } },
         target_weight_pct: 50,
+        show_in_rebalance: true, // v1.19
       }],
     }];
     fixture.active_plan_id = 'plan-1';
@@ -273,11 +276,11 @@ test.describe('portfolio.html rebalance page (v1.8 ticket #02)', () => {
         { id: 'rule-1', name: 'TW region',
           when: { 'cat-region': ['val-TW'] },
           distribute: { 'cat-type': { 'val-stock': 100 } },
-          target_weight_pct: 50 },
+          target_weight_pct: 50, show_in_rebalance: true },
         { id: 'rule-2', name: 'Stock sector',
           when: { 'cat-type': ['val-stock'] },
           distribute: { 'cat-region': { 'val-TW': 100 } },
-          target_weight_pct: 50 },
+          target_weight_pct: 50, show_in_rebalance: true },
       ],
     }];
     fixture.active_plan_id = 'plan-1';
@@ -337,6 +340,7 @@ test.describe('portfolio.html rebalance page (v1.8 ticket #02)', () => {
         when: { 'cat-type': ['val-stock'] },
         distribute: { 'cat-region': { 'val-TW': 50, 'val-US': 50 } },
         target_weight_pct: 100,
+        show_in_rebalance: true, // v1.19
       }],
     }];
     fixture.active_plan_id = 'plan-1';
@@ -397,6 +401,13 @@ test.describe('portfolio.html rebalance page (v1.8 ticket #02)', () => {
     // Fill it.
     await page.locator('[data-testid="plan-rule-target-weight"]').fill('50');
     await page.waitForTimeout(100);
+    // v1.19 (ADR 0025): tick the "Show in rebalance page" toggle so the
+    // rule is rebalance-eligible. Default is OFF; without this the rule
+    // remains drift-only on Home and does not appear on the Rebalance
+    // page regardless of target_weight_pct.
+    await expect(page.locator('[data-testid="plan-rule-show-in-rebalance"]')).toBeVisible();
+    await page.locator('[data-testid="plan-rule-show-in-rebalance"]').check();
+    await page.waitForTimeout(100);
     await page.locator('[data-testid="plan-save"]').click();
     await page.waitForTimeout(200);
     // Set it active.
@@ -453,6 +464,80 @@ test.describe('portfolio.html rebalance page (v1.8 ticket #02)', () => {
       return Object.keys(plan.rules[0].when);
     });
     expect(ruleKeys).toEqual(['cat-region', 'cat-type']);
+
+    expect(errors).toEqual([]);
+  });
+
+  // ---- v1.19 (ADR 0025) — show_in_rebalance toggle ----
+
+  test('show_in_rebalance toggle off: rule with target_weight_pct but toggle off → empty CTA', async ({ page }) => {
+    const errors = collectAppErrors(page);
+    const fixture = makeFixture();
+    fixture.plans = [{
+      id: 'plan-1', name: 'Toggle-off only', updated_at: '2024-07-01T00:00:00.000Z',
+      rules: [{
+        id: 'rule-1', name: 'No toggle',
+        when: { 'cat-region': ['val-TW'] },
+        distribute: { 'cat-type': { 'val-stock': 100 } },
+        target_weight_pct: 50,
+        // show_in_rebalance omitted on purpose — defaults to false.
+      }],
+    }];
+    fixture.active_plan_id = 'plan-1';
+
+    await page.addInitScript(initScript(fixture));
+    await page.goto('/portfolio.html');
+    await page.waitForLoadState('domcontentloaded');
+    await page.locator('[data-testid="nav-rebalance"]').click();
+
+    // Active plan exists but no rules have show_in_rebalance → empty CTA.
+    await expect(page.locator('[data-testid="rebalance-no-eligible-rules"]')).toBeVisible();
+    await expect(page.locator('[data-testid="rebalance-rule-section"]')).toHaveCount(0);
+
+    expect(errors).toEqual([]);
+  });
+
+  test('plan editor: unticking show_in_rebalance hides an otherwise-eligible rule from Rebalance', async ({ page }) => {
+    const errors = collectAppErrors(page);
+    page.on('dialog', async (d) => { await d.accept(); });
+    const fixture = makeFixture();
+    fixture.plans = [{
+      id: 'plan-1', name: 'Toggle test', updated_at: '2024-07-01T00:00:00.000Z',
+      rules: [{
+        id: 'rule-1', name: 'Opted in',
+        when: { 'cat-region': ['val-TW'] },
+        distribute: { 'cat-type': { 'val-stock': 100 } },
+        target_weight_pct: 100,
+        show_in_rebalance: true,
+      }],
+    }];
+    fixture.active_plan_id = 'plan-1';
+
+    await page.addInitScript(initScript(fixture));
+    await page.goto('/portfolio.html', { waitUntil: 'networkidle' });
+    await page.waitForTimeout(300);
+
+    // Initially visible on Rebalance page.
+    await page.locator('[data-testid="nav-rebalance"]').click();
+    await expect(page.locator('[data-testid="rebalance-rule-section"]')).toHaveCount(1);
+
+    // Open plan editor and untick the toggle.
+    await page.locator('button:has-text("Plans")').first().click();
+    await page.waitForTimeout(200);
+    await page.locator('[data-testid="plan-edit"]').first().click();
+    await page.waitForTimeout(200);
+    const checkbox = page.locator('[data-testid="plan-rule-show-in-rebalance"]');
+    await expect(checkbox).toBeVisible();
+    await expect(checkbox).toBeChecked();
+    await checkbox.uncheck();
+    await page.waitForTimeout(100);
+    await page.locator('[data-testid="plan-save"]').click();
+    await page.waitForTimeout(200);
+
+    // Now the rule is not eligible → rebalance page shows empty CTA.
+    await page.locator('[data-testid="nav-rebalance"]').click();
+    await expect(page.locator('[data-testid="rebalance-no-eligible-rules"]')).toBeVisible();
+    await expect(page.locator('[data-testid="rebalance-rule-section"]')).toHaveCount(0);
 
     expect(errors).toEqual([]);
   });
