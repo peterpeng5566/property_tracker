@@ -217,6 +217,45 @@ test('netWorth: ignores inactive across all three lists', () => {
   assert.equal(Calc.netWorth(holdings, cash, debts, 'TWD', FX), 0);
 });
 
+// --- netWorthTWD (baseline TWD, fxRate-only) ---
+//
+// Source of truth for lib/plan.js driftForRule, which has the
+// contract "netWorth in baseline TWD" (ADR 0024 §3). The bug we're
+// locking down: when the Alpine shim passed
+// Calc.netWorth(..., displayCurrency, fxRate) to the lib, the lib
+// returned target_amount in displayCurrency (e.g. USD) and the shim
+// then formatAmount()'d it through `toTWD(_, 'TWD', _)` → no-op
+// followed by `fromTWD(usd, 'USD', fxRate)` → divide-by-fxRate, leaving
+// target ≈ netWorth/fxRate on screen. netWorthTWD exists so the
+// shim has an unambiguous "TWD net worth" primitive to pass in.
+
+test('netWorthTWD: same numeric result as netWorth(_, "TWD", _)', () => {
+  const holdings = [h({ shares: 10, current_price: 100, currency: 'TWD' })];
+  const cash = [{ balance: 500, currency: 'TWD', inactive: false }];
+  const debts = [{ balance: 200, currency: 'TWD', inactive: false }];
+  // 1000 + 500 - 200 = 1300 TWD
+  assert.equal(Calc.netWorthTWD(holdings, cash, debts, FX), 1300);
+  assert.equal(
+    Calc.netWorthTWD(holdings, cash, debts, FX),
+    Calc.netWorth(holdings, cash, debts, 'TWD', FX),
+  );
+});
+
+test('netWorthTWD: cross-currency inputs sum in TWD regardless of any displayCurrency choice', () => {
+  // 1000 USD * 32.2 + 500 TWD - 200 USD * 32.2 = (1000-200) * 32.2 + 500
+  // = 800 * 32.2 + 500 = 25760 + 500 = 26260 TWD.
+  const holdings = [h({ shares: 10, current_price: 100, currency: 'USD' })]; // 1000 USD
+  const cash = [{ balance: 500, currency: 'TWD', inactive: false }];           //  500 TWD
+  const debts = [{ balance: 200, currency: 'USD', inactive: false }];         // -200 USD
+  assert.equal(Calc.netWorthTWD(holdings, cash, debts, FX), 800 * FX + 500);
+});
+
+test('netWorthTWD: empty / inactive-only → 0', () => {
+  assert.equal(Calc.netWorthTWD([], [], [], FX), 0);
+  const holdings = [h({ inactive: true })];
+  assert.equal(Calc.netWorthTWD(holdings, [], [], FX), 0);
+});
+
 // --- gainLoss(h) per-holding (single arg, no FX) ---
 
 test('gainLoss: shares * (current_price - cost)', () => {

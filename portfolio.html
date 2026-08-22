@@ -6075,14 +6075,25 @@
         if (!Array.isArray(plan.rules) || plan.rules.length === 0) return [];
         const { records, attrs } = this._buildDriftRecords();
         const cats = this.data.categories || [];
-        const netWorth = this.netWorth();
+        // lib/plan.js driftForRule contract: netWorth in baseline TWD
+        // (ADR 0024 §3). Pass TWD net worth here — NOT this.netWorth(),
+        // which is in displayCurrency and would feed the lib a USD value
+        // when displayCurrency=USD, surfacing as target ≈ netWorth/fxRate
+        // after the shim's `formatAmount(usd, 'TWD')` re-divides by fxRate.
+        // The display-currency `netWorth` is still computed separately
+        // inside each card row (via _driftCardRows → formatAmount(_, 'TWD')
+        // on lib-returned TWD amounts) and the section summary (which
+        // builds Σ target from TWD rules).
+        const netWorthTwd = Calc.netWorthTWD(
+          this.data.holdings, this.data.cash_accounts, this.data.debts, this.fxRate()
+        );
         return plan.rules.map(rule => {
           const matching = Plan.recordsMatchingRule(rule, records, attrs);
-          const drift = Plan.driftForRule(rule, records, attrs, this.fxRate(), netWorth);
+          const drift = Plan.driftForRule(rule, records, attrs, this.fxRate(), netWorthTwd);
           const card = {
             rule,
             drift,
-            valueRows: this._driftCardRows(rule, drift, cats, netWorth),
+            valueRows: this._driftCardRows(rule, drift, cats, netWorthTwd),
             matchingCount: matching.length,
             isOneRecord: matching.length === 1,
             hasNoMatching: matching.length === 0,
@@ -6223,7 +6234,15 @@
         const plan = this.activePlan();
         if (!plan) return null;
         if (!Array.isArray(plan.rules) || plan.rules.length === 0) return null;
-        const netWorth = this.netWorth();
+        // Same TWD-baseline contract as driftCards (ADR 0024 §3):
+        // Σ target must be the sum of rule_target_amount in TWD, then
+        // the shim formats to displayCurrency. Computing from
+        // this.netWorth() (displayCurrency) would surface the same
+        // fxRate double-conversion bug as the per-card target — Σ
+        // target ≈ netWorth/fxRate when displayCurrency=USD.
+        const netWorthTwd = Calc.netWorthTWD(
+          this.data.holdings, this.data.cash_accounts, this.data.debts, this.fxRate()
+        );
         let totalTarget = 0;
         let totalWeight = 0;
         for (const rule of plan.rules) {
@@ -6231,7 +6250,7 @@
             ? rule.target_weight_pct
             : 100;
           totalWeight += tw;
-          totalTarget += (tw / 100) * netWorth;
+          totalTarget += (tw / 100) * netWorthTwd;
         }
         return {
           totalTargetStr: this.formatAmount(totalTarget, 'TWD'),

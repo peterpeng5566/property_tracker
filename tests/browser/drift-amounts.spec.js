@@ -163,6 +163,61 @@ function makeFixtureOverWeight() {
   return f;
 }
 
+// Fixture for the displayCurrency-mismatch regression (Card header
+// Target / Σ target / row Target must equal the Net Worth summary
+// when target_weight_pct=100). Uses USD holdings + USD displayCurrency
+// so the bug surfaces in K-form (the bug is "target divided by fxRate"
+// when netWorth is passed to the lib in displayCurrency instead of
+// baseline TWD).
+//
+// Layout: 1 USD holding, 1000 shares × $200 = $200,000 USD.
+// With displayCurrency=USD + fxRate=32, expected:
+//   Net Worth header: $200.00K
+//   Card header Target (target_weight_pct=100): $200.00K
+//   Stock row Target $: $200.00K
+//   Stock row Actual $: $200.00K
+function makeFixtureUsdDisplay() {
+  return {
+    version: '1.1',
+    holdings: [
+      {
+        id: 'h-aapl', ticker: 'AAPL', shares: 1000, cost: 100,
+        currency: 'USD', current_price: 200,
+        attributes: { 'cat-country': 'val-US', 'cat-type': 'val-stock' },
+      },
+    ],
+    cash_accounts: [],
+    debts: [],
+    categories: CATEGORIES,
+    snapshots: [],
+    plans: [{
+      id: 'plan-usd',
+      name: 'USD display plan',
+      rules: [{
+        id: 'rule-1', name: 'All stock',
+        when: {},
+        distribute: { 'cat-type': { 'val-stock': 100 } },
+        target_weight_pct: 100,
+      }],
+    }],
+    active_plan_id: 'plan-usd',
+    backups: [],
+    deletions: [],
+    settings: {
+      display_currency: 'USD',
+      language: 'en',
+      cost_format: 'per_share',
+      fx_source: 'manual',
+      fx_rate: 32,
+    },
+    meta: {
+      device_id: 'drift-usd-display-test-device',
+      last_synced_at: null,
+      created_at: '2024-07-01T00:00:00.000Z',
+    },
+  };
+}
+
 // Fixture D: rule with target_weight_pct set + no matching records.
 // Exercises ADR 0024 §4 edge case: delta$ red, delta% em-dash.
 function makeFixtureZeroMatchAmount() {
@@ -412,6 +467,44 @@ test.describe('portfolio.html drift amounts (v1.17 ticket 02)', () => {
     const warning = page.locator('[data-testid=drift-section-over-weight-warning]');
     await expect(warning).toBeVisible();
     await expect(warning).toHaveClass(/text-rose-600/);
+
+    expect(errors).toEqual([]);
+  });
+
+  test('displayCurrency=USD: card header Target + row Target match net worth (no fxRate double-conversion)', async ({ page }) => {
+    // Regression for the v1.17 follow-up where Alpine's `netWorth()`
+    // (returns value in displayCurrency) was passed to
+    // `Plan.driftForRule(rule, ..., netWorth)`. The lib expects
+    // baseline TWD; with displayCurrency=USD the lib returned
+    // target_amount in USD, and the shim's `formatAmount(value, 'TWD')`
+    // then re-divided by fxRate to "convert" it to USD — leaving
+    // target ≈ netWorth / fxRate on screen.
+    const errors = collectAppErrors(page);
+    page.on('dialog', async (d) => { await d.accept(); });
+    await page.addInitScript(initScript(makeFixtureUsdDisplay()));
+    await page.goto('/portfolio.html', { waitUntil: 'networkidle' });
+    await page.waitForTimeout(400);
+
+    // Net worth = 1000 × $200 = $200,000 USD = $6,400,000 TWD.
+    // displayCurrency=USD, target_weight_pct=100 → Target must equal Net Worth.
+    // Card header Target (data-testid="drift-card-target-amount"):
+    const targetLine = page.locator('[data-testid=drift-card-target-amount]');
+    await expect(targetLine).toBeVisible();
+    await expect(targetLine).toHaveText('$200.00K');
+
+    // Row Target $ (per-value-id) for the matched stock row:
+    const stockTarget = page.locator('[data-testid=drift-target-amt-val-stock]');
+    await expect(stockTarget).toHaveText('$200.00K');
+
+    // Row Actual $ for the same row (the holding matches at 100%):
+    const stockActual = page.locator('[data-testid=drift-actual-amt-val-stock]');
+    await expect(stockActual).toHaveText('$200.00K');
+
+    // Row Drift $ ≈ 0 (no over- or under-allocation when target=100
+    // and the holding matches at 100%). The v1.18 template strips the
+    // "+" prefix when the drift is exactly 0 (only > 0 / < 0 get a sign).
+    const stockDrift = page.locator('[data-testid=drift-drift-amt-val-stock]');
+    await expect(stockDrift).toHaveText('$0.00');
 
     expect(errors).toEqual([]);
   });
