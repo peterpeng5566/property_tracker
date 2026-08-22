@@ -120,6 +120,18 @@ _Avoid_: Target (overloaded), allocation (overloaded)
 For a single rule, the difference between its target distribution and the actual distribution of matching records' values. Expressed as percentage points per value: `actual_pct - target_pct`. Positive = over-allocated; negative = under-allocated.
 _Avoid_: Deviation, variance (technical), gap
 
+**Plan target amount**:
+The total monetary value (in `settings.displayCurrency`) that one Plan rule is aiming to allocate, computed as `netWorth × rule.target_weight_pct / 100`. When `rule.target_weight_pct` is missing or `null`, the value is treated as `100%` for the Home Plan vs Actual view (different from the Rebalance page per ADR 0024 §2). The Plan target amount is divided across the rule's `distribute` values to produce each sub-item's target amount. The section header's `Σ target` displays the sum across all rules.
+_Avoid_: Target dollar amount, rule target, leaf target amount
+
+**Rule target amount**:
+The per-value-id component of a Plan target amount, computed as `rule_target_amount × distribute_weight[value_id] / 100`. Displayed in `settings.displayCurrency` on Home Plan vs Actual alongside the existing percentage columns. Rule target amounts within a single card sum to the rule's Plan target amount.
+_Avoid_: Sub-target, value target, within-leaf target
+
+**Total plan target sum**:
+The horizontal sum of `rule_target_amount` across all rules in the active plan, displayed in the section header of Home Plan vs Actual. The card-level `Σ target_weight_pct` (sum of `target_weight_pct` across all rules) is shown alongside; exceeding 100% triggers a warning.
+_Avoid_: Cross-rule total, portfolio total target
+
 **Active plan**:
 The plan currently selected for drift computation on Home. Stored as `data.active_plan_id`. Synced across devices via the per-record merge pattern.
 _Avoid_: Current plan, selected plan
