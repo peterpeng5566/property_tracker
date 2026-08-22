@@ -345,31 +345,31 @@
       <!-- Net Worth -->
       <div class="bg-white p-6 rounded-2xl border border-slate-200">
         <p class="text-xs text-slate-500 uppercase tracking-wider font-medium" x-text="t('summary.netWorth')"></p>
-        <p class="text-3xl font-semibold tabular mt-2" x-text="formatAmount(netWorth(), this.displayCurrency)"></p>
+        <p class="text-3xl font-semibold tabular mt-2" x-text="formatAmount(netWorth(), displayCurrency)"></p>
         <p class="text-xs text-slate-500 mt-2"
            x-text="t('summary.netWorthSub', { a: activeHoldingsCount(), c: activeCashCount(), d: activeDebtsCount() })"></p>
       </div>
       <!-- Holdings Value -->
       <div class="bg-white p-6 rounded-2xl border border-slate-200">
         <p class="text-xs text-slate-500 uppercase tracking-wider font-medium" x-text="t('summary.holdingsValue')"></p>
-        <p class="text-3xl font-semibold tabular mt-2" x-text="formatAmount(holdingsValue(), this.displayCurrency)"></p>
+        <p class="text-3xl font-semibold tabular mt-2" x-text="formatAmount(holdingsValue(), displayCurrency)"></p>
         <p class="text-xs mt-2"
            :class="holdingsGainLoss() >= 0 ? 'text-emerald-600' : 'text-rose-600'">
-          <span x-text="(holdingsGainLoss() >= 0 ? '+' : '') + formatAmount(holdingsGainLoss(), this.displayCurrency)"></span>
+          <span x-text="(holdingsGainLoss() >= 0 ? '+' : '') + formatAmount(holdingsGainLoss(), displayCurrency)"></span>
           <span x-text="' (' + (holdingsGainLossPct() >= 0 ? '+' : '') + holdingsGainLossPct().toFixed(2) + '%)'"></span>
         </p>
       </div>
       <!-- Cash -->
       <div class="bg-white p-6 rounded-2xl border border-slate-200">
         <p class="text-xs text-slate-500 uppercase tracking-wider font-medium" x-text="t('summary.cash')"></p>
-        <p class="text-3xl font-semibold tabular mt-2" x-text="formatAmount(totalCash(), this.displayCurrency)"></p>
+        <p class="text-3xl font-semibold tabular mt-2" x-text="formatAmount(totalCash(), displayCurrency)"></p>
         <p class="text-xs text-slate-500 mt-2"
            x-text="activeCashCount() + ' ' + t('summary.accounts')"></p>
       </div>
       <!-- Debts -->
       <div class="bg-white p-6 rounded-2xl border border-slate-200">
         <p class="text-xs text-slate-500 uppercase tracking-wider font-medium" x-text="t('summary.debts')"></p>
-        <p class="text-3xl font-semibold tabular mt-2 text-rose-600" x-text="formatAmount(totalDebts(), this.displayCurrency)"></p>
+        <p class="text-3xl font-semibold tabular mt-2 text-rose-600" x-text="formatAmount(totalDebts(), displayCurrency)"></p>
         <p class="text-xs text-slate-500 mt-2"
            x-text="activeDebtsCount() + ' ' + t('summary.debtItems')"></p>
       </div>
