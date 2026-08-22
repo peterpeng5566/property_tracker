@@ -987,3 +987,410 @@ test('plansReferencingValue: value in when[] not in the right category → not m
   // 'TW' is in when.country — looking for TW in type values → no match.
   assert.deepEqual(plansReferencingValue('type', 'TW', plans), []);
 });
+
+// ============================================================================
+// v1.17 — driftForRule amount columns
+// ============================================================================
+//
+// The v1.17 data-layer extension (ADR 0024):
+//   - `driftForRule` (and `driftForPlan`) gain an optional 5th arg
+//     `netWorth` (number, in baseline TWD).
+//   - When `netWorth` is provided, the returned shape gains:
+//       rule_target_amount : number  (TWD; rule's total target value)
+//       target_amount      : { [vid]: TWD }  per distribute value_id
+//       actual_amount      : { [vid]: TWD }  per distribute value_id
+//       drift_amount       : { [vid]: TWD }  actual - target
+//   - When `netWorth` is absent, the shape is unchanged (backward compat).
+//   - Missing `target_weight_pct` is treated as 100 on the Home page
+//     (different from Rebalance's "missing = not eligible" per ADR 0017 §1).
+//   - All amounts are in baseline TWD; the Alpine shim converts to
+//     displayCurrency via `formatAmount(twd, 'TWD')`.
+//   - Debt records contribute negative `actual_amount` (Q6 = a).
+//   - The `_unassigned` bucket has no `target_amount` (unassigned is not
+//     in `distribute`) but does have `actual_amount` (the negative of the
+//     filtered-out portion).
+
+// ---- Slice 1: backward-compat — 4-arg call returns unchanged shape ----
+
+test('driftForRule v1.17: 4-arg call (no netWorth) → no new amount fields', () => {
+  // Backward-compat: existing callers (Alpine shim pre-v1.17, all current
+  // tests) pass only 4 args. The v1.17 extension is purely additive.
+  const records = [{ id: 'a', currency: 'TWD', value: 100 }];
+  const attrs = { a: { country: 'TW', type: 'stock' } };
+  const rule = {
+    when: { country: ['TW'] },
+    distribute: { type: { stock: 60, bond: 40 } },
+    target_weight_pct: 50,
+  };
+  const out = driftForRule(rule, records, attrs, FX);
+  assert.equal(out.matching_total, 100);
+  assert.equal(out.actual.stock, 100);
+  assert.equal(out.target.stock, 60);
+  assert.equal(out.drift.stock, 40);
+  // No new amount fields when netWorth is absent.
+  assert.equal('rule_target_amount' in out, false);
+  assert.equal('target_amount' in out, false);
+  assert.equal('actual_amount' in out, false);
+  assert.equal('drift_amount' in out, false);
+});
+
+// ---- Slice 2: rule_target_amount math — target_weight_pct = 100 → rule_target_amount = netWorth ----
+
+test('driftForRule v1.17: target_weight_pct=100 → rule_target_amount = netWorth', () => {
+  // The simplest case: 100% target weight means the rule should hold
+  // the entire portfolio. rule_target_amount equals netWorth verbatim.
+  const records = [];
+  const attrs = {};
+  const rule = {
+    when: {},
+    distribute: { type: { stock: 60, bond: 40 } },
+    target_weight_pct: 100,
+  };
+  const netWorth = 1000000;
+  const out = driftForRule(rule, records, attrs, FX, netWorth);
+  assert.equal(out.rule_target_amount, 1000000);
+});
+
+// ---- Slice 3: partial target_weight_pct math — rule_target_amount = netWorth × pct / 100 ----
+
+test('driftForRule v1.17: target_weight_pct=50 → rule_target_amount = netWorth/2', () => {
+  const records = [];
+  const attrs = {};
+  const rule = {
+    when: {},
+    distribute: { type: { stock: 100 } },
+    target_weight_pct: 50,
+  };
+  const out = driftForRule(rule, records, attrs, FX, 1000000);
+  assert.equal(out.rule_target_amount, 500000);
+});
+
+test('driftForRule v1.17: target_weight_pct=0 → rule_target_amount = 0', () => {
+  const records = [];
+  const attrs = {};
+  const rule = {
+    when: {},
+    distribute: { type: { stock: 100 } },
+    target_weight_pct: 0,
+  };
+  const out = driftForRule(rule, records, attrs, FX, 1000000);
+  assert.equal(out.rule_target_amount, 0);
+});
+
+// ---- Slice 4: treat-missing-as-100 (ADR 0024 §2) ----
+
+test('driftForRule v1.17: missing target_weight_pct → rule_target_amount = netWorth (treat as 100)', () => {
+  // Different from Rebalance (ADR 0017 §1, missing = not eligible): on
+  // the Home page, missing means "this rule claims the full portfolio
+  // within its distribute weights". A pre-v1.8 plan with no
+  // target_weight_pct retroactively becomes a 100% rule.
+  const records = [];
+  const attrs = {};
+  const rule = {
+    when: {},
+    distribute: { type: { stock: 60, bond: 40 } },
+    // no target_weight_pct
+  };
+  const out = driftForRule(rule, records, attrs, FX, 1000000);
+  assert.equal(out.rule_target_amount, 1000000);
+});
+
+test('driftForRule v1.17: explicit target_weight_pct=null → rule_target_amount = netWorth (treat as 100)', () => {
+  // JSON-roundtrip case: null is semantically the same as missing.
+  const rule = {
+    when: {},
+    distribute: { type: { stock: 60, bond: 40 } },
+    target_weight_pct: null,
+  };
+  const out = driftForRule(rule, [], {}, FX, 1000000);
+  assert.equal(out.rule_target_amount, 1000000);
+});
+
+// ---- Slice 5: target_amount per value_id ----
+
+test('driftForRule v1.17: target_amount splits rule_target_amount across distribute weights', () => {
+  // 100% weight, distribute 70/30 → target_amount.stock = 700K,
+  // target_amount.bond = 300K. Verified against a hand-computed
+  // expected value (independent of the lib's calculation).
+  const rule = {
+    when: {},
+    distribute: { type: { stock: 70, bond: 30 } },
+    target_weight_pct: 100,
+  };
+  const out = driftForRule(rule, [], {}, FX, 1000000);
+  assert.equal(out.target_amount.stock, 700000);
+  assert.equal(out.target_amount.bond, 300000);
+});
+
+test('driftForRule v1.17: target_amount scales with partial target_weight_pct', () => {
+  // 50% rule, distribute 60/40 → target_amount.stock = 500K × 0.6 = 300K,
+  // target_amount.bond = 200K. Pinned by hand computation.
+  const rule = {
+    when: {},
+    distribute: { type: { stock: 60, bond: 40 } },
+    target_weight_pct: 50,
+  };
+  const out = driftForRule(rule, [], {}, FX, 1000000);
+  assert.equal(out.target_amount.stock, 300000);
+  assert.equal(out.target_amount.bond, 200000);
+});
+
+// ---- Slice 6: actual_amount per value_id (sum of records' TWD values) ----
+
+test('driftForRule v1.17: actual_amount sums matching records per value_id', () => {
+  // Two matching records, both with type=stock:
+  //   a: TWD 100000
+  //   b: TWD 50000
+  // Expected actual_amount.stock = 150000 (TWD baseline). Hand-computed.
+  const records = [
+    { id: 'a', currency: 'TWD', value: 100000 },
+    { id: 'b', currency: 'TWD', value: 50000 },
+  ];
+  const attrs = {
+    a: { country: 'TW', type: 'stock' },
+    b: { country: 'TW', type: 'stock' },
+  };
+  const rule = {
+    when: { country: ['TW'] },
+    distribute: { type: { stock: 60, bond: 40 } },
+    target_weight_pct: 100,
+  };
+  const out = driftForRule(rule, records, attrs, FX, 200000);
+  assert.equal(out.actual_amount.stock, 150000);
+  // No records have type=bond → actual_amount.bond is 0 (not undefined).
+  assert.equal(out.actual_amount.bond, 0);
+});
+
+test('driftForRule v1.17: actual_amount converts USD records via fxRate to TWD', () => {
+  // 1 USD record worth 1000 USD @ fxRate 32 = 32000 TWD.
+  const records = [
+    { id: 'a', currency: 'USD', value: 1000 },
+  ];
+  const attrs = { a: { country: 'TW', type: 'stock' } };
+  const rule = {
+    when: { country: ['TW'] },
+    distribute: { type: { stock: 100 } },
+    target_weight_pct: 100,
+  };
+  const out = driftForRule(rule, records, attrs, FX, 50000);
+  assert.equal(out.actual_amount.stock, 32000);
+});
+
+// ---- Slice 7: drift_amount per value_id = actual - target ----
+
+test('driftForRule v1.17: drift_amount = actual_amount - target_amount', () => {
+  // target_amount.stock = 100K, actual_amount.stock = 60K → drift = -40K
+  // (hand-computed).
+  const records = [{ id: 'a', currency: 'TWD', value: 60000 }];
+  const attrs = { a: { country: 'TW', type: 'stock' } };
+  const rule = {
+    when: { country: ['TW'] },
+    distribute: { type: { stock: 100 } },
+    target_weight_pct: 100,
+  };
+  const out = driftForRule(rule, records, attrs, FX, 100000);
+  assert.equal(out.target_amount.stock, 100000);
+  assert.equal(out.actual_amount.stock, 60000);
+  assert.equal(out.drift_amount.stock, -40000);
+});
+
+test('driftForRule v1.17: drift_amount = 0 when actual exactly matches target', () => {
+  // target = 100K (100% × 100K), actual = 100K (full TWD sum) → drift = 0.
+  const records = [{ id: 'a', currency: 'TWD', value: 100000 }];
+  const attrs = { a: { country: 'TW', type: 'stock' } };
+  const rule = {
+    when: { country: ['TW'] },
+    distribute: { type: { stock: 100 } },
+    target_weight_pct: 100,
+  };
+  const out = driftForRule(rule, records, attrs, FX, 100000);
+  assert.equal(out.drift_amount.stock, 0);
+});
+
+// ---- Slice 8: 0-matching rule edge case ----
+
+test('driftForRule v1.17: 0-matching rule → actual_amount={}, drift_amount=-target_amount per vid', () => {
+  // No records match the rule (filter excludes everything). The %
+  // column is undefined (existing behaviour); the $ column shows the
+  // full negative target per value_id (ADR 0024 §4 — informative).
+  // Hand-computed: target_amount.stock = 70K, drift = -70K.
+  const records = [{ id: 'a', currency: 'TWD', value: 100 }];
+  const attrs = { a: { country: 'US' } }; // not TW
+  const rule = {
+    when: { country: ['TW'] },
+    distribute: { type: { stock: 70, bond: 30 } },
+    target_weight_pct: 100,
+  };
+  const out = driftForRule(rule, records, attrs, FX, 100000);
+  assert.equal(out.matching_total, 0);
+  assert.deepEqual(out.actual, {});
+  assert.deepEqual(out.drift, {});
+  assert.equal(out.target_amount.stock, 70000);
+  assert.equal(out.target_amount.bond, 30000);
+  assert.deepEqual(out.actual_amount, {}); // no actual when no records
+  assert.equal(out.drift_amount.stock, -70000);
+  assert.equal(out.drift_amount.bond, -30000);
+});
+
+// ---- Slice 9: debt-negative actual (Q6 = a, preserve negative) ----
+
+test('driftForRule v1.17: debt record (negative value) → negative actual_amount, large negative drift', () => {
+  // A rule matches a debt record (value = -50K TWD). The debt bucket's
+  // actual_amount is -50K (preserved verbatim per Q6 = a). target = 50K
+  // (50% of 100K), so drift = -50K - 50K = -100K. Hand-computed.
+  const records = [{ id: 'a', currency: 'TWD', value: -50000 }];
+  const attrs = { a: { country: 'TW', type: 'stock' } };
+  const rule = {
+    when: { country: ['TW'] },
+    distribute: { type: { stock: 50, bond: 50 } },
+    target_weight_pct: 100,
+  };
+  const out = driftForRule(rule, records, attrs, FX, 100000);
+  assert.equal(out.matching_total, -50000);
+  assert.equal(out.actual_amount.stock, -50000);
+  assert.equal(out.target_amount.stock, 50000);
+  assert.equal(out.drift_amount.stock, -100000);
+});
+
+test('driftForRule v1.17: debt record mixed with holding → matching_total offsets', () => {
+  // 1 holding (+100K) + 1 debt (-30K) match the same rule:
+  //   matching_total = 70K (positive net)
+  //   actual_amount.stock = 100K (holding only, debt is in different bucket)
+  // Verify the lib correctly separates holding vs debt by value_id.
+  const records = [
+    { id: 'h', currency: 'TWD', value: 100000 }, // holding
+    { id: 'd', currency: 'TWD', value: -30000 }, // debt
+  ];
+  const attrs = {
+    h: { country: 'TW', type: 'stock' },
+    d: { country: 'TW', type: 'bond' },
+  };
+  const rule = {
+    when: { country: ['TW'] },
+    distribute: { type: { stock: 60, bond: 40 } },
+    target_weight_pct: 100,
+  };
+  const out = driftForRule(rule, records, attrs, FX, 200000);
+  assert.equal(out.matching_total, 70000);
+  assert.equal(out.actual_amount.stock, 100000);
+  assert.equal(out.actual_amount.bond, -30000);
+  assert.equal(out.target_amount.stock, 120000);
+  assert.equal(out.target_amount.bond, 80000);
+  assert.equal(out.drift_amount.stock, -20000);
+  assert.equal(out.drift_amount.bond, -110000);
+});
+
+// ---- Slice 10: net worth = 0 ----
+
+test('driftForRule v1.17: net worth = 0 → all target amounts = 0, drift = -actual', () => {
+  // With netWorth = 0 and only stock records, the lib reports:
+  //   target = 0 for both value_ids (no portfolio to allocate)
+  //   actual.stock = 50000 (the only matching record)
+  //   drift.stock = 50000 - 0 = 50000 (over-target on stock; "I have
+  //     more stock than my 0-weight target wants")
+  //   drift.bond = 0 - 0 = 0 (no bond records, no bond target)
+  const records = [{ id: 'a', currency: 'TWD', value: 50000 }];
+  const attrs = { a: { country: 'TW', type: 'stock' } };
+  const rule = {
+    when: { country: ['TW'] },
+    distribute: { type: { stock: 50, bond: 50 } },
+    target_weight_pct: 100,
+  };
+  const out = driftForRule(rule, records, attrs, FX, 0);
+  assert.equal(out.rule_target_amount, 0);
+  assert.equal(out.target_amount.stock, 0);
+  assert.equal(out.target_amount.bond, 0);
+  assert.equal(out.actual_amount.stock, 50000);
+  assert.equal(out.drift_amount.stock, 50000);
+  assert.equal(out.drift_amount.bond, 0);
+});
+
+// ---- Slice 11: negative net worth (large debt > holdings+cash) ----
+
+test('driftForRule v1.17: negative net worth → rule_target_amount is negative (ADR 0024 §2)', () => {
+  // When net worth is negative (large debt), the rule_target_amount is
+  // also negative. This is the "loud signal" that the user's plan is
+  // broken — documented in ADR 0024 §2 as informative rather than clamped.
+  const rule = {
+    when: {},
+    distribute: { type: { stock: 100 } },
+    target_weight_pct: 50,
+  };
+  const out = driftForRule(rule, [], {}, FX, -200000);
+  assert.equal(out.rule_target_amount, -100000);
+  assert.equal(out.target_amount.stock, -100000);
+});
+
+// ---- Slice 12: driftForPlan mirrors the new shape ----
+
+test('driftForPlan v1.17: threads netWorth through and mirrors new fields per rule', () => {
+  const plan = {
+    id: 'plan-1',
+    name: 'Multi',
+    rules: [
+      { id: 'r1', when: { country: ['TW'] }, distribute: { type: { stock: 100 } }, target_weight_pct: 50 },
+      { id: 'r2', when: { country: ['US'] }, distribute: { type: { stock: 100 } }, target_weight_pct: 100 },
+    ],
+  };
+  const records = [
+    { id: 'a', currency: 'TWD', value: 300000 },
+  ];
+  const attrs = { a: { country: 'TW', type: 'stock' } };
+  const out = driftForPlan(plan, records, attrs, FX, 1000000);
+  assert.equal(out.length, 2);
+  // r1: 50% weight → rule_target_amount = 500K; matches 300K TWD holding.
+  assert.equal(out[0].rule_target_amount, 500000);
+  assert.equal(out[0].actual_amount.stock, 300000);
+  assert.equal(out[0].target_amount.stock, 500000);
+  assert.equal(out[0].drift_amount.stock, -200000);
+  // r2: 100% weight, no matches → rule_target_amount = 1M; actual_amount = {}.
+  assert.equal(out[1].rule_target_amount, 1000000);
+  assert.deepEqual(out[1].actual_amount, {});
+  assert.equal(out[1].drift_amount.stock, -1000000);
+});
+
+test('driftForPlan v1.17: 4-arg call (no netWorth) → no new fields on any rule entry', () => {
+  // Backward-compat: driftForPlan without netWorth returns the v1.4
+  // shape for every rule entry (no rule_target_amount / *_amount fields).
+  const plan = {
+    id: 'plan-1',
+    name: 'X',
+    rules: [
+      { id: 'r1', when: {}, distribute: { type: { stock: 100 } }, target_weight_pct: 50 },
+    ],
+  };
+  const records = [{ id: 'a', currency: 'TWD', value: 100000 }];
+  const attrs = { a: { type: 'stock' } };
+  const out = driftForPlan(plan, records, attrs, FX);
+  assert.equal(out.length, 1);
+  assert.equal('rule_target_amount' in out[0], false);
+  assert.equal('target_amount' in out[0], false);
+  assert.equal('actual_amount' in out[0], false);
+  assert.equal('drift_amount' in out[0], false);
+});
+
+// ---- Slice 13: actual_amount total symmetry (within-rule) ----
+
+test('driftForRule v1.17: Σ actual_amount across distribute value_ids + unassigned = matching_total', () => {
+  // The lib's calcDistribution separates `dist` (per-value-id sums) from
+  // the unassigned bucket. When all matching records carry the target
+  // attribute, the sum of actual_amount values equals matching_total.
+  // Verified by hand: 100K + 50K = 150K.
+  const records = [
+    { id: 'a', currency: 'TWD', value: 100000 },
+    { id: 'b', currency: 'TWD', value: 50000 },
+  ];
+  const attrs = {
+    a: { country: 'TW', type: 'stock' },
+    b: { country: 'TW', type: 'bond' },
+  };
+  const rule = {
+    when: { country: ['TW'] },
+    distribute: { type: { stock: 60, bond: 40 } },
+    target_weight_pct: 100,
+  };
+  const out = driftForRule(rule, records, attrs, FX, 200000);
+  const sumActual = out.actual_amount.stock + out.actual_amount.bond;
+  assert.equal(sumActual, out.matching_total);
+  assert.equal(sumActual, 150000);
+});

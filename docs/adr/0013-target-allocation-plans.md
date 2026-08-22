@@ -98,6 +98,19 @@ Per the AGENTS.md "Tests" rule and ADR 0010: this keeps the source of truth in t
 
 The full rebalance design — within-leaf even-split, multi-rule co-collision as independent rows, per-region native currency for trade advice, baseline currency for total drift %, category-row builder as filter UI, schema stays at `'1.1'`, etc. — is documented in [ADR 0017 — Region-Aware Rebalance Advisor](0017-rebalance-advisor.md). This §11 is intentionally terse: ADR 0017 owns the rebalance design; ADR 0013 owns the Plan data model and drift math. v1.8 rebalance reuses Plan's `recordsMatchingRule` predicate and the per-record newer-wins sync path (ADR 0004 / 0016) without modification.
 
+### 12. Amount columns on Home drift (v1.17 cross-reference)
+
+**`driftForRule` (and `driftForPlan`) gain an optional 5th `netWorth` parameter** (number, baseline TWD). When provided, the return shape adds four new fields per rule entry, all in baseline TWD:
+
+- `rule_target_amount` — the rule's total target value (`netWorth × effective_target_weight_pct / 100`; missing `target_weight_pct` is treated as `100` per ADR 0024 §2, different from Rebalance's "missing = not eligible" per ADR 0017 §1).
+- `target_amount` — `{ [valueId]: TWD }` per distribute value_id, splitting `rule_target_amount` by `distribute` weights.
+- `actual_amount` — `{ [valueId]: TWD }` summing matching records' TWD values per value_id (debt records contribute negatively).
+- `drift_amount` — `{ [valueId]: TWD }` = `actual - target` per distribute value_id.
+
+When `netWorth` is `undefined` / `null`, the shape is **unchanged** (backward-compat: every existing caller, every existing test, every pre-v1.17 Alpine shim stays green). The Plan data model itself is unchanged — `target_weight_pct` is the existing v1.8 additive field; v1.17 extends only the *computed view* (`driftForRule` return shape).
+
+The full Home amount-column design — net-worth basis, treat-missing-as-100, shared `drift_class` between `delta%` and `delta$` columns, debt-negative semantics, section-header `Σ target` + over-100% warning, display currency via `settings.displayCurrency` — is documented in [ADR 0024 — Home Plan vs Actual Amount Columns](0024-home-plan-amounts.md). This §12 is intentionally terse: ADR 0024 owns the Home amount-column design; ADR 0013 owns the Plan data model and drift math. v1.17 reuses the v1.4 percentage math (`actual` / `target` / `drift`) unchanged.
+
 ## Test count snapshot
 
 At v1.4 close-out (commits 3cd7d35 + 298d577 + f7bee2a + 9c6347b + 0077603 + a718173 + 1fc8ff8 + T06):
