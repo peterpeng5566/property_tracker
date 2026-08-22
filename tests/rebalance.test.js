@@ -23,6 +23,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { computeCandidates, computeTotalDrift, executeCandidate } = require('../lib/rebalance.js');
+const { toTWD } = require('../lib/format.js');
 
 // ---- Fixtures ----
 
@@ -187,11 +188,11 @@ test('computeCandidates: single rule with 1 matched holding → sell advice when
 
 // ---- computeCandidates: single rule, multiple holdings (even split of target value) ----
 
-test('computeCandidates: single rule with 3 matched holdings → even split of target_value', () => {
-  // User example: leaf needs $200, 2 matched holdings at prices $10 and $20
-  // → each gets $100 → 10 shares + 5 shares. Here: 3 holdings, prices 10, 20, 100,
-  // all equal current value of $100 → target_value = 30000, split 10000 each.
-  // Holdings: 10 shares @ 10 ($100), 5 shares @ 20 ($100), 1 share @ 100 ($100).
+test('computeCandidates: single rule with 3 matched holdings → bucket target on every row', () => {
+  // v1.20 (ADR 0026): with single value_id at 100% weight, the whole
+  // rule is one bucket — each row gets the bucket target (rule_target
+  // = 30000), NOT divided by matchedCount. The 3 holdings then each
+  // reach their own target_share based on their current_price.
   const plan = makePlan([
     ruleEligible('r1', 'Stocks', 30, { type: ['stock'] }),
   ]);
@@ -207,24 +208,26 @@ test('computeCandidates: single rule with 3 matched holdings → even split of t
   assert.equal(out[0].currentValue, 300);
   assert.equal(out[0].matchedRecords.length, 3);
 
-  // Each holding gets 10000 TWD target. h1: 10000/10=1000 shares. h2: 10000/20=500. h3: 10000/100=100.
+  // Each row gets the full bucket_target = 30000 TWD.
   const byId = Object.fromEntries(out[0].matchedRecords.map(c => [c.recordId, c]));
-  assert.equal(byId.h1.targetValue, 10000);
-  assert.equal(byId.h1.targetShares, 1000);
-  assert.equal(byId.h1.deltaShares, 990);
+  assert.equal(byId.h1.targetValue, 30000);
+  assert.equal(byId.h1.targetShares, 3000);  // 30000/10
+  assert.equal(byId.h1.deltaShares, 2990);  // 3000 - 10
   assert.equal(byId.h1.action, 'buy');
-  assert.equal(byId.h2.targetValue, 10000);
-  assert.equal(byId.h2.targetShares, 500);
-  assert.equal(byId.h2.deltaShares, 495);
-  assert.equal(byId.h3.targetValue, 10000);
-  assert.equal(byId.h3.targetShares, 100);
-  assert.equal(byId.h3.deltaShares, 99);
+  assert.equal(byId.h2.targetValue, 30000);
+  assert.equal(byId.h2.targetShares, 1500);  // 30000/20
+  assert.equal(byId.h2.deltaShares, 1495);  // 1500 - 5
+  assert.equal(byId.h3.targetValue, 30000);
+  assert.equal(byId.h3.targetShares, 300);   // 30000/100
+  assert.equal(byId.h3.deltaShares, 299);   // 300 - 1
 });
 
-test('computeCandidates: USER EXAMPLE — 2 holdings, prices 10/20, leaf=200 → 10+5 shares', () => {
-  // Direct pin of the user's R4-Q1 example. Leaf needs $200 (in TWD),
-  // 2 holdings @ 10 and 20, each currently 0 shares.
-  // Each holding's target_value = 200/2 = 100. Target shares: 100/10=10, 100/20=5.
+test('computeCandidates: USER EXAMPLE — 2 holdings, prices 10/20, leaf=200 → 20+10 shares', () => {
+  // v1.20 (ADR 0026): direct pin of the user's R4-Q1 example, updated
+  // for the new semantics. Leaf needs $200 (TWD), 2 holdings @ 10 and
+  // 20, each currently 0 shares. With single value_id 100% weight, the
+  // whole rule is one bucket — each row gets target_value = 200 (NOT
+  // 100). Target shares: 200/10=20, 200/20=10.
   const plan = makePlan([
     ruleEligible('r1', 'My Leaf', 100, { type: ['stock'] }),
   ]);
@@ -237,17 +240,20 @@ test('computeCandidates: USER EXAMPLE — 2 holdings, prices 10/20, leaf=200 →
   assert.equal(out[0].targetValue, 200);
   assert.equal(out[0].matchedRecords.length, 2);
   const byId = Object.fromEntries(out[0].matchedRecords.map(c => [c.recordId, c]));
-  assert.equal(byId.h1.targetShares, 10);
-  assert.equal(byId.h2.targetShares, 5);
+  assert.equal(byId.h1.targetShares, 20);
+  assert.equal(byId.h2.targetShares, 10);
 });
 
 // ---- computeCandidates: cash rule ----
 
 test('computeCandidates: cash rule → 1 candidate with add/reduce amount advice', () => {
-  // Leaf target_weight_pct=20, total=10000 → target=2000 TWD.
+  // Leaf target_weight_pct=20, total=10000 → rule_target=2000 TWD.
   // 1 cash account current_value=800 TWD → delta=+1200 → "add 1200 TWD".
+  // v1.20 (ADR 0026): distribute must cover 'cash' value_id so the
+  // record is in a real bucket (otherwise it would fall into
+  // _unassigned with target=0).
   const plan = makePlan([
-    ruleEligible('r1', 'Total Cash', 20, { type: ['cash'] }),
+    ruleEligible('r1', 'Total Cash', 20, { type: ['cash'] }, { type: { cash: 100 } }),
   ]);
   const records = [cash('c1', 'TWD', 800, { type: 'cash' })];
   const out = computeCandidates(plan, { records, totalValue: 10000, fxRate: FX });
@@ -272,9 +278,10 @@ test('computeCandidates: cash rule → 1 candidate with add/reduce amount advice
 });
 
 test('computeCandidates: cash rule → reduce advice when over-cashed', () => {
-  // Leaf 10%, total 10000 → target 1000. Current cash 5000 → reduce 4000.
+  // Leaf 10%, total 10000 → rule_target 1000. Current cash 5000 → reduce 4000.
+  // v1.20 (ADR 0026): distribute must cover 'cash' value_id.
   const plan = makePlan([
-    ruleEligible('r1', 'Cash', 10, { type: ['cash'] }),
+    ruleEligible('r1', 'Cash', 10, { type: ['cash'] }, { type: { cash: 100 } }),
   ]);
   const records = [cash('c1', 'TWD', 5000, { type: 'cash' })];
   const out = computeCandidates(plan, { records, totalValue: 10000, fxRate: FX });
@@ -334,9 +341,10 @@ test('computeCandidates: 2 rules overlap on 1 holding → holding appears in bot
 // ---- computeCandidates: FX-aware ----
 
 test('computeCandidates: 1 USD + 1 TWD holding in same leaf → values converted to baseline', () => {
-  // Leaf 50%, totalValue 32000 (baseline TWD, already includes FX).
-  // target_value = 16000 TWD. Split 8000 each.
-  // h1 (USD): value 1000 USD = 32000 TWD; h2 (TWD): value 5000 TWD.
+  // v1.20 (ADR 0026): single value_id 100% → whole rule is one bucket.
+  // rule_target = 50% × 37000 = 18500 TWD. Each row gets the full
+  // bucket_target (NOT divided by 2). Per-row fields in native currency.
+  // h1 (USD): 1000 USD = 32000 TWD; h2 (TWD): 5000 TWD.
   // totalValue includes the converted USD value (the caller is responsible
   // for summing in baseline currency). The lib trusts the inputs.
   const plan = makePlan([
@@ -351,21 +359,19 @@ test('computeCandidates: 1 USD + 1 TWD holding in same leaf → values converted
   assert.equal(out.length, 1);
   assert.equal(out[0].targetValue, 18500);
   assert.equal(out[0].currentValue, 37000); // 32000 + 5000
-  // Each record's targetValue is computed in baseline TWD then
-  // back-converted to native currency via the fxRate when computing
-  // target_shares / target_balance.
-  const byId = Object.fromEntries(out[0].matchedRecords.map(c => [c.recordId, c]));
   // Per-record fields are in NATIVE currency (the lib back-converts
-  // target from baseline to native before computing shares).
-  // h1 (USD): 9250 TWD baseline → 289.0625 USD; shares = 289.0625 / 100 = 2.890625.
-  // h2 (TWD): 9250 TWD baseline = 9250 TWD native; shares = 9250 / 100 = 92.5.
+  // the bucket target from baseline TWD to native before computing
+  // shares).
+  const byId = Object.fromEntries(out[0].matchedRecords.map(c => [c.recordId, c]));
+  // h1 (USD): 18500 TWD baseline → 578.125 USD; shares = 578.125 / 100 = 5.78125.
+  // h2 (TWD): 18500 TWD baseline = 18500 TWD native; shares = 18500 / 100 = 185.
   assert.equal(byId.h1.currency, 'USD');
-  assert.equal(byId.h1.targetValue, 289.0625);
-  assert.equal(byId.h1.targetShares, 2.890625);
+  assert.equal(byId.h1.targetValue, 578.125);
+  assert.equal(byId.h1.targetShares, 5.78125);
   assert.equal(byId.h1.action, 'sell');
   assert.equal(byId.h2.currency, 'TWD');
-  assert.equal(byId.h2.targetValue, 9250);
-  assert.equal(byId.h2.targetShares, 92.5);
+  assert.equal(byId.h2.targetValue, 18500);
+  assert.equal(byId.h2.targetShares, 185);
   assert.equal(byId.h2.action, 'buy');
 });
 
@@ -657,4 +663,90 @@ test('v1.19 toggle: computeTotalDrift honours the toggle — un-toggled rules ex
   assert.equal(out.drift, 0);
   assert.equal(out.totalRuleWeight, 50); // only r1 counts
   assert.equal(out.missing, 50);          // 100 - 50
+});
+
+// ---- v1.20 (ADR 0026): bucket-weighted split ----
+
+test('v1.20: multi-value distribute weights split rule_target across buckets', () => {
+  // distribute { region: { US: 75, TW: 25 } }.
+  // rule_target = 30% × 100k = 30k TWD. US bucket_target = 22500,
+  // TW bucket_target = 7500. Each record in a bucket sees its bucket
+  // target (NOT divided by bucket count).
+  const plan = makePlan([
+    ruleEligible('r1', 'Split', 30, {}, { region: { US: 75, TW: 25 } }),
+  ]);
+  const records = [
+    holding('us1', 'USD', 100, 100, { region: 'US' }), // 10000 USD = 320k TWD
+    holding('tw1', 'TWD', 100, 100, { region: 'TW' }), // 10k TWD
+  ];
+  const out = computeCandidates(plan, { records, totalValue: 100000, fxRate: FX });
+
+  assert.equal(out.length, 1);
+  const byId = Object.fromEntries(out[0].matchedRecords.map(c => [c.recordId, c]));
+  // us1: bucket_target = 22500 TWD → 22500/32 = 703.125 USD; target_shares = 703.125/100 = 7.03125
+  assert.equal(Math.round(toTWD(byId.us1.targetValue, 'USD', FX)), 22500);
+  // tw1: bucket_target = 7500 TWD → 7500 TWD; target_shares = 7500/100 = 75
+  assert.equal(byId.tw1.targetValue, 7500);
+});
+
+test('v1.20: no-distribute fallback uses synthetic _all bucket (whole rule_target per row)', () => {
+  // Rule with no `distribute` key: synthetic _all bucket covers all
+  // matched records. Per-row target = full rule_target (NOT divided
+  // by matchedCount).
+  const plan = makePlan([
+    ruleEligible('r1', 'No distribute', 40, {}, {}),
+  ]);
+  const records = [
+    holding('h1', 'TWD', 10, 100),
+    holding('h2', 'TWD', 20, 100),
+  ];
+  const out = computeCandidates(plan, { records, totalValue: 10000, fxRate: FX });
+  const byId = Object.fromEntries(out[0].matchedRecords.map(c => [c.recordId, c]));
+  // rule_target = 4000; each row gets full 4000 (NOT 2000).
+  assert.equal(byId.h1.targetValue, 4000);
+  assert.equal(byId.h2.targetValue, 4000);
+});
+
+test('v1.20: records missing the distribute attribute land in _unassigned (target=0, delta=-current)', () => {
+  // 1 record WITH distribute attribute + 1 WITHOUT. distribute covers
+  // {US: 100} only. Orphan (no region attr) → _unassigned bucket.
+  const plan = makePlan([
+    ruleEligible('r1', 'US only', 50, {}, { region: { US: 100 } }),
+  ]);
+  const records = [
+    holding('us1', 'USD', 1, 100, { region: 'US' }),    // 100 USD = 3200 TWD
+    holding('orphan', 'TWD', 10, 100, {}),               // 1000 TWD
+  ];
+  // Total in baseline TWD = 3200 + 1000 = 4200. rule_target = 50% × 4200 = 2100.
+  const totalValue = 4200;
+  const out = computeCandidates(plan, { records, totalValue, fxRate: FX });
+  const byId = Object.fromEntries(out[0].matchedRecords.map(c => [c.recordId, c]));
+  // Orphan (TWD): in _unassigned bucket, target=0, delta=-current (=-1000 TWD).
+  assert.equal(byId.orphan.targetValue, 0);
+  assert.equal(byId.orphan.delta, -1000);
+  // us1 (USD): bucket_target = 100% × 2100 = 2100 TWD → 2100/32 = 65.625 USD.
+  // Back-converted to USD for the per-record native currency field.
+  assert.equal(byId.us1.targetValue, 2100 / FX);
+});
+
+test('v1.20: per-row deltaShares uses the record’s current_price (not a fixed value)', () => {
+  // Same bucket, 2 TW records with different prices: each row’s
+  // deltaShares = bucket_delta / row’s current_price (so the user can
+  // pick any row and the per-share math stays correct).
+  const plan = makePlan([
+    ruleEligible('r1', 'TW only', 30, {}, { region: { TW: 100 } }),
+  ]);
+  const records = [
+    holding('tw1', 'TWD', 100, 100, { region: 'TW' }), // 10k current
+    holding('tw2', 'TWD', 100, 200, { region: 'TW' }), // 20k current, different price
+  ];
+  const out = computeCandidates(plan, { records, totalValue: 100000, fxRate: FX });
+  const byId = Object.fromEntries(out[0].matchedRecords.map(c => [c.recordId, c]));
+  // rule_target = 30k. Bucket current = 30k. Bucket delta = 0.
+  // Per-row targetValue = bucket_target = 30k (NOT divided).
+  assert.equal(byId.tw1.targetValue, 30000);
+  assert.equal(byId.tw2.targetValue, 30000);
+  // deltaShares differs by row (price differs): tw1: (300-100)=200, tw2: (150-100)=50.
+  assert.equal(byId.tw1.deltaShares, 200);
+  assert.equal(byId.tw2.deltaShares, 50);
 });
