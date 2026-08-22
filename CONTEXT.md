@@ -170,6 +170,10 @@ _Avoid_: Allocation amount, target dollar amount, even-split (v1.8 term, removed
 A holding's current price's place within its 52-week high/low range, computed as `(current_price - low_52w) / (high_52w - low_52w)`. Shown on both the Holdings page (per-row) and Rebalance candidate rows (per-candidate) as the same visual component (`.week52-bar` + `.week52-marker`). Highlighted when current price is in the top decile or bottom decile of the 52-week range. The same `week52Style(record)` helper drives both surfaces.
 _Avoid_: 52w range, position in range (less precise), percentile
 
+**Rebalance action cell**:
+The rightmost cell on a Rebalance candidate row showing the trade advice as a locale-neutral, signed, colour-coded number. Holdings show `+N.NNS` (USD / non-TWD shares) or `+N.NNL` (TWD lots, where 1 lot = 1000 shares) using `Math.abs(deltaShares).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })` so thousand separators appear automatically when the displayed number ≥ 1000. Cash shows `±$AMOUNT` using the existing `formatAmountNative` (which uses compact suffix `K`/`M` for USD and `W`/`Y` for TWD — matches the Δ column). Sign character is `+` for buy/add and U+2212 (`−`) for sell/reduce. Zero-delta rows always render `+0.00S` / `+0.00L` / `+$0.00` with `text-slate-400` (grey); positive rows use `text-emerald-600`, negative rows `text-rose-600` (matches Δ column). v1.20 (ADR 0026) replaces v1.8's free-form "Buy N shares of X" / "Add $Y to" i18n strings.
+_Avoid_: trade advice text, formatRebalanceAction (v1.20 retired name), old i18n keys (deleted)
+
 ## Mobile
 
 **Mobile breakpoint**:

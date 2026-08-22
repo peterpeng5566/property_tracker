@@ -13,7 +13,10 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { formatAmount, toTWD, fromTWD, convertCurrency } = require('../lib/format.js');
+const {
+  formatAmount, toTWD, fromTWD, convertCurrency,
+  formatRebalanceActionText, formatRebalanceActionClass,
+} = require('../lib/format.js');
 
 const FX = 31; // USD → TWD rate used by tests
 
@@ -239,4 +242,95 @@ test('convertCurrency: fxRate has no effect when source === target', () => {
   // fx_rate only matters during conversion; identity paths skip it.
   assert.strictEqual(convertCurrency(100, 'USD', 'USD', 0), 100);
   assert.strictEqual(convertCurrency(100, 'TWD', 'TWD', 0), 100);
+});
+
+// ---- v1.20 T02 (ADR 0026): formatRebalanceActionText / ----Class ----
+
+test('formatRebalanceActionText: USD holding buy → +N.NNS, < 1000 no comma', () => {
+  assert.strictEqual(
+    formatRebalanceActionText({ kind: 'holding', currency: 'USD', delta: { deltaShares: 5.5 } }),
+    '+5.50S',
+  );
+});
+
+test('formatRebalanceActionText: USD holding buy → comma when |n| ≥ 1000', () => {
+  assert.strictEqual(
+    formatRebalanceActionText({ kind: 'holding', currency: 'USD', delta: { deltaShares: 1250 } }),
+    '+1,250.00S',
+  );
+});
+
+test('formatRebalanceActionText: TWD holding sell → −N.NNL (U+2212, not U+002D)', () => {
+  const out = formatRebalanceActionText({ kind: 'holding', currency: 'TWD', delta: { deltaShares: -250 } });
+  assert.strictEqual(out, '\u22120.25L'); // 250 shares = 0.25 lots
+  assert.ok(!out.includes('-'), 'must use U+2212 minus, not U+002D hyphen');
+});
+
+test('formatRebalanceActionText: TWD holding sell, ≥ 1000 lots → comma', () => {
+  assert.strictEqual(
+    formatRebalanceActionText({ kind: 'holding', currency: 'TWD', delta: { deltaShares: -1_250_000 } }),
+    '\u22121,250.00L', // 1.25M shares = 1250 lots
+  );
+});
+
+test('formatRebalanceActionText: holding zero delta → +0.00S/L, never −', () => {
+  assert.strictEqual(
+    formatRebalanceActionText({ kind: 'holding', currency: 'USD', delta: { deltaShares: 0 } }),
+    '+0.00S',
+  );
+  assert.strictEqual(
+    formatRebalanceActionText({ kind: 'holding', currency: 'TWD', delta: { deltaShares: 0 } }),
+    '+0.00L',
+  );
+});
+
+test('formatRebalanceActionText: cash add → +$AMOUNT (compact suffix via formatAmount)', () => {
+  // 5000 USD < 1M → no M suffix; 5000 >= 1K → K suffix.
+  assert.strictEqual(
+    formatRebalanceActionText({ kind: 'cash', currency: 'USD', delta: { deltaAmount: 5000 } }),
+    '+$5.00K',
+  );
+});
+
+test('formatRebalanceActionText: cash reduce → −$AMOUNT (U+2212)', () => {
+  const out = formatRebalanceActionText({ kind: 'cash', currency: 'TWD', delta: { deltaAmount: -10000 } });
+  assert.strictEqual(out, '\u2212$1.00W');
+  assert.ok(!out.includes('-'), 'must use U+2212 minus, not U+002D hyphen');
+});
+
+test('formatRebalanceActionText: cash zero delta → +$0.00', () => {
+  assert.strictEqual(
+    formatRebalanceActionText({ kind: 'cash', currency: 'TWD', delta: { deltaAmount: 0 } }),
+    '+$0.00',
+  );
+});
+
+test('formatRebalanceActionText: missing delta field renders as zero', () => {
+  assert.strictEqual(
+    formatRebalanceActionText({ kind: 'holding', currency: 'USD' }),
+    '+0.00S',
+  );
+});
+
+test('formatRebalanceActionClass: emerald / rose / slate-400 by sign', () => {
+  assert.strictEqual(
+    formatRebalanceActionClass({ kind: 'holding', currency: 'USD', delta: { deltaShares: 5 } }),
+    'text-emerald-600',
+  );
+  assert.strictEqual(
+    formatRebalanceActionClass({ kind: 'holding', currency: 'TWD', delta: { deltaShares: -10 } }),
+    'text-rose-600',
+  );
+  assert.strictEqual(
+    formatRebalanceActionClass({ kind: 'holding', currency: 'USD', delta: { deltaShares: 0 } }),
+    'text-slate-400',
+  );
+  assert.strictEqual(
+    formatRebalanceActionClass({ kind: 'cash', currency: 'TWD', delta: { deltaAmount: 100 } }),
+    'text-emerald-600',
+  );
+  assert.strictEqual(
+    formatRebalanceActionClass({ kind: 'cash', currency: 'TWD', delta: { deltaAmount: 0 } }),
+    'text-slate-400',
+  );
 });

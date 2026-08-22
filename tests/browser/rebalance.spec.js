@@ -251,16 +251,187 @@ test.describe('portfolio.html rebalance page (v1.8 ticket #02)', () => {
     await page.locator('[data-testid="nav-rebalance"]').click();
     await expect(page.locator('[data-testid="rebalance-rule-candidate-c-1"]')).toBeVisible();
 
-    // The candidate row shows the cash account name + add/reduce advice.
+    // The candidate row shows the cash account name + action number
+    // (v1.20 T02: format `+$AMOUNT.XX` for buy/add, `−$AMOUNT.XX` for
+    // sell/reduce, locale-neutral sign + U+2212 minus). Uses
+    // formatAmountNative so compact suffix (K/M/W/Y) appears for big
+    // amounts.
     const rowText = await page.locator('[data-testid="rebalance-rule-candidate-c-1"]').innerText();
     expect(rowText).toContain('Savings');
-    // Target is 0 (no total value — no holdings, 0 baseline), so delta is
-    // -10000 → "Reduce $X from Savings".
-    expect(rowText).toMatch(/Reduce .* Savings/);
+    // Total = 10000 (cash only, no holdings/debts). Target 50% × 10000
+    // = 5000. Delta = 5000 - 10000 = -5000 → "−$5,000.00" (rose-600).
+    // 5000 < 10000 (TWD W threshold) so no compact suffix.
+    expect(rowText).toMatch(/−\$5,000\.00/);
 
     expect(errors).toEqual([]);
   });
 
+  // v1.20 T02 — Action cell format: +/− N shares/lots/cash with buy/sell
+  // colors. Unit suffix `S` for non-TWD (shares), `L` for TWD (lots;
+  // 1 lot = 1000 shares); 2 decimals; thousand separator when |n| ≥ 1000.
+  // Sign character `+` / `−` (U+2212, NOT U+002D hyphen). Zero rows render
+  // `+0.00`/S/L with slate-400.
+  test('Action cell: +/−N shares with buy/sell colors (S for non-TWD, L for TWD)', async ({ page }) => {
+    const errors = collectAppErrors(page);
+    const fixture = makeFixture();
+    fixture.holdings = [
+      // USD holding: 100 shares @ $100 = $10k USD = NT$322k.
+      { id: 'us-1', ticker: 'AAPL', shares: 100, cost: 100, currency: 'USD',
+        current_price: 100, attributes: { 'cat-region': 'val-US', 'cat-type': 'val-stock' } },
+      // TWD holding: 1000 shares @ $1000 = NT$1M.
+      { id: 'tw-1', ticker: '2330.TW', shares: 1000, cost: 50, currency: 'TWD',
+        current_price: 1000, attributes: { 'cat-region': 'val-TW', 'cat-type': 'val-stock' } },
+    ];
+    fixture.cash_accounts = [
+      { id: 'c-1', name: 'Schwab', balance: 10000, currency: 'TWD',
+        attributes: { 'cat-type': 'val-cash' } },
+    ];
+    // 3 single-bucket rules, each matches exactly 1 row, so per-row
+    // semantics = bucket semantics. Targets sized so each row hits a
+    // different sign.
+    fixture.plans = [{
+      id: 'plan-1', name: 'Action format test', updated_at: '2024-07-01T00:00:00.000Z',
+      rules: [
+        // US rule: only us-1 matched. Total ≈ 1.32M TWD. Target 50%
+        // × 1.32M = 660k. Current = 322k. Delta = +338k → BUY.
+        { id: 'rule-us', name: 'US stocks',
+          when: { 'cat-region': ['val-US'] },
+          distribute: { 'cat-type': { 'val-stock': 100 } },
+          target_weight_pct: 50, show_in_rebalance: true },
+        // TW rule: only tw-1 matched. Target 5% × 1.32M = 66k. Current
+        // = 1M. Delta = -934k → SELL.
+        { id: 'rule-tw', name: 'TW stocks',
+          when: { 'cat-region': ['val-TW'] },
+          distribute: { 'cat-type': { 'val-stock': 100 } },
+          target_weight_pct: 5, show_in_rebalance: true },
+        // Cash rule: only c-1 matched. Target 50% × 1.32M = 660k.
+        // Current = 10k. Delta = +650k → ADD.
+        { id: 'rule-cash', name: 'Cash',
+          when: { 'cat-type': ['val-cash'] },
+          distribute: { 'cat-type': { 'val-cash': 100 } },
+          target_weight_pct: 50, show_in_rebalance: true },
+      ],
+    }];
+    fixture.active_plan_id = 'plan-1';
+
+    await page.addInitScript(initScript(fixture));
+    await page.goto('/portfolio.html');
+    await page.waitForLoadState('domcontentloaded');
+    await page.locator('[data-testid="nav-rebalance"]').click();
+
+    await expect(page.locator('[data-testid="rebalance-rule-candidate-us-1"]')).toBeVisible();
+    await expect(page.locator('[data-testid="rebalance-rule-candidate-tw-1"]')).toBeVisible();
+    await expect(page.locator('[data-testid="rebalance-rule-candidate-c-1"]')).toBeVisible();
+
+    // --- USD holding BUY (us-1): +N.XXS, emerald-600 ---
+    const usAction = page.locator(
+      '[data-testid="rebalance-rule-candidate-us-1"] [data-testid="rebalance-candidate-action"]'
+    );
+    await expect(usAction).toBeVisible();
+    const usText = await usAction.innerText();
+    expect(usText).toMatch(/^\+\d{1,3}\.\d{2}S$/); // small enough → no comma
+    expect(usText.endsWith('S')).toBe(true);
+    await expect(usAction).toHaveClass(/text-emerald-600/);
+
+    // --- TWD holding SELL (tw-1): −N.XXL, rose-600 ---
+    const twAction = page.locator(
+      '[data-testid="rebalance-rule-candidate-tw-1"] [data-testid="rebalance-candidate-action"]'
+    );
+    await expect(twAction).toBeVisible();
+    const twText = await twAction.innerText();
+    expect(twText).toMatch(/^−\d{1,3}\.\d{2}L$/); // small enough → no comma
+    expect(twText.endsWith('L')).toBe(true);
+    await expect(twAction).toHaveClass(/text-rose-600/);
+
+    // --- Cash ADD (c-1): +$AMOUNT.XX (compact per formatAmountNative),
+    // emerald-600 ---
+    const cAction = page.locator(
+      '[data-testid="rebalance-rule-candidate-c-1"] [data-testid="rebalance-candidate-action"]'
+    );
+    await expect(cAction).toBeVisible();
+    const cText = await cAction.innerText();
+    expect(cText).toMatch(/^\+\$[\d,]+\.\d{2}[KMWY]?$/);
+    await expect(cAction).toHaveClass(/text-emerald-600/);
+
+    expect(errors).toEqual([]);
+  });
+
+  // v1.20 T02 — Zero-delta row: render `+0.00`/S/L with slate-400.
+  test('Action cell: zero-delta row shows +0.00 with slate-400', async ({ page }) => {
+    const errors = collectAppErrors(page);
+    const fixture = makeFixture();
+    // Single holding, single rule whose target = current → delta = 0.
+    fixture.holdings = [
+      { id: 'h-1', ticker: 'AAPL', shares: 100, cost: 100, currency: 'USD',
+        current_price: 100, attributes: { 'cat-type': 'val-stock' } },
+    ];
+    fixture.cash_accounts = [];
+    fixture.plans = [{
+      id: 'plan-1', name: 'Zero delta', updated_at: '2024-07-01T00:00:00.000Z',
+      rules: [{
+        id: 'rule-1', name: 'All stocks',
+        when: { 'cat-type': ['val-stock'] },
+        distribute: { 'cat-type': { 'val-stock': 100 } },
+        target_weight_pct: 100, // target = total = current → delta = 0
+        show_in_rebalance: true,
+      }],
+    }];
+    fixture.active_plan_id = 'plan-1';
+
+    await page.addInitScript(initScript(fixture));
+    await page.goto('/portfolio.html');
+    await page.waitForLoadState('domcontentloaded');
+    await page.locator('[data-testid="nav-rebalance"]').click();
+    await expect(page.locator('[data-testid="rebalance-rule-candidate-h-1"]')).toBeVisible();
+
+    const action = page.locator(
+      '[data-testid="rebalance-rule-candidate-h-1"] [data-testid="rebalance-candidate-action"]'
+    );
+    await expect(action).toBeVisible();
+    expect(await action.innerText()).toBe('+0.00S');
+    await expect(action).toHaveClass(/text-slate-400/);
+
+    expect(errors).toEqual([]);
+  });
+
+  // v1.20 T02 — Cash zero-delta row: `+$0.00` with slate-400 (covers
+  // the cash path of formatRebalanceActionText which the holding-zero
+  // test doesn't exercise).
+  test('Action cell: zero-delta cash row shows +$0.00 with slate-400', async ({ page }) => {
+    const errors = collectAppErrors(page);
+    const fixture = makeFixture();
+    fixture.holdings = [];
+    fixture.cash_accounts = [
+      { id: 'c-1', name: 'Savings', balance: 10000, currency: 'TWD',
+        attributes: { 'cat-type': 'val-cash' } },
+    ];
+    fixture.plans = [{
+      id: 'plan-1', name: 'Cash zero', updated_at: '2024-07-01T00:00:00.000Z',
+      rules: [{
+        id: 'rule-1', name: 'All cash',
+        when: { 'cat-type': ['val-cash'] },
+        distribute: { 'cat-type': { 'val-cash': 100 } },
+        target_weight_pct: 100, // target = total = current → delta = 0
+        show_in_rebalance: true,
+      }],
+    }];
+    fixture.active_plan_id = 'plan-1';
+
+    await page.addInitScript(initScript(fixture));
+    await page.goto('/portfolio.html');
+    await page.waitForLoadState('domcontentloaded');
+    await page.locator('[data-testid="nav-rebalance"]').click();
+    await expect(page.locator('[data-testid="rebalance-rule-candidate-c-1"]')).toBeVisible();
+
+    const action = page.locator(
+      '[data-testid="rebalance-rule-candidate-c-1"] [data-testid="rebalance-candidate-action"]'
+    );
+    await expect(action).toBeVisible();
+    expect(await action.innerText()).toBe('+$0.00');
+    await expect(action).toHaveClass(/text-slate-400/);
+
+    expect(errors).toEqual([]);
+  });
   test('multi-rule overlap on 1 holding → 2 rows (one per rule)', async ({ page }) => {
     const errors = collectAppErrors(page);
     const fixture = makeFixture();

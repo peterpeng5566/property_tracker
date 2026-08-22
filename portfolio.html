@@ -1679,8 +1679,10 @@
                         <td class="px-3 py-2 text-right tabular font-medium"
                             :class="(record.delta && record.delta.deltaValue >= 0) ? 'text-emerald-600' : 'text-rose-600'"
                             x-text="(record.delta && record.delta.deltaValue >= 0 ? '+' : '') + formatAmountNative(Math.abs(record.delta ? record.delta.deltaValue : 0), record.currency)"></td>
-                        <td class="px-3 py-2 text-xs text-slate-600"
-                            x-text="formatRebalanceAction(record)"></td>
+                        <td class="px-3 py-2 text-xs"
+                            :class="rebalanceActionClass(record)"
+                            data-testid="rebalance-candidate-action"
+                            x-text="rebalanceActionText(record)"></td>
                       </tr>
                     </template>
                   </tbody>
@@ -1713,7 +1715,10 @@
                                x-text="(record.delta && record.delta.deltaValue >= 0 ? '+' : '−') + formatAmountNative(record.delta && record.delta.deltaValue ? Math.abs(record.delta.deltaValue) : 0, record.currency)"></div>
                         </div>
                       </div>
-                      <div class="mt-2 text-sm text-slate-600" x-text="formatRebalanceAction(record)"></div>
+                      <div class="mt-2 text-sm"
+                           :class="rebalanceActionClass(record)"
+                           data-testid="rebalance-candidate-action"
+                           x-text="rebalanceActionText(record)"></div>
                       <details class="mt-2">
                         <summary class="text-xs text-slate-500 cursor-pointer select-none">Details</summary>
                         <div class="mt-2 space-y-2 text-sm">
@@ -3290,14 +3295,6 @@
       'rebalance.candidate.targetValue': 'Target',
       'rebalance.candidate.delta': 'Delta',
       'rebalance.candidate.targetShares': 'Target shares',
-      'rebalance.action.buy': 'Buy {n} shares',
-      'rebalance.action.sell': 'Sell {n} shares',
-      'rebalance.action.add': 'Add {amount}',
-      'rebalance.action.reduce': 'Reduce {amount}',
-      'rebalance.action.buyOf': 'Buy {n} shares of {ticker}',
-      'rebalance.action.sellOf': 'Sell {n} shares of {ticker}',
-      'rebalance.action.addTo': 'Add {amount} to {name}',
-      'rebalance.action.reduceFrom': 'Reduce {amount} from {name}',
     },
     zh: {
       'app.title': 'Property Tracker',
@@ -3383,14 +3380,6 @@
       'rebalance.candidate.targetValue': '目標',
       'rebalance.candidate.delta': '差額',
       'rebalance.candidate.targetShares': '目標張數',
-      'rebalance.action.buy': '買進 {n} 張',
-      'rebalance.action.sell': '賣出 {n} 張',
-      'rebalance.action.add': '存入 {amount}',
-      'rebalance.action.reduce': '提出 {amount}',
-      'rebalance.action.buyOf': '買進 {ticker} {n} 張',
-      'rebalance.action.sellOf': '賣出 {ticker} {n} 張',
-      'rebalance.action.addTo': '存入 {amount} 進 {name}',
-      'rebalance.action.reduceFrom': '提出 {amount} 從 {name}',
       'summary.netWorth': '總資產 Net Worth',
       'summary.netWorthSub': '{a} holdings + {c} 現金 − {d} 負債',
       'summary.holdingsValue': 'Holdings 市值',
@@ -6443,31 +6432,18 @@
         };
       },
 
-      // Per-record action text for the candidate row. Returns the
-      // i18n-formatted string for "Buy N shares of X" / etc.
-      formatRebalanceAction(candidate) {
-        if (candidate.kind === 'holding') {
-          const delta = candidate.delta || {};
-          const shares = Math.abs(delta.deltaShares || 0);
-          const ticker = candidate.ticker || candidate.id;
-          if ((delta.deltaShares || 0) > 0) {
-            return this.t('rebalance.action.buyOf', { n: shares, ticker });
-          } else if ((delta.deltaShares || 0) < 0) {
-            return this.t('rebalance.action.sellOf', { n: shares, ticker });
-          }
-          return this.t('rebalance.action.buyOf', { n: 0, ticker });
-        } else {
-          // cash
-          const delta = candidate.delta || {};
-          const amount = this.formatAmountNative(Math.abs(delta.deltaAmount || 0), candidate.currency);
-          const name = candidate.name || candidate.id;
-          if ((delta.deltaAmount || 0) > 0) {
-            return this.t('rebalance.action.addTo', { amount, name });
-          } else if ((delta.deltaAmount || 0) < 0) {
-            return this.t('rebalance.action.reduceFrom', { amount, name });
-          }
-          return this.t('rebalance.action.addTo', { amount: '$0', name });
-        }
+      // v1.20 T02 (ADR 0026): Action cell text + class. Thin shims
+      // delegating to lib/format.js so the format lives under `lib/`
+      // where it can be unit-tested (per AGENTS.md "Pure logic in lib/").
+      rebalanceActionText(candidate) {
+        return window.formatRebalanceActionText(candidate);
+      },
+
+      // Color binding for the Action cell: emerald for buy/add (delta ≥ 0),
+      // rose for sell/reduce (delta < 0), slate-400 for zero. Matches the
+      // Δ column convention.
+      rebalanceActionClass(candidate) {
+        return window.formatRebalanceActionClass(candidate);
       },
 
       // Find the original holding/cash record by id (for display name lookup).
