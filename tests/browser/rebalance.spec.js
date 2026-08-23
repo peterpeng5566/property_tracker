@@ -495,6 +495,151 @@ test.describe('portfolio.html rebalance page (v1.8 ticket #02)', () => {
     expect(errors).toEqual([]);
   });
 
+  // v1.20.1 fix — Delta cell: negative values MUST carry an explicit
+  // U+2212 ('−') sign, not render as bare "$X" (the v1.20 behaviour).
+  // Regression for the screenshot's 現金 bucket: bucket over-allocated
+  // → "−$67.79W" rose-600, not "$67.79W".
+  test('Delta cell: negative bucket delta renders with explicit U+2212 sign (rose-600)', async ({ page }) => {
+    const errors = collectAppErrors(page);
+    const fixture = makeFixture();
+    fixture.holdings = [];
+    fixture.cash_accounts = [
+      { id: 'c-1', name: '富邦', balance: 1645000, currency: 'TWD', attributes: { 'cat-type': 'val-cash' } },
+      { id: 'c-2', name: '中國信託', balance: 327000, currency: 'TWD', attributes: { 'cat-type': 'val-cash' } },
+    ];
+    // Total = 1,972,000 TWD (no holdings, no debts). Target 65% =
+    // 1,281,800 TWD. Bucket current = 1,972,000. Bucket delta =
+    // -690,200 ≈ -$69.02W → over-allocated → "−$69.02W".
+    fixture.plans = [{
+      id: 'plan-1', name: 'Cash test', updated_at: '2024-07-01T00:00:00.000Z',
+      rules: [{
+        id: 'rule-1', name: 'Cash',
+        when: { 'cat-type': ['val-cash'] },
+        distribute: { 'cat-type': { 'val-cash': 100 } },
+        target_weight_pct: 65, show_in_rebalance: true,
+      }],
+    }];
+    fixture.active_plan_id = 'plan-1';
+
+    await page.addInitScript(initScript(fixture));
+    await page.goto('/portfolio.html');
+    await page.waitForLoadState('domcontentloaded');
+    await page.locator('[data-testid="nav-rebalance"]').click();
+
+    await expect(page.locator('[data-testid="rebalance-rule-candidate-c-1"]')).toBeVisible();
+
+    const rowText = await page.locator('[data-testid="rebalance-rule-candidate-c-1"]').innerText();
+    // Regression: must contain U+2212 minus prefix on the negative Delta.
+    expect(rowText).toMatch(/\u2212\$\d/);
+    expect(rowText).not.toMatch(/(?<![\u2212+])-\$/); // bare ASCII hyphen-dollar is the bug
+
+    expect(errors).toEqual([]);
+  });
+
+  // v1.20.1 fix — Delta cell: positive bucket delta renders with
+  // explicit "+" sign (emerald-600). Sanity check that the positive
+  // path also goes through the new formatter (we already had this in
+  // v1.20 via inline template; locking it in so the new helper stays
+  // in lockstep with the old behaviour for positives).
+  test('Delta cell: positive bucket delta renders with explicit + sign (emerald-600)', async ({ page }) => {
+    const errors = collectAppErrors(page);
+    const fixture = makeFixture();
+    // Add a non-cash holding so the cash bucket is UNDER-allocated
+    // (target_weight_pct=100 on cash bucket alone can't exceed the
+    // bucket current if totalValue ≈ bucket current). With the holding
+    // inflating totalValue, target = totalValue × 100% > bucket current.
+    fixture.holdings = [
+      { id: 'h-1', ticker: 'AAPL', shares: 100, cost: 100, currency: 'USD',
+        current_price: 500, attributes: { 'cat-type': 'val-stock' } },  // $50k USD
+    ];
+    fixture.cash_accounts = [
+      { id: 'c-1', name: 'IB', balance: 11160, currency: 'USD', attributes: { 'cat-type': 'val-cash' } },
+    ];
+    // totalValue = (50000 + 11160) × 32 = 1,955,200 TWD.
+    // Cash rule target = 100% × 1,955,200 = $61,100 USD (back-converted).
+    // bucket.current = $11,160 USD.
+    // bucket.delta = $61,100 - $11,160 = +$49,940 USD = "+$49.94K".
+    fixture.plans = [{
+      id: 'plan-1', name: 'USD cash', updated_at: '2024-07-01T00:00:00.000Z',
+      rules: [{
+        id: 'rule-1', name: 'USD Cash',
+        when: { 'cat-type': ['val-cash'] },
+        distribute: { 'cat-type': { 'val-cash': 100 } },
+        target_weight_pct: 100, show_in_rebalance: true,
+      }],
+    }];
+    fixture.active_plan_id = 'plan-1';
+
+    await page.addInitScript(initScript(fixture));
+    await page.goto('/portfolio.html');
+    await page.waitForLoadState('domcontentloaded');
+    await page.locator('[data-testid="nav-rebalance"]').click();
+
+    await expect(page.locator('[data-testid="rebalance-rule-candidate-c-1"]')).toBeVisible();
+
+    const rowText = await page.locator('[data-testid="rebalance-rule-candidate-c-1"]').innerText();
+    expect(rowText).toMatch(/\+\$/);
+
+    expect(errors).toEqual([]);
+  });
+
+  // v1.20.1 fix — Per-row Action = bucket_delta / current_price in
+  // multi-record buckets. Locks in the screenshot behaviour: 2 TW
+  // holdings in the same bucket, each row's Action equals the bucket
+  // delta expressed in THAT row's share count, NOT
+  // (bucket_target - record.current) / price. Executing on EITHER row
+  // closes the bucket delta.
+  test('Action cell: 2-record bucket → per-row Action = bucket_delta / current_price', async ({ page }) => {
+    const errors = collectAppErrors(page);
+    const fixture = makeFixture();
+    fixture.holdings = [
+      // Cheap: 10000 shares @ $100 = $1M TWD.
+      { id: 'cheap', ticker: '00631L.TW', shares: 10000, cost: 50, currency: 'TWD',
+        current_price: 100, attributes: { 'cat-type': 'val-stock' } },
+      // Expensive: 100 shares @ $1000 = $100K TWD.
+      { id: 'expensive', ticker: '00675L.TW', shares: 100, cost: 200, currency: 'TWD',
+        current_price: 1000, attributes: { 'cat-type': 'val-stock' } },
+    ];
+    fixture.cash_accounts = [];
+    // totalValue = $1.1M. Target 50% = $550K. Bucket.current = $1.1M.
+    // Bucket.delta = -$550K → SELL on both rows.
+    // cheap: -$550K / $100 = -5500 shares = -5.50L → "−5.50L"
+    // expensive: -$550K / $1000 = -550 shares = -0.55L → "−0.55L"
+    fixture.plans = [{
+      id: 'plan-1', name: 'TW stocks', updated_at: '2024-07-01T00:00:00.000Z',
+      rules: [{
+        id: 'rule-1', name: 'TW stocks',
+        when: { 'cat-type': ['val-stock'] },
+        distribute: { 'cat-type': { 'val-stock': 100 } },
+        target_weight_pct: 50, show_in_rebalance: true,
+      }],
+    }];
+    fixture.active_plan_id = 'plan-1';
+
+    await page.addInitScript(initScript(fixture));
+    await page.goto('/portfolio.html');
+    await page.waitForLoadState('domcontentloaded');
+    await page.locator('[data-testid="nav-rebalance"]').click();
+
+    await expect(page.locator('[data-testid="rebalance-rule-candidate-cheap"]')).toBeVisible();
+    await expect(page.locator('[data-testid="rebalance-rule-candidate-expensive"]')).toBeVisible();
+
+    const cheapText = await page.locator('[data-testid="rebalance-rule-candidate-cheap"]').innerText();
+    const expensiveText = await page.locator('[data-testid="rebalance-rule-candidate-expensive"]').innerText();
+
+    // Both rows say SELL with explicit U+2212 sign on shares.
+    expect(cheapText).toMatch(/\u22125\.50L/);
+    expect(expensiveText).toMatch(/\u22120\.55L/);
+
+    // Both rows share the same Delta (bucket-level). bucket.target =
+    // 50% × 1.1M = $550K = $55.00W (compact suffix W = 萬); bucket
+    // .current = $1.1M; bucket.delta = -$550K = "−$55.00W".
+    expect(cheapText).toMatch(/\u2212\$55\.00W/);
+    expect(expensiveText).toMatch(/\u2212\$55\.00W/);
+
+    expect(errors).toEqual([]);
+  });
+
   test('filter persistence: plan rule filter persists + rebalance recomputes after reload', async ({ page }) => {
     const errors = collectAppErrors(page);
     const fixture = makeFixture();

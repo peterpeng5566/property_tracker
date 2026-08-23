@@ -16,6 +16,7 @@ const assert = require('node:assert');
 const {
   formatAmount, toTWD, fromTWD, convertCurrency,
   formatRebalanceActionText, formatRebalanceActionClass,
+  formatRebalanceDeltaText, formatRebalanceDeltaClass,
 } = require('../lib/format.js');
 
 const FX = 31; // USD → TWD rate used by tests
@@ -333,4 +334,63 @@ test('formatRebalanceActionClass: emerald / rose / slate-400 by sign', () => {
     formatRebalanceActionClass({ kind: 'cash', currency: 'TWD', delta: { deltaAmount: 0 } }),
     'text-slate-400',
   );
+});
+
+// ---- v1.20.1 fix: formatRebalanceDeltaText / ----Class ----
+//
+// The Δ column on the Rebalance page shows the bucket delta in the
+// record's native currency with an explicit '+' / '−' (U+2212) sign on
+// BOTH sides — previously only the positive side had a sign and the
+// negative side was bare, which made direction hard to read at a
+// glance. Cash and holding share the same formatter (Δ is always a
+// dollar amount, unlike Action which is shares vs dollars).
+
+// Delta is rendered in the record's NATIVE currency, so fxRate only
+// matters for the compact-suffix rounding inside formatAmount (which
+// doesn't apply at the magnitudes below). FX is also defined at the
+// top of the file for other tests — reuse it.
+
+test('formatRebalanceDeltaText: positive USD → +$AMOUNT with K/M suffix', () => {
+  assert.strictEqual(formatRebalanceDeltaText(28990, 'USD', FX), '+$28.99K');
+  assert.strictEqual(formatRebalanceDeltaText(1500000, 'USD', FX), '+$1.50M');
+});
+
+test('formatRebalanceDeltaText: negative USD → −$AMOUNT (U+2212), with explicit sign', () => {
+  // Regression for the v1.20 behaviour where negatives rendered as
+  // "$X" with NO sign. Negative direction must show U+2212, not
+  // U+002D.
+  const out = formatRebalanceDeltaText(-28990, 'USD', FX);
+  assert.strictEqual(out, '\u2212$28.99K');
+  assert.ok(!out.includes('-'), 'must use U+2212 minus, not U+002D hyphen');
+});
+
+test('formatRebalanceDeltaText: positive TWD → +$AMOUNT with W/Y suffix', () => {
+  assert.strictEqual(formatRebalanceDeltaText(3248500, 'TWD', FX), '+$324.85W');
+});
+
+test('formatRebalanceDeltaText: negative TWD → −$AMOUNT (U+2212), with explicit sign', () => {
+  // Matches the screenshot: 現金 bucket over-allocated → "−$67.79W".
+  const out = formatRebalanceDeltaText(-677900, 'TWD', FX);
+  assert.strictEqual(out, '\u2212$67.79W');
+  assert.ok(!out.includes('-'), 'must use U+2212 minus, not U+002D hyphen');
+});
+
+test('formatRebalanceDeltaText: zero → +$0.00 (positive form, slate-400 in class)', () => {
+  assert.strictEqual(formatRebalanceDeltaText(0, 'TWD', FX), '+$0.00');
+  assert.strictEqual(formatRebalanceDeltaText(0, 'USD', FX), '+$0.00');
+});
+
+test('formatRebalanceDeltaText: non-finite value → +$0.00 (defensive)', () => {
+  assert.strictEqual(formatRebalanceDeltaText(NaN, 'TWD', FX), '+$0.00');
+  assert.strictEqual(formatRebalanceDeltaText(Infinity, 'USD', FX), '+$0.00');
+  assert.strictEqual(formatRebalanceDeltaText(undefined, 'TWD', FX), '+$0.00');
+  assert.strictEqual(formatRebalanceDeltaText(null, 'USD', FX), '+$0.00');
+});
+
+test('formatRebalanceDeltaClass: emerald / rose / slate-400 by sign', () => {
+  assert.strictEqual(formatRebalanceDeltaClass(5000), 'text-emerald-600');
+  assert.strictEqual(formatRebalanceDeltaClass(-5000), 'text-rose-600');
+  assert.strictEqual(formatRebalanceDeltaClass(0), 'text-slate-400');
+  assert.strictEqual(formatRebalanceDeltaClass(NaN), 'text-slate-400');
+  assert.strictEqual(formatRebalanceDeltaClass(undefined), 'text-slate-400');
 });

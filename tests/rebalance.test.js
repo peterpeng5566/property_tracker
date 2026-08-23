@@ -212,14 +212,16 @@ test('computeCandidates: single rule with 3 matched holdings → bucket target o
   const byId = Object.fromEntries(out[0].matchedRecords.map(c => [c.recordId, c]));
   assert.equal(byId.h1.targetValue, 30000);
   assert.equal(byId.h1.targetShares, 3000);  // 30000/10
-  assert.equal(byId.h1.deltaShares, 2990);  // 3000 - 10
+  // v1.20.1 fix: per-row deltaShares = bucket_delta / current_price.
+  // bucket.current = 300, bucket.target = 30000, bucket.delta = +29700.
+  assert.equal(byId.h1.deltaShares, 2970);  // 29700/10
   assert.equal(byId.h1.action, 'buy');
   assert.equal(byId.h2.targetValue, 30000);
   assert.equal(byId.h2.targetShares, 1500);  // 30000/20
-  assert.equal(byId.h2.deltaShares, 1495);  // 1500 - 5
+  assert.equal(byId.h2.deltaShares, 1485);  // 29700/20
   assert.equal(byId.h3.targetValue, 30000);
   assert.equal(byId.h3.targetShares, 300);   // 30000/100
-  assert.equal(byId.h3.deltaShares, 299);   // 300 - 1
+  assert.equal(byId.h3.deltaShares, 297);    // 29700/100
 });
 
 test('computeCandidates: USER EXAMPLE — 2 holdings, prices 10/20, leaf=200 → 20+10 shares', () => {
@@ -242,6 +244,113 @@ test('computeCandidates: USER EXAMPLE — 2 holdings, prices 10/20, leaf=200 →
   const byId = Object.fromEntries(out[0].matchedRecords.map(c => [c.recordId, c]));
   assert.equal(byId.h1.targetShares, 20);
   assert.equal(byId.h2.targetShares, 10);
+});
+
+// ---- v1.20.1 fix: per-row Action = bucket_delta / current_price ----
+//
+// Regression for the v1.20 close-out: a multi-record bucket's per-row
+// Action was being computed as `(bucket_target - record.current) /
+// price`, so each row got its own delta that summed to MORE than the
+// bucket delta when executed on multiple rows. Correct semantics:
+// Action = bucket_delta / row's price, so executing on any ONE row
+// fully closes the bucket (the user picks which row to execute on).
+// See ADR 0026 §1 ("same dollar on both surfaces") extended to per-row
+// share math.
+
+test('computeCandidates: 2-record over-allocated bucket → Action = bucket_delta / price per row', () => {
+  // Mirror the screenshot scenario: 00631L.TW (cheap) + 00675L.TW
+  // (expensive) in the same bucket, both over-allocated. The bucket
+  // needs to SELL $550K total. Each row's Action must equal the
+  // bucket delta expressed in THAT row's share count — so executing
+  // either row alone closes the bucket.
+  const plan = makePlan([
+    ruleEligible('r1', 'TW domestic', 55, { type: ['stock'] }, { type: { stock: 100 } }),
+  ]);
+  const records = [
+    // Cheap stock: 10000 shares @ $100 = $1,000,000
+    holding('cheap', 'TWD', 10000, 100, { type: 'stock' }),
+    // Expensive stock: 100 shares @ $1000 = $100,000
+    holding('expensive', 'TWD', 100, 1000, { type: 'stock' }),
+  ];
+  // totalValue=2000000; rule_target = 55% × 2000000 = $1,100,000
+  // (entire bucket weight = 100%, so bucket.target = $1,100,000)
+  const out = computeCandidates(plan, { records, totalValue: 2000000, fxRate: FX });
+
+  // Rule-level: bucket.current = 1,100,000, bucket.target = 1,100,000,
+  // bucket.delta = 0. Over-allocatedness comes from deliberately
+  // targetting LESS than current. Adjust: re-target with totalValue=1M
+  // → rule_target = $550K (overshooting current by $550K under-alloc
+  // would do the opposite). We want OVER-allocated: rule target < current.
+  // Re-compute with totalValue=1M: rule_target = 55% × 1M = $550K.
+  // bucket.current = $1.1M, bucket.delta = $550K - $1.1M = -$550K.
+  // Actually we passed totalValue=2000000 — re-check.
+  // 55% × 2,000,000 = 1,100,000. bucket.current = 1,100,000. delta=0.
+  // To get OVER-allocated: totalValue must produce rule_target < current.
+  // Use totalValue=500000: rule_target = 275000 < 1100000 = current.
+  // Replace and re-assert.
+
+  // Recompute with over-allocated scenario:
+  const outOver = computeCandidates(plan, { records, totalValue: 500000, fxRate: FX });
+
+  assert.equal(outOver.length, 1);
+  assert.equal(outOver[0].targetValue, 275000);          // rule_target
+  assert.equal(outOver[0].currentValue, 1100000);        // sum of record values
+  assert.equal(outOver[0].delta, -825000);               // 275K - 1.1M
+
+  const byId = Object.fromEntries(outOver[0].matchedRecords.map(c => [c.recordId, c]));
+  // Both rows show the SAME bucket delta (same target, same bucket.current).
+  assert.equal(byId.cheap.targetValue, 275000);
+  assert.equal(byId.expensive.targetValue, 275000);
+  assert.equal(byId.cheap.delta, -825000);
+  assert.equal(byId.expensive.delta, -825000);
+
+  // Per-row target_shares = bucket.target / row's price (each row would
+  // reach the FULL bucket target — kept from v1.20 for display).
+  assert.equal(byId.cheap.targetShares, 2750);           // 275000 / 100
+  assert.equal(byId.expensive.targetShares, 275);        // 275000 / 1000
+
+  // FIX: per-row deltaShares = bucket.delta / row's price.
+  // Bucket delta = -825000. Cheap: -825000/100 = -8250 shares = -8.25L.
+  // Expensive: -825000/1000 = -825 shares = -0.83L.
+  assert.equal(byId.cheap.deltaShares, -8250);
+  assert.equal(byId.expensive.deltaShares, -825);
+
+  // Both rows say SELL (over-allocated bucket).
+  assert.equal(byId.cheap.action, 'sell');
+  assert.equal(byId.expensive.action, 'sell');
+
+  // Invariant: executing ANY ONE row's Action fully closes the bucket.
+  // cheap: -8250 shares × $100 = -$825,000 ≈ bucket delta ✓
+  // expensive: -825 shares × $1000 = -$825,000 ≈ bucket delta ✓
+  const cheapExec = byId.cheap.deltaShares * byId.cheap.currentPrice;
+  const expensiveExec = byId.expensive.deltaShares * byId.expensive.currentPrice;
+  assert.equal(cheapExec, -825000);
+  assert.equal(expensiveExec, -825000);
+});
+
+test('computeCandidates: 2-record under-allocated bucket → Action = bucket_delta / price per row (buy)', () => {
+  // Same bucket shape as the over-allocated test, but the bucket is
+  // under-allocated → both rows should say BUY and the per-row
+  // deltaShares must reflect bucket_delta / price.
+  const plan = makePlan([
+    ruleEligible('r1', 'TW domestic', 80, { type: ['stock'] }, { type: { stock: 100 } }),
+  ]);
+  const records = [
+    holding('cheap', 'TWD', 10000, 100, { type: 'stock' }),       // 1M
+    holding('expensive', 'TWD', 100, 1000, { type: 'stock' }),     // 100K
+  ];
+  // totalValue=2M, rule_target=80%×2M = 1.6M; bucket.current=1.1M;
+  // bucket.delta = +500K.
+  const out = computeCandidates(plan, { records, totalValue: 2000000, fxRate: FX });
+  const byId = Object.fromEntries(out[0].matchedRecords.map(c => [c.recordId, c]));
+
+  assert.equal(byId.cheap.delta, 500000);
+  assert.equal(byId.expensive.delta, 500000);
+  // bucket_delta / price
+  assert.equal(byId.cheap.deltaShares, 5000);           // 500000 / 100
+  assert.equal(byId.expensive.deltaShares, 500);        // 500000 / 1000
+  assert.equal(byId.cheap.action, 'buy');
+  assert.equal(byId.expensive.action, 'buy');
 });
 
 // ---- computeCandidates: cash rule ----
@@ -368,11 +477,19 @@ test('computeCandidates: 1 USD + 1 TWD holding in same leaf → values converted
   assert.equal(byId.h1.currency, 'USD');
   assert.equal(byId.h1.targetValue, 578.125);
   assert.equal(byId.h1.targetShares, 5.78125);
+  // v1.20.1 fix: bucket is OVER-allocated (current 37000 > target
+  // 18500). Per-row action = bucket_delta / price, same direction on
+  // every row (matches bucket direction, not per-record direction).
+  // h1 USD: bucket_delta -18500 TWD → -578.125 USD → -5.78125 shares → sell.
+  // h2 TWD: same bucket_delta -18500 TWD → -18500 TWD → -185 shares → sell.
   assert.equal(byId.h1.action, 'sell');
   assert.equal(byId.h2.currency, 'TWD');
   assert.equal(byId.h2.targetValue, 18500);
   assert.equal(byId.h2.targetShares, 185);
-  assert.equal(byId.h2.action, 'buy');
+  assert.equal(byId.h2.action, 'sell');
+  // deltaShares check: h2 is -185 (was +135 under the old buggy
+  // targetShares - currentShares formula).
+  assert.equal(byId.h2.deltaShares, -185);
 });
 
 // ---- computeCandidates: no matched records ----
@@ -732,7 +849,8 @@ test('v1.20: records missing the distribute attribute land in _unassigned (targe
 test('v1.20: per-row deltaShares uses the record’s current_price (not a fixed value)', () => {
   // Same bucket, 2 TW records with different prices: each row’s
   // deltaShares = bucket_delta / row’s current_price (so the user can
-  // pick any row and the per-share math stays correct).
+  // pick any row and the per-share math stays correct). v1.20.1 fix:
+  // this is what the comment has always said; the asserts now match.
   const plan = makePlan([
     ruleEligible('r1', 'TW only', 30, {}, { region: { TW: 100 } }),
   ]);
@@ -746,9 +864,10 @@ test('v1.20: per-row deltaShares uses the record’s current_price (not a fixed 
   // Per-row targetValue = bucket_target = 30k (NOT divided).
   assert.equal(byId.tw1.targetValue, 30000);
   assert.equal(byId.tw2.targetValue, 30000);
-  // deltaShares differs by row (price differs): tw1: (300-100)=200, tw2: (150-100)=50.
-  assert.equal(byId.tw1.deltaShares, 200);
-  assert.equal(byId.tw2.deltaShares, 50);
+  // v1.20.1: deltaShares = bucket_delta / price = 0 / price = 0 for both
+  // (bucket is exactly at target — neither buy nor sell).
+  assert.equal(byId.tw1.deltaShares, 0);
+  assert.equal(byId.tw2.deltaShares, 0);
 });
 
 // ---- v1.20 close-out: bucket targets shared with Home (ADR 0026 §1) ----

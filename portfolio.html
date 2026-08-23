@@ -1677,8 +1677,8 @@
                         <td class="px-3 py-2 text-right tabular"
                             x-text="formatAmountNative(record.targetValue, record.currency)"></td>
                         <td class="px-3 py-2 text-right tabular font-medium"
-                            :class="(record.delta && record.delta.deltaValue >= 0) ? 'text-emerald-600' : 'text-rose-600'"
-                            x-text="(record.delta && record.delta.deltaValue >= 0 ? '+' : '') + formatAmountNative(Math.abs(record.delta ? record.delta.deltaValue : 0), record.currency)"></td>
+                            :class="window.formatRebalanceDeltaClass(record.delta && record.delta.deltaValue)"
+                            x-text="window.formatRebalanceDeltaText(record.delta && record.delta.deltaValue, record.currency, fxRate())"></td>
                         <td class="px-3 py-2 text-xs"
                             :class="rebalanceActionClass(record)"
                             data-testid="rebalance-candidate-action"
@@ -1711,8 +1711,8 @@
                         </div>
                         <div class="text-right shrink-0">
                           <div class="text-base font-semibold tabular"
-                               :class="(record.delta && record.delta.deltaValue >= 0) ? 'text-emerald-600' : 'text-rose-600'"
-                               x-text="(record.delta && record.delta.deltaValue >= 0 ? '+' : '−') + formatAmountNative(record.delta && record.delta.deltaValue ? Math.abs(record.delta.deltaValue) : 0, record.currency)"></div>
+                               :class="window.formatRebalanceDeltaClass(record.delta && record.delta.deltaValue)"
+                               x-text="window.formatRebalanceDeltaText(record.delta && record.delta.deltaValue, record.currency, fxRate())"></div>
                         </div>
                       </div>
                       <div class="mt-2 text-sm"
