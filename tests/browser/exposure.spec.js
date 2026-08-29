@@ -488,14 +488,19 @@ test('v1.21: Home Group By section includes the Default Exposure category card',
   const exposureCardHeader = page.locator('h3:has-text("Exposure (3)")').first();
   await expect(exposureCardHeader).toBeVisible();
 
-  // The 2x bucket holds the holding ($10,000 TWD); the 0x bucket holds
-  // the cash ($50,000 TWD). Both must be present. The Group By renders
-  // the value name as the first column, so we check for the literal
-  // "2x" and "0x" text in the card body.
-  // Walk up to the parent card and search within.
+  // The 2x bucket holds the holding (1 share × $100 = $100 TWD); the 0x
+  // bucket holds the $50 cash. Per-row assert the count + $-amount so
+  // a future regression in lib/Group bucketing fails this test (the
+  // text-only check above wouldn't catch a wrong-multiple bug).
   const cardBody = exposureCardHeader.locator('xpath=ancestor::div[contains(@class, "rounded-2xl")][1]');
   await expect(cardBody).toContainText('2x');
   await expect(cardBody).toContainText('0x');
+
+  const twoXRow = cardBody.locator('tr', { hasText: '2x' }).first();
+  await expect(twoXRow).toContainText('$100.00');
+
+  const zeroXRow = cardBody.locator('tr', { hasText: '0x' }).first();
+  await expect(zeroXRow).toContainText('$50.00');
 
   expect(errors).toEqual([]);
 });
@@ -525,9 +530,11 @@ test('v1.21: i18n round-trip — Exposure card label, Default categories header,
   await navigateToCategories(page);
   await expect(page.locator('h2:has-text("預設類別")')).toBeVisible();
 
-  // The read-only hint also renders in zh.
+  // The read-only hint also renders in zh — full text per the spec
+  // (not just a substring match, so a future hint shortening fails the
+  // test rather than passing silently).
   const defaultCard = page.locator(`[data-testid="default-category-${DEFAULT_EXPOSURE_ID}"]`);
-  await expect(defaultCard).toContainText('系統類別');
+  await expect(defaultCard).toContainText('系統類別 — 名稱與適用範圍無法編輯');
 
   // Navigate back to Home via the Alpine shim — robust to nav-button label
   // changes. The Net Worth card label flips to "總資產 Net Worth" (the zh
