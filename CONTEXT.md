@@ -77,8 +77,12 @@ A user-defined key-value pair on a holding, cash account, or debt. Used for grou
 _Avoid_: Tag (overloaded), label (overloaded)
 
 **Category**:
-A defined attribute type, e.g. `Sector` or `Market`. Has a name, a list of values, and an `applies_to` set declaring which record types it can be attached to.
+A defined attribute type, e.g. `Sector` or `Market`. Has a name, a list of values, and an `applies_to` set declaring which record types it can be attached to. Two flavours: *Default category* (system-provided, partial read-only) and *User category* (fully user-editable, the historical kind).
 _Avoid_: Attribute type, dimension
+
+**Default category**:
+A system-provided *Category* that exists in every portfolio from load time. Identified by `isDefault: true` and a stable system id (e.g., `cat-default-exposure` for the *Default Exposure category*). Name and *Applies-to* are read-only (system-managed); values are user-editable (add/delete). The user cannot create a default category — they are seeded by `ensureDefaultCategories` at load time and persisted like any other category so they sync across devices. Multiple default categories can exist (e.g., a future Risk Band default) and are rendered in a separate "Default categories" section above user-defined categories on the Categories page. The Default Exposure category is seeded with the values `0x`, `1x`, `2x`; the user can add or delete any of these. (see ADR 0028)
+_Avoid_: system category (overloaded with operating-system concepts), built-in category (sounds fully read-only), preset category (sounds like a template)
 
 **Applies-to**:
 The record types a category can be attached to. Subset of `{'holdings', 'cash', 'debt'}`. A category with empty `applies_to` is unusable (no record can reference it).
@@ -99,8 +103,26 @@ A top-level navigation destination in the Web app. The user is on one of: Home, 
 _Avoid_: View (overloaded with chart views), route (implies URL)
 
 **Home page**:
-The default landing page. Shows total net worth (across all record types) and grouping by category. Read-only.
+The default landing page. Shows total net worth (across all record types), grouping by category, and *Exposure* (computed from the *Default Exposure category*). Read-only.
 _Avoid_: Dashboard (overloaded), summary page
+
+## Exposure
+
+**Exposure**:
+The weighted-average position multiplier across the user's *active holdings* and *active cash accounts*, computed as `Σ (record_value × record_multiplier) / Σ record_value`, then multiplied by 100 and shown as a percentage. Rendered on the *Home page* as a summary card (5th, rightmost). For an all-1x portfolio (no leverage anywhere): exactly 100%. A portfolio with $X of value in 2x positions contributes 2X to the numerator, so exposure > 100%. Debts are excluded from the calculation. Display: `145.0%` (1 decimal place, e.g. `135.0%` for a 1.35x portfolio). Edge cases: 0 active holdings AND 0 active cash accounts → `—` (no data to compute); *Default Exposure category* with 0 values → 100% with all records in the *Unassigned exposure bucket* (every record is multiplier 1). (see ADR 0028)
+_Avoid_: leverage ratio (different denominator — net worth vs. total assets), weighted average (vague), risk score (vague)
+
+**Multiplier**:
+A non-negative number parsed from the `name` field of a *Category value* in the *Default Exposure category*. Format on the wire: the `name` is the formatted string (`2x`, `1.5x`, `0x`); the multiplier is the number inside, extracted via `^(\d+(?:\.\d+)?)x?$`. A value's name that doesn't match the regex (or is absent) contributes 1 (default unleveraged). Edit UX on the Categories page: a number-only `<input type="number" min="0" step="any">` whose value, on commit, is written back as `name: '{value}x'` (auto-appends the `x`). (see ADR 0028)
+_Avoid_: leverage (overloaded), factor (overloaded), ratio (overloaded)
+
+**Default Exposure category**:
+The *Default category* used to compute *Exposure*. Identified by the stable id `cat-default-exposure` and `isDefault: true`. Its *applies-to* is fixed at `['holdings', 'cash']` (debts are excluded from the calculation). Seeded at load time with the values `0x`, `1x`, `2x`. The user can add or delete any of these values, but cannot change the name or applies_to. Records that do not carry an attribute referencing a value of this category land in the *Unassigned exposure bucket* with multiplier 1. (see ADR 0028)
+_Avoid_: exposure category (use *Default Exposure category*), leverage category (overloaded), risk category (overloaded)
+
+**Unassigned exposure bucket**:
+The synthetic bucket in the *Exposure* subline and the *Default Exposure category*'s per-category card on Home showing the count and $-amount of *active holdings* and *active cash accounts* that do not reference any value of the *Default Exposure category*. These records contribute multiplier 1 to the calculation. Mirrors the `_unassigned` pattern in `lib/group.js` for general category grouping. (see ADR 0028)
+_Avoid_: unassigned (overloaded with `lib/group.js` — context disambiguates), default bucket (overloaded)
 
 ## Plans
 
