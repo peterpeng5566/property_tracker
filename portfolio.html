@@ -2889,6 +2889,19 @@
      mergeByIdWithDeletions / mergeSettings expect. -->
 <script src="lib/migration.js"></script>
 
+<!-- Exposure helpers (lib/exposure.js) — v1.21 Home Exposure card
+     + load-time lazy-add of the Default Exposure category.
+     Pure parseMultiplier / ensureDefaultCategories /
+     findDefaultExposureCategory / exposureMultiplier / exposureBreakdown.
+     Called from load() and handleImportFile() to seed the Default
+     Exposure category (idempotent: no-op if already present).
+     Loaded after migration because the seeded category carries
+     `updated_at` + `device_id` and must be merge-eligible on first
+     sync (same contract as lib/migration.js). Depends on
+     lib/format.js toTWD, so load order is lib/format.js → migration.js
+     → exposure.js. -->
+<script src="lib/exposure.js"></script>
+
 <!-- Backup helpers (lib/backup.js) — two-layer backup safety net for true
      delete (ADR 0012 + ticket #02). Layer 1 (in-portfolio data.backups[]):
      buildBackupSnapshot, pushBackup, restoreFromBackup. Layer 2 (Drive
@@ -4393,6 +4406,12 @@
             // (mergeByIdWithDeletions / mergeSettings) on the first sync
             // forward. Idempotent — existing fields are preserved.
             Migration.migrateAdditiveFields(this.data);
+            // v1.21 additive field: lazy-seed the Default Exposure
+            // category (idempotent — no-op if already present). Must
+            // run before any code reads data.categories so the Home
+            // Exposure card sees the seeded category on first paint.
+            // Spec: .scratch/v1.21-home-exposure-card/issues/01.
+            Exposure.ensureDefaultCategories(this.data);
             this.data.holdings.forEach(h => { if (!h.attributes) h.attributes = {}; });
             this.data.cash_accounts.forEach(c => { if (!c.attributes) c.attributes = {}; });
             this.data.debts.forEach(d => { if (!d.attributes) d.attributes = {}; });
@@ -4629,6 +4648,9 @@
           // the deep watcher's save() afterward sees a fully
           // merge-eligible state. Idempotent.
           Migration.migrateAdditiveFields(result.data);
+          // v1.21 additive field: lazy-seed the Default Exposure
+          // category (idempotent). See load() for the same call.
+          Exposure.ensureDefaultCategories(result.data);
           // Defensive: restoreFromSnapshot returns a `data` object whose
           // shape is derived from the snapshot. If the snapshot (e.g. a
           // Cloud-restore payload or an older local backup) is missing
@@ -6590,6 +6612,9 @@
         // v1.7 additive fields (ADR 0016 §2 — load-time backfill).
         // See load() for the same comment.
         Migration.migrateAdditiveFields(this.data);
+        // v1.21 additive field: lazy-seed the Default Exposure
+        // category (idempotent). See load() for the same call.
+        Exposure.ensureDefaultCategories(this.data);
         this.data.holdings.forEach(h => { if (!h.attributes) h.attributes = {}; });
         // Strip in-memory flags defensively (ADR 0009 §4).
         Serialize.stripInMemoryFields(this.data.holdings);
