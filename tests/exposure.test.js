@@ -123,6 +123,27 @@ test('ensureDefaultCategories: empty categories → seeded with 0x, 1x, 2x', () 
   assert.equal(seeded.values.find(v => v.name === '2x').id, 'val-default-2x');
 });
 
+// v1.21 T03 — ensureDefaultCategories must MUTATE in place (and return
+// the same data reference) so the load-flow callers —
+//   load() / restoreFromBackup() / doImport() in portfolio.html —
+// can write `Exposure.ensureDefaultCategories(this.data)` without
+// reassigning. Matches the pattern of lib/migration.js's
+// migrateAdditiveFields (same in-place mutation + same-return
+// convention). Without this, the Default Exposure category was
+// returned-but-not-seeded, leaving the Categories "Default categories"
+// section empty and the Home Exposure card permanently hidden.
+test('ensureDefaultCategories: seeds in place — returns same data ref for non-idempotent path too', () => {
+  const data = { categories: [] };
+  const out = ensureDefaultCategories(data);
+  // Same reference for both idempotent and non-idempotent paths so
+  // callers can rely on the in-place mutation (mirrors
+  // Migration.migrateAdditiveFields).
+  assert.equal(out, data, 'ensureDefaultCategories must mutate in place');
+  // The mutation actually took effect on the input.
+  assert.equal(data.categories.length, 1);
+  assert.equal(data.categories[0].id, DEFAULT_EXPOSURE_CATEGORY_ID);
+});
+
 test('ensureDefaultCategories: already has Default Exposure → no-op (returns same data ref)', () => {
   const existing = makeDefaultCat();
   const data = { categories: [existing] };

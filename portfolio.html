@@ -340,14 +340,18 @@
     <!-- Home page -->
     <div x-show="currentPage === 'home'">
 
-    <!-- Summary: 4 cards -->
+    <!-- Summary: 5 cards (v1.21 — Exposure is the 5th, see ADR 0028).
+         The grid stays at 4 columns because the Exposure card is the
+         always-present 5th slot (counted from 1) — when Debts hides
+         (no active debts) the row stays balanced at 4 columns on lg /
+         2 on md. Spec: .scratch/v1.21-home-exposure-card/issues/03. -->
     <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
       <!-- Net Worth -->
       <div class="bg-white p-6 rounded-2xl border border-slate-200">
         <p class="text-xs text-slate-500 uppercase tracking-wider font-medium" x-text="t('summary.netWorth')"></p>
         <p class="text-3xl font-semibold tabular mt-2" x-text="formatAmount(netWorth(), displayCurrency)"></p>
         <p class="text-xs text-slate-500 mt-2"
-           x-text="t('summary.netWorthSub', { a: activeHoldingsCount(), c: activeCashCount(), d: activeDebtsCount() })"></p>
+           x-text="netWorthSub"></p>
       </div>
       <!-- Holdings Value -->
       <div class="bg-white p-6 rounded-2xl border border-slate-200">
@@ -366,12 +370,33 @@
         <p class="text-xs text-slate-500 mt-2"
            x-text="activeCashCount() + ' ' + t('summary.accounts')"></p>
       </div>
-      <!-- Debts -->
-      <div class="bg-white p-6 rounded-2xl border border-slate-200">
+      <!-- Debts (v1.21 — hides at 0; was previously always visible).
+           x-show keeps the node in the DOM (display: none) so the
+           summary-currency.spec.js regression test (which finds the
+           card via its label text) keeps working when debts > 0. -->
+      <div class="bg-white p-6 rounded-2xl border border-slate-200"
+           x-show="totalDebts() > 0"
+           data-testid="summary-debts">
         <p class="text-xs text-slate-500 uppercase tracking-wider font-medium" x-text="t('summary.debts')"></p>
         <p class="text-3xl font-semibold tabular mt-2 text-rose-600" x-text="formatAmount(totalDebts(), displayCurrency)"></p>
         <p class="text-xs text-slate-500 mt-2"
            x-text="activeDebtsCount() + ' ' + t('summary.debtItems')"></p>
+      </div>
+      <!-- Exposure (v1.21 — ADR 0028). 5th card, always present once the
+           Default Exposure category is seeded (idempotent at load).
+           Hides only on the genuine "no data" case (0 active holdings +
+           0 active cash); otherwise shows the weighted-average
+           multiplier × 100 + a top-3 bucket breakdown in the subline.
+           Color: neutral slate (no gain/loss semantic, unlike Holdings
+           Value) — exposure is a structural property, not a P&L. -->
+      <div class="bg-white p-6 rounded-2xl border border-slate-200"
+           x-show="exposurePercent() !== null"
+           data-testid="summary-exposure">
+        <p class="text-xs text-slate-500 uppercase tracking-wider font-medium" x-text="t('summary.exposure')"></p>
+        <p class="text-3xl font-semibold tabular mt-2"
+           x-text="formatExposurePercent(exposurePercent())"></p>
+        <p class="text-xs text-slate-500 mt-2"
+           x-text="exposureSubline()"></p>
       </div>
     </section>
 
@@ -3011,11 +3036,18 @@
       'nav.currency': 'Currency',
       'summary.netWorth': 'Total Net Worth',
       'summary.netWorthSub': '{a} holdings + {c} cash − {d} debts',
+      // v1.21 — T03 (ADR 0028). Used when the Debts card is hidden
+      // (no active debts) so the sub-line drops the dangling "− 0 debts"
+      // tail. Matches the spec's "two options (b) — add a new i18n key"
+      // recommendation over passing d=0 into summary.netWorthSub.
+      'summary.netWorthSubNoDebts': '{a} holdings, {c} cash',
       'summary.holdingsValue': 'Holdings Value',
       'summary.cash': 'Cash',
       'summary.debts': 'Debts',
       'summary.accounts': 'accounts',
       'summary.debtItems': 'debts',
+      // v1.21 — T03 (ADR 0028). 5th Home summary card label.
+      'summary.exposure': 'Exposure',
       'header.export': 'Export JSON',
       'header.import': 'Import JSON',
       'header.refresh': 'Refresh',
@@ -3464,11 +3496,20 @@
       'rebalance.candidate.targetShares': '目標張數',
       'summary.netWorth': '總資產 Net Worth',
       'summary.netWorthSub': '{a} holdings + {c} 現金 − {d} 負債',
+      // v1.21 — T03 (ADR 0028). No-debts variant of the Net Worth
+      // sub-line (matches the EN "X holdings, Y cash" form, in
+      // 繁體中文 with the holdings-as-record-count convention used
+      // elsewhere in this catalog — 筆 = "items/entries").
+      'summary.netWorthSubNoDebts': '{a} 筆持股、{c} 個現金帳戶',
       'summary.holdingsValue': 'Holdings 市值',
       'summary.cash': '現金 Cash',
       'summary.debts': '負債 Debts',
       'summary.accounts': '個帳戶',
       'summary.debtItems': '筆',
+      // v1.21 — T03 (ADR 0028). Exposure summary card label in ZH
+      // — "曝險" matches the user's original "曝險百分比" wording
+      // from the v1.21 spec and avoids the loanword "exposure".
+      'summary.exposure': '曝險',
       'header.export': 'Export JSON',
       'header.import': '匯入 JSON',
       'header.refresh': '重新整理',
@@ -6698,12 +6739,107 @@
       activeCashCount() { return Calc.activeCount(this.data.cash_accounts); },
       activeDebtsCount() { return Calc.activeCount(this.data.debts); },
 
+      // ---- v1.21 — Exposure summary (ADR 0028) ----
+      //
+      // Thin Alpine shims over lib/exposure.js. Per AGENTS.md, the source
+      // of truth for tested logic lives in lib/ so tests don't need a
+      // browser. These methods exist ONLY to translate Alpine component
+      // state into lib inputs and back. Calculation correctness is
+      // pinned by tests/exposure.test.js.
+
+      // Look up the Default Exposure category (id 'cat-default-exposure'
+      // + isDefault: true). Returns null if absent — defensive for a
+      // brief window during first paint where load() hasn't finished.
+      get defaultExposureCategory() {
+        return Exposure.findDefaultExposureCategory(this.data.categories);
+      },
+
+      // Weighted-average multiplier × 100 (so 1.0 → 100.0%). Returns
+      // null on the "no data" case (0 active holdings AND 0 active
+      // cash) so the card hides via x-show. The underlying lib helper
+      // already returns null in that case; we forward it as-is.
+      exposurePercent() {
+        const cat = this.defaultExposureCategory;
+        if (!cat) return null;
+        const m = Exposure.exposureMultiplier(
+          this.data.holdings, this.data.cash_accounts, cat, this.fxRate()
+        );
+        return m === null ? null : m * 100;
+      },
+
+      // Top-3 bucket breakdown as a display string. Joins buckets with
+      // " · " (per ADR 0028 §1). Each entry reads
+      //   "{valueName}: ${amount} ({share-of-top-3}%)"
+      // where the share is the bucket's share of the top-3 sum (NOT
+      // the portfolio total). When there are fewer than 3 buckets, the
+      // share equals the bucket's share of the portfolio total.
+      // Returns '' on no data so the <p> is empty (still present in the
+      // DOM for layout consistency with the other cards).
+      exposureSubline() {
+        const cat = this.defaultExposureCategory;
+        if (!cat) return '';
+        const breakdown = Exposure.exposureBreakdown(
+          this.data.holdings, this.data.cash_accounts, cat, this.fxRate()
+        );
+        if (breakdown.length === 0) return '';
+        const top = breakdown.slice(0, 3);
+        const topSum = top.reduce((s, b) => s + b.totalTwd, 0);
+        if (topSum === 0) return '';
+        // Convert TWD → displayCurrency for $-amount. Thin shim over
+        // window.fromTWD (lib/format.js) — mirrors the formatAmount
+        // shim above.
+        return top.map(b => {
+          const amount = this.fromTWD(b.totalTwd);
+          const pct = (b.totalTwd / topSum) * 100;
+          return `${b.valueName}: ${this.formatAmount(amount, this.displayCurrency)} (${pct.toFixed(1)}%)`;
+        }).join(' · ');
+      },
+
+      // Headline formatter. Renders '145.0%' (1 decimal always shown;
+      // see ADR 0028 §4 for why) or '—' on no data (x-show also
+      // hides the card in that case, so this branch is rarely hit,
+      // but we keep it for the race where exposurePercent() is null
+      // but the card is briefly visible).
+      formatExposurePercent(n) {
+        if (n === null || n === undefined) return '—';
+        return n.toFixed(1) + '%';
+      },
+
+      // Net Worth sub-line. Was an inline t('summary.netWorthSub', ...)
+      // call that always produced "X holdings + Y cash − Z debts".
+      // v1.21 trims the trailing "− 0 debts" when there are no active
+      // debts (because the Debts card is now hidden in that case and
+      // the dangling "− 0 debts" reads as a leftover). Uses a new
+      // i18n key `summary.netWorthSubNoDebts` for the trimmed form.
+      // Defined as a getter (per the T03 spec's Alpine-shim pseudo-code)
+      // so the binding reads `x-text="netWorthSub"` (no parens), matching
+      // how the spec wires it.
+      get netWorthSub() {
+        const a = this.activeHoldingsCount();
+        const c = this.activeCashCount();
+        const d = this.activeDebtsCount();
+        if (d === 0) {
+          return this.t('summary.netWorthSubNoDebts', { a, c });
+        }
+        return this.t('summary.netWorthSub', { a, c, d });
+      },
+
       // ---- Formatting ----
       // Thin wrapper around window.formatAmount (lib/format.js). Source of truth for the
       // compact suffix rules lives in lib/format.js so tests/format.test.js can verify it
       // without spinning up a browser.
       formatAmount(amount, sourceCurrency) {
         return window.formatAmount(amount, sourceCurrency, this.displayCurrency, this.fxRate());
+      },
+
+      // v1.21 — TWD → displayCurrency conversion for the Exposure card's
+      // $-amounts in the subline. Lib/exposure.js returns bucket totals in
+      // TWD (per ADR 0021 act-vs-measure: the percentage is currency-
+      // independent, but $-amounts use the display currency). This shim
+      // is the bridge — mirrors the formatAmount shim above. Source of
+      // truth for the conversion rule is lib/format.js fromTWD.
+      fromTWD(amount) {
+        return window.fromTWD(amount, this.displayCurrency, this.fxRate());
       },
 
       // v1.8 — format an amount in the SOURCE currency (not display

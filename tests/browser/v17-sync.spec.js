@@ -122,10 +122,18 @@ test('v1.7: pre-v1.7 portfolio loads → categories + settings lazy-backfilled o
 
   const stored = await readStored(page);
   // Categories: each entry has updated_at + device_id backfilled from
-  // meta.created_at + meta.device_id (ADR 0016 §2).
-  expect(stored.categories).toHaveLength(1);
-  expect(stored.categories[0].updated_at).toBe('2024-06-01T00:00:00.000Z');
-  expect(stored.categories[0].device_id).toBe('pre-v17');
+  // meta.created_at + meta.device_id (ADR 0016 §2). v1.21 additionally
+  // lazy-seeds the system Default Exposure category on load (lib/exposure.js
+  // ensureDefaultCategories) — so the round-trip persists 2 categories
+  // (the fixture's `cat-region` + the seeded `cat-default-exposure`).
+  // We pin the fixture-owned entry's backfill here; the seeded entry is
+  // a separate concern (tests/browser/categories-guard.spec.js covers it).
+  expect(stored.categories).toHaveLength(2);
+  const catRegion = stored.categories.find(c => c.id === 'cat-region');
+  expect(catRegion.updated_at).toBe('2024-06-01T00:00:00.000Z');
+  expect(catRegion.device_id).toBe('pre-v17');
+  // The lazy-seed landed too.
+  expect(stored.categories.some(c => c.id === 'cat-default-exposure')).toBe(true);
   // Settings: object-level updated_at backfilled.
   expect(stored.settings.updated_at).toBe('2024-06-01T00:00:00.000Z');
   // No console errors during the load (covers any migration-time throws).
@@ -470,8 +478,11 @@ test('v1.7: deleteCategory click pushes tombstone with type: "categories" into d
   });
   const after = await readStored(page);
 
-  // Category gone from data.categories[].
-  expect(after.categories).toEqual([]);
+  // The user-owned category is gone from data.categories[] — v1.21 also
+  // lazy-seeds the system Default Exposure category on load, which is
+  // not user-deletable, so after the delete we expect 1 (the seeded
+  // cat-default-exposure), not 0.
+  expect(after.categories.map(c => c.id)).toEqual(['cat-default-exposure']);
 
   // A tombstone must have been pushed into data.deletions[].
   expect(after.deletions.length).toBe(1);
