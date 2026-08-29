@@ -196,15 +196,19 @@ test.describe('portfolio.html roadside guard (ticket #05)', () => {
     await page.locator('button:has-text("Categories")').first().click();
     await page.waitForTimeout(200);
 
-    // Values are rendered in fixture order per category card, and cards
-    // themselves are in fixture order. Layout is flat — all "Delete
-    // value" × buttons live in <li> elements, but they render as a
-    // single block (one per value), so the 3rd button is val-stock:
+    // v1.21 — the Categories page splits into two sections: Default
+    // categories (top, with the seeded cat-default-exposure) and User
+    // categories (below). Filter to user-category value delete buttons
+    // (those without the data-testid prefix used for default values).
+    // Within the user section, values are rendered in fixture order per
+    // category card, and cards themselves are in fixture order, so:
     //   0: cat-region → val-TW
     //   1: cat-region → val-US
     //   2: cat-type   → val-stock   ← this plan references { cat-type: { val-stock: 60 } }
     //   3: cat-type   → val-bond
-    const valueButtons = await page.locator('button[title="Delete value"]').all();
+    const valueButtons = await page
+      .locator('button[title="Delete value"]:not([data-testid^="default-value-del"])')
+      .all();
     expect(valueButtons.length).toBe(4);
     await valueButtons[2].click();
     await page.waitForTimeout(300);

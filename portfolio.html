@@ -1192,17 +1192,70 @@
     </section>
     </div>
 
-    <!-- Categories page -->
+    <!-- Categories page (v1.21 — ticket 02). Two sections: Default categories
+         (system-provided, read-only name and applies_to) on top, user
+         categories below. The Default Exposure category is the only default
+         in v1.21; it ships pre-seeded (id 'cat-default-exposure', values
+         0x/1x/2x) by Exposure.ensureDefaultCategories at load time. -->
     <div x-show="currentPage === 'categories'">
-    <section class="mb-8">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-semibold" x-text="t('categories.title')"></h2>
-        <button @click="addCategory()" class="text-sm bg-slate-900 text-white px-4 py-2 rounded-md hover:bg-slate-800 transition-colors"
-                x-text="t('categories.add')"></button>
-      </div>
-
+    <!-- Default categories -->
+    <section class="mb-6" x-show="defaultCategories.length > 0">
+      <h2 class="text-lg font-semibold mb-4" x-text="t('categories.defaultSection')"></h2>
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <template x-for="cat in categories" :key="cat.id">
+        <template x-for="cat in defaultCategories" :key="cat.id">
+          <div class="bg-white p-4 rounded-2xl border border-slate-200"
+               :data-testid="'default-category-' + cat.id">
+            <!-- Name: read-only span (NOT an input). Name + applies_to are
+                 system-managed; only values are user-editable. -->
+            <div class="flex items-center justify-between mb-3">
+              <span class="font-medium text-sm text-slate-700" x-text="cat.name"></span>
+              <!-- no delete-category button -->
+            </div>
+
+            <!-- Applies-to: read-only text (no toggle buttons). Built from the
+                 existing appliesTo* i18n keys so it stays in sync with the
+                 per-language vocabulary. -->
+            <p class="text-xs text-slate-500 mb-2">
+              <span x-text="t('categories.defaultAppliesTo')"></span>
+              <span x-text="(cat.applies_to || []).map(at => t('categories.appliesTo' + at[0].toUpperCase() + at.slice(1))).join(', ')"></span>
+            </p>
+
+            <!-- Values: number-only input so the user enters the multiplier as
+                 a number; the system writes back name = '{value}x' on commit.
+                 The trailing 'x' glyph is a separate span so the input stays
+                 numeric (`[0] x` reads as `0x`). -->
+            <ul class="space-y-1 mb-2">
+              <template x-for="val in cat.values" :key="val.id">
+                <li class="flex items-center gap-1">
+                  <input type="number" min="0" step="any"
+                         :value="parseValueMultiplier(val.name)"
+                         @change="setDefaultValueName(cat.id, val.id, $event.target.value, $event.target)"
+                         :data-testid="'default-value-input-' + val.id"
+                         class="text-sm flex-1 border border-transparent hover:border-slate-200 focus:border-slate-400 focus:outline-none px-2 py-1 rounded tabular">
+                  <span class="text-xs text-slate-400 w-6" x-text="'x'"></span>
+                  <button @click="deleteDefaultValue(cat.id, val.id)"
+                          :data-testid="'default-value-del-' + val.id"
+                          class="text-xs text-slate-400 hover:text-rose-600 px-1"
+                          title="Delete value">×</button>
+                </li>
+              </template>
+            </ul>
+            <button @click="addDefaultValue(cat)" class="text-xs text-slate-500 hover:text-slate-900" x-text="t('categories.addValue')"></button>
+
+            <!-- Hint: explains that name + applies_to are read-only. -->
+            <p class="text-xs text-slate-400 mt-3 italic" x-text="t('categories.defaultExposureHint')"></p>
+          </div>
+        </template>
+      </div>
+    </section>
+
+    <!-- User categories (existing; v1.21 just wraps it in a section header
+         and moves the original Add Category button to the bottom of this
+         section). No logical change to per-card markup. -->
+    <section class="mb-8">
+      <h2 class="text-lg font-semibold mb-4" x-text="t('categories.userSection')"></h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <template x-for="cat in userCategories" :key="cat.id">
           <div class="bg-white p-4 rounded-2xl border border-slate-200">
             <div class="flex items-center justify-between mb-3">
               <input type="text" x-model="cat.name"
@@ -1240,7 +1293,12 @@
         </template>
       </div>
 
-      <div x-show="categories.length === 0" class="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-400"
+      <div class="mt-4 flex items-center justify-end">
+        <button @click="addCategory()" class="text-sm bg-slate-900 text-white px-4 py-2 rounded-md hover:bg-slate-800 transition-colors"
+                x-text="t('categories.add')"></button>
+      </div>
+
+      <div x-show="userCategories.length === 0" class="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-400"
            x-text="t('categories.empty')"></div>
     </section>
     </div>
@@ -3061,6 +3119,17 @@
       'categories.appliesToCash': 'Cash',
       'categories.appliesToDebt': 'Debts',
       'categories.appliesToEmpty': 'This category won\'t appear in any modal',
+      // v1.21 — ticket 02. The Categories page is split into Default
+      // categories (system-provided, read-only name and applies_to)
+      // and User categories. Default section header shows above the
+      // auto-seeded Default Exposure card (id cat-default-exposure,
+      // values 0x/1x/2x). defaultAppliesTo + the existing appliesTo*
+      // keys build "Applies to: Holdings, Cash" — we don't ship a
+      // separate string per language for the joined suffix.
+      'categories.defaultSection': 'Default categories',
+      'categories.userSection': 'User categories',
+      'categories.defaultAppliesTo': 'Applies to:',
+      'categories.defaultExposureHint': 'System category — name and applies-to are read-only',
       // v1.4 — Roadside guard (ticket 05). deleteCategory / deleteValue
       // shims refuse when a plan references the target — these strings
       // surface the count of blocking plans. Pluralisation: {n} === 1
@@ -3503,6 +3572,14 @@
       'categories.appliesToCash': '現金',
       'categories.appliesToDebt': '負債',
       'categories.appliesToEmpty': '此 category 不會出現在任何 modal',
+      // v1.21 — ticket 02. Default categories 區段標題（系統提供的
+      // 類別，使用者只能編輯 value 列表）。defaultAppliesTo 句首以
+      // 「適用對象：」呈現，後面接著現有的 appliesTo* 字串
+      // （例如「Holdings、現金」），不需另存聯合結尾的可翻譯字串。
+      'categories.defaultSection': '預設類別',
+      'categories.userSection': '使用者類別',
+      'categories.defaultAppliesTo': '適用範圍：',
+      'categories.defaultExposureHint': '系統類別 — 名稱與適用範圍無法編輯',
       // v1.4 — Roadside guard (ticket 05)
       'categories.deleteBlocked.plans.one': '有 1 個 plan 參考這個 category，請先刪除或編輯。',
       'categories.deleteBlocked.plans.other': '有 {n} 個 plan 參考這個 category，請先刪除或編輯。',
@@ -4752,6 +4829,17 @@
       // ---- Getters ----
       get holdings() { return this.data.holdings; },
       get categories() { return this.data.categories; },
+      // v1.21 — Default categories (system-provided) live in their own
+      // section at the top of the Categories page. Split is driven by
+      // category.isDefault === true. The seeded Default Exposure category
+      // (id 'cat-default-exposure') is the only default in v1.21; future
+      // versions can add more without changing this getter's shape.
+      get defaultCategories() {
+        return this.data.categories.filter(c => c.isDefault === true);
+      },
+      get userCategories() {
+        return this.data.categories.filter(c => c.isDefault !== true);
+      },
       get cashAccounts() { return this.data.cash_accounts; },
       get debts() { return this.data.debts; },
       get categoriesForHoldings() {
@@ -5658,6 +5746,83 @@
         const cat = this.data.categories.find(c => c.id === catId);
         if (!cat) return;
         cat.values = cat.values.filter(v => v.id !== valId);
+        const clean = (items) => items.forEach(item => {
+          if (item.attributes && item.attributes[catId] === valId) delete item.attributes[catId];
+        });
+        clean(this.data.holdings);
+        clean(this.data.cash_accounts);
+        clean(this.data.debts);
+      },
+
+      // ---- Default category values (v1.21 — ticket 02) ----
+      // The Default Exposure category uses number inputs (not text inputs
+      // like user categories) so the user enters the multiplier as a
+      // number and the system auto-formats the display as `2x`. These
+      // methods are the bridge between that UX and lib/exposure.js:
+      //
+      //   parseValueMultiplier(name) → the number a user types, sourced
+      //     by reading the stored name back through Exposure.parseMultiplier.
+      //   setDefaultValueName(catId, valId, rawValue) → writes the
+      //     number back as name = '{value}x', validating non-negativity.
+      //   addDefaultValue(cat) / deleteDefaultValue(catId, valId) →
+      //     structurally identical to addValue / deleteValue but guarded
+      //     to default categories only (the form does not render these
+      //     buttons for user categories).
+      //
+      // Default categories cannot be deleted (`deleteCategory` should
+      // never be called against them), so no deleteCategory guard is
+      // needed for the default list.
+      parseValueMultiplier(name) {
+        // Throws no errors on garbage — parseMultiplier returns 1 for
+        // anything that doesn't match the regex, which renders as `1`
+        // in the input. That's the user's signal to fix it.
+        return Exposure.parseMultiplier(name);
+      },
+      setDefaultValueName(catId, valId, rawValue, inputEl) {
+        // Validate: must be a finite non-negative number. Anything else
+        // (NaN, '', negative, Infinity) is rejected — we reset the
+        // input back to the parsed multiplier so the user sees the
+        // stored value. Without the reset the input would keep showing
+        // the rejected text after blur, which is the "silent" failure
+        // mode we want to avoid (the user needs feedback that the
+        // entry didn't stick).
+        //
+        // Parity: this mirrors the existing user-category value CRUD
+        // (`addValue` / `deleteValue`) which doesn't stamp
+        // `cat.updated_at` / `device_id` on value-level edits, and
+        // doesn't stamp the value either. The whole-record sync story
+        // for value CRUD predates v1.21 and is unchanged here.
+        const n = Number(rawValue);
+        const cat = this.data.categories.find(c => c.id === catId);
+        if (!cat || !Array.isArray(cat.values)) return;
+        const val = cat.values.find(v => v.id === valId);
+        if (!val) return;
+        if (!Number.isFinite(n) || n < 0) {
+          if (inputEl) inputEl.value = Exposure.parseMultiplier(val.name);
+          return;
+        }
+        val.name = `${n}x`;
+      },
+      addDefaultValue(cat) {
+        if (!cat.values) cat.values = [];
+        // Default name '1x' — the unleveraged baseline. The user edits
+        // to taste (e.g. '2x' for double-exposure). Numeric generation
+        // (e.g. auto-incrementing) feels clever but obscures intent —
+        // the user sees `1x`, immediately knows the multiplier is 1,
+        // and changes it if they want.
+        cat.values.push({ id: genId('val'), name: '1x' });
+      },
+      deleteDefaultValue(catId, valId) {
+        const cat = this.data.categories.find(c => c.id === catId);
+        if (!cat || !Array.isArray(cat.values)) return;
+        cat.values = cat.values.filter(v => v.id !== valId);
+        // No value-level plan-reference guard here: a plan referencing
+        // a default-category value is unusual (the spec doesn't show
+        // default values used in plans), and the existing
+        // Plan.plansReferencingValue works fine if it ever does —
+        // but for v1.21 we match the form UX which has no guard. If
+        // this becomes a real reference pattern later, add the same
+        // roadside guard as deleteValue.
         const clean = (items) => items.forEach(item => {
           if (item.attributes && item.attributes[catId] === valId) delete item.attributes[catId];
         });
