@@ -817,47 +817,25 @@ const CHART_INIT = `
 localStorage.setItem(${JSON.stringify(STORAGE_KEY)}, JSON.stringify(${JSON.stringify(CHART_FIXTURE)}));
 `;
 
-// Multi-currency fixture: snap-1 in USD with fx_rate=32, snap-2 in USD
-// with fx_rate=31 (frozen). User's current display is TWD. Both
-// netWorth values should be reconverted to TWD using each snap's own
-// fx_rate, not the current one.
-const CHART_MULTI_CCY_FIXTURE = {
-  version: '1.1',
-  holdings: [], cash_accounts: [], debts: [], categories: [],
-  snapshots: [
-    { id: 'snap-usd-a', date: '2025-01-01',
-      holdings: [], cash_accounts: [], debts: [],
-      fx_rate: 32,
-      totals: { displayCurrency: 'USD', holdingsValue: 1000, holdingsCost: 800,
-                holdingsGainLoss: 200, totalCash: 500, totalDebts: 0, netWorth: 1500 } },
-    { id: 'snap-usd-b', date: '2025-02-01',
-      holdings: [], cash_accounts: [], debts: [],
-      fx_rate: 31,
-      totals: { displayCurrency: 'USD', holdingsValue: 1100, holdingsCost: 800,
-                holdingsGainLoss: 300, totalCash: 500, totalDebts: 0, netWorth: 1600 } },
-  ],
-  plans: [],
-  settings: { display_currency: 'TWD', language: 'en', cost_format: 'per_share',
-    fx_source: 'manual', fx_rate: 99, snapshot_cap: 365 },
-  meta: { device_id: 'chart-multi-ccy', last_synced_at: null, created_at: '2025-01-01T00:00:00.000Z' },
-};
-
-const CHART_MULTI_CCY_INIT = `
-localStorage.setItem(${JSON.stringify(STORAGE_KEY)}, JSON.stringify(${JSON.stringify(CHART_MULTI_CCY_FIXTURE)}));
-`;
-
-// 1-snapshot fixture for the single-point state test.
-const CHART_SINGLE_FIXTURE = {
-  ...CHART_FIXTURE,
-  snapshots: [CHART_FIXTURE.snapshots[0]],
-};
-
-const CHART_SINGLE_INIT = `
-localStorage.setItem(${JSON.stringify(STORAGE_KEY)}, JSON.stringify(${JSON.stringify(CHART_SINGLE_FIXTURE)}));
-`;
+// Multi-currency FX conversion was retired from browser tests in
+// v1.22: tests/snapshot.test.js:608+ covers toDisplaySeries directly
+// (each snapshot's frozen fx_rate is used, not the current one).
+// The shim no longer exposes chartSeries() because the data is read
+// via the private _chartSeries getter internally consumed by the 5
+// thin pass-throughs.
+//
+// The single-snapshot test was also retired in v1.22: the geometry
+// assertions (1 netWorth dot, 0 holdings dots) are now in
+// tests/snapshot-chart.test.js (chartDots single-point case).
 
 test.describe('portfolio.html snapshots page (ticket #05 — trend chart)', () => {
-  test('3 snapshots: two polylines render, 3 y-ticks, legend visible', async ({ page }) => {
+  // Geometry (polyline string length, dot count, y-axis tick count,
+  // single-point collapse) is unit-tested in
+  // tests/snapshot-chart.test.js. This browser block now only
+  // asserts the wire: x-html injects the geometry from the shim into
+  // the SVG, and the chart card stays visible. Anything that breaks
+  // the lib → shim → DOM pipeline fails here.
+  test('3 snapshots: chart card renders with non-empty geometry (smoke)', async ({ page }) => {
     const errors = collectAppErrors(page);
     await page.addInitScript(CHART_INIT);
     page.__dlg = await autoAcceptDialogs(page);
@@ -868,24 +846,16 @@ test.describe('portfolio.html snapshots page (ticket #05 — trend chart)', () =
     await expect(page.locator('[data-testid="snapshot-chart-card"]')).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('[data-testid="snapshot-chart-title"]')).toBeVisible();
 
-    // Both polylines populated with non-empty points string.
+    // Wire smoke: each bound expression produces something in the DOM.
+    // The exact geometry lives in tests/snapshot-chart.test.js.
     const nwPoints = await page.locator('[data-testid="snapshot-chart-line-networth"]').getAttribute('points');
     expect(nwPoints).toBeTruthy();
-    expect(nwPoints.split(' ').length).toBe(3); // 3 points
     const hPoints = await page.locator('[data-testid="snapshot-chart-line-holdings"]').getAttribute('points');
     expect(hPoints).toBeTruthy();
-    expect(hPoints.split(' ').length).toBe(3);
-
-    // 3 dots per polyline (chartNetWorthDots + chartHoldingsDots both
-    // produce 3 entries each for 3 snapshots).
     const nwDots = await page.locator('[data-testid="snapshot-chart-dots-networth"] [data-snap-id]').count();
-    expect(nwDots).toBe(3);
+    expect(nwDots).toBeGreaterThan(0);
     const hDots = await page.locator('[data-testid="snapshot-chart-dots-holdings"] [data-snap-id]').count();
-    expect(hDots).toBe(3);
-
-    // 3 y-axis ticks (line + text per tick).
-    const yChildren = await page.locator('[data-testid="snapshot-chart-y-axis"]').evaluate(el => el.children.length);
-    expect(yChildren).toBe(6);
+    expect(hDots).toBeGreaterThan(0);
 
     // Legend visible with both lines.
     await expect(page.locator('[data-testid="snapshot-chart-legend"]')).toBeVisible();
@@ -939,56 +909,6 @@ test.describe('portfolio.html snapshots page (ticket #05 — trend chart)', () =
     // the middle row (index 1).
     const rows = page.locator('[data-testid="snapshot-row"]');
     await expect(rows.nth(1)).toHaveClass(/ring-2/);
-
-    expect(errors).toEqual([]);
-  });
-
-  test('Multi-currency: 2 USD snaps are reconverted to TWD using each snap frozen fx_rate', async ({ page }) => {
-    const errors = collectAppErrors(page);
-    await page.addInitScript(CHART_MULTI_CCY_INIT);
-    page.__dlg = await autoAcceptDialogs(page);
-
-    await page.goto('http://localhost:8000/portfolio.html');
-    await page.locator('[data-testid="nav-snapshots"]').click();
-    await expect(page.locator('[data-testid="snapshot-chart-card"]')).toBeVisible({ timeout: 5_000 });
-
-    // Check the chartSeries() values via the Alpine root.
-    // snap-usd-a: netWorth 1500 USD * 32 = 48000 TWD
-    // snap-usd-b: netWorth 1600 USD * 31 = 49600 TWD
-    const series = await page.evaluate(() => {
-      const root = document.querySelector('[x-data]');
-      const data = root && root._x_dataStack && root._x_dataStack[0];
-      return data ? data.chartSeries().map(s => ({ id: s.id, nw: s.netWorth, hv: s.holdingsValue })) : [];
-    });
-    expect(series.length).toBe(2);
-    expect(series[0].nw).toBe(48000);
-    expect(series[1].nw).toBe(49600);
-    // holdingsValue (1000 * 32 = 32000; 1100 * 31 = 34100)
-    expect(series[0].hv).toBe(32000);
-    expect(series[1].hv).toBe(34100);
-
-    expect(errors).toEqual([]);
-  });
-
-  test('Single snapshot: only netWorth dot + caption; holdings line hidden', async ({ page }) => {
-    const errors = collectAppErrors(page);
-    await page.addInitScript(CHART_SINGLE_INIT);
-    page.__dlg = await autoAcceptDialogs(page);
-
-    await page.goto('http://localhost:8000/portfolio.html');
-    await page.locator('[data-testid="nav-snapshots"]').click();
-    await expect(page.locator('[data-testid="snapshot-chart-card"]')).toBeVisible({ timeout: 5_000 });
-
-    // NetWorth: 1 dot.
-    const nwDots = await page.locator('[data-testid="snapshot-chart-dots-networth"] [data-snap-id]').count();
-    expect(nwDots).toBe(1);
-
-    // Holdings: 0 dots (line not rendered for single point).
-    const hDots = await page.locator('[data-testid="snapshot-chart-dots-holdings"] [data-snap-id]').count();
-    expect(hDots).toBe(0);
-
-    // Caption visible.
-    await expect(page.locator('[data-testid="snapshot-chart-single-point"]')).toBeVisible();
 
     expect(errors).toEqual([]);
   });
