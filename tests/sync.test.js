@@ -823,55 +823,43 @@ test('mergePortfolios: data.deletions[] empty array when both sides missing', ()
   assert.deepEqual(out.deletions, []);
 });
 
-// --- mergePortfolios: data.backups[] merge + FIFO 5 ---
+// --- mergePortfolios: data.backups[] wire-format (v1.23, ADR 0029) ---
+//
+// v1.23 — Layer 1 in-portfolio backups are removed. The wire-format
+// `backups` field is hardcoded to `[]` for backward compatibility
+// with older clients that still read this field (14 bytes per save).
+// `mergePortfolios` does NOT consult either side's `backups` array;
+// the result is always `[]` regardless of input.
 
-test('mergePortfolios: data.backups[] merged + sorted + truncated to last 5', () => {
-  // Local has 4 old backups, remote has 4 newer backups — merged should
-  // be 8 entries before truncation; but the FIFO 5 keeps the 5 newest.
+test('mergePortfolios: always sets backups to [] in wire format (regardless of inputs)', () => {
+  // Pre-v1.23 portfolios may carry a populated `backups` array on
+  // either side of a sync. The merge must drop the input arrays and
+  // emit `[]` so the wire format stays consistent. This pins the
+  // contract that older clients reading the field always see `[]`
+  // after a v1.23 sync.
   const local = {
     backups: [
-      { id: 'b1', saved_at: '2024-01-01T00:00:00Z', snapshot: {} },
-      { id: 'b2', saved_at: '2024-02-01T00:00:00Z', snapshot: {} },
-      { id: 'b3', saved_at: '2024-03-01T00:00:00Z', snapshot: {} },
-      { id: 'b4', saved_at: '2024-04-01T00:00:00Z', snapshot: {} },
+      { id: 'b1', saved_at: '2024-01-01T00:00:00Z', data: { holdings: [] } },
+      { id: 'b2', saved_at: '2024-02-01T00:00:00Z', data: { holdings: [] } },
     ],
   };
   const remote = {
     backups: [
-      { id: 'b5', saved_at: '2024-05-01T00:00:00Z', snapshot: {} },
-      { id: 'b6', saved_at: '2024-06-01T00:00:00Z', snapshot: {} },
-      { id: 'b7', saved_at: '2024-07-01T00:00:00Z', snapshot: {} },
-      { id: 'b8', saved_at: '2024-08-01T00:00:00Z', snapshot: {} },
+      { id: 'b3', saved_at: '2024-05-01T00:00:00Z', data: { holdings: [] } },
+      { id: 'b4', saved_at: '2024-06-01T00:00:00Z', data: { holdings: [] } },
+      { id: 'b5', saved_at: '2024-07-01T00:00:00Z', data: { holdings: [] } },
     ],
   };
   const out = mergePortfolios(local, remote, 'd');
-  assert.equal(out.backups.length, 5, 'FIFO 5 — keep the 5 newest');
-  // b4..b8 (newest 5 by saved_at)
-  assert.deepEqual(out.backups.map(b => b.id), ['b4', 'b5', 'b6', 'b7', 'b8']);
-});
+  assert.deepEqual(out.backups, [], 'wire-format: always [] regardless of input');
 
-test('mergePortfolios: data.backups[] with < 5 merged → no truncation', () => {
-  const local = {
-    backups: [
-      { id: 'b1', saved_at: '2024-01-01T00:00:00Z', snapshot: {} },
-    ],
-  };
-  const remote = {
-    backups: [
-      { id: 'b2', saved_at: '2024-02-01T00:00:00Z', snapshot: {} },
-      { id: 'b3', saved_at: '2024-03-01T00:00:00Z', snapshot: {} },
-    ],
-  };
-  const out = mergePortfolios(local, remote, 'd');
-  assert.equal(out.backups.length, 3);
-  assert.deepEqual(out.backups.map(b => b.id), ['b1', 'b2', 'b3']);
-});
+  // Same contract when only one side carries backups.
+  const out2 = mergePortfolios({ backups: [{ id: 'b1' }] }, {}, 'd');
+  assert.deepEqual(out2.backups, []);
 
-test('mergePortfolios: data.backups[] empty array when both sides missing', () => {
-  // Collections use mergeById which returns [] for empty inputs, same
-  // as holdings / cash_accounts / debts / snapshots — never undefined.
-  const out = mergePortfolios({}, {}, 'd');
-  assert.deepEqual(out.backups, []);
+  // Same contract when both sides are empty / missing.
+  const out3 = mergePortfolios({}, {}, 'd');
+  assert.deepEqual(out3.backups, []);
 });
 
 // --- Regression: deletion must propagate via sync ---

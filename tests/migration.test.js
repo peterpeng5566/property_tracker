@@ -209,3 +209,59 @@ test('migrateAdditiveFields: omitted `now` → uses current time (falls back to 
   assert.ok(catTs >= before && catTs <= after, `category.updated_at ${catTs} in [${before}, ${after}]`);
   assert.ok(setTs >= before && setTs <= after, `settings.updated_at ${setTs} in [${before}, ${after}]`);
 });
+
+// --- removeLayer1Backups (v1.23, ADR 0029) ---
+//
+// The v1.23 spec drops Layer 1 in-portfolio backups (data.backups[]).
+// The migration clears any pre-existing Layer 1 entries on every load
+// so the wire-format field becomes `backups: []`. The sentinel —
+// `Array.isArray && length > 0 && [0].data is object` — matches the
+// pre-v1.23 Layer 1 entry shape (every entry carried a `.data`
+// envelope). Idempotent: already-empty / missing / non-matching shapes
+// are no-ops.
+
+const { removeLayer1Backups } = Migration;
+
+test('removeLayer1Backups: clears data.backups when old Layer 1 entries present', () => {
+  const data = {
+    version: '1.1',
+    holdings: [{ id: 'h1', shares: 10 }],
+    backups: [
+      { id: 'bp-1', saved_at: '2024-01-01T00:00:00Z', data: { holdings: [] }, deletions: [] },
+      { id: 'bp-2', saved_at: '2024-02-01T00:00:00Z', data: { holdings: [] }, deletions: [] },
+      { id: 'bp-3', saved_at: '2024-03-01T00:00:00Z', data: { holdings: [] }, deletions: [] },
+      { id: 'bp-4', saved_at: '2024-04-01T00:00:00Z', data: { holdings: [] }, deletions: [] },
+      { id: 'bp-5', saved_at: '2024-05-01T00:00:00Z', data: { holdings: [] }, deletions: [] },
+    ],
+  };
+  const ret = removeLayer1Backups(data);
+  assert.deepEqual(data.backups, []);
+  assert.equal(ret, data, 'returns the (mutated) data');
+});
+
+test('removeLayer1Backups: no-op when backups is already []', () => {
+  const data = { backups: [] };
+  removeLayer1Backups(data);
+  assert.deepEqual(data.backups, []);
+});
+
+test('removeLayer1Backups: no-op when backups is missing', () => {
+  // The migration is purely subtractive — it must NOT materialize
+  // the field when it's absent.
+  const data = { version: '1.1', holdings: [] };
+  removeLayer1Backups(data);
+  assert.equal(data.backups, undefined);
+});
+
+test('removeLayer1Backups: no-op when entries lack .data field (defensive)', () => {
+  // A shape that does NOT match the pre-v1.23 Layer 1 sentinel must
+  // NOT be cleared. This pins the "only clear the precise old shape"
+  // invariant — a future schema that introduces a different backups
+  // array shape would not be silently wiped.
+  const data = {
+    backups: [{ id: 'bp-1', saved_at: '2024-01-01T00:00:00Z' }],
+  };
+  removeLayer1Backups(data);
+  assert.equal(data.backups.length, 1);
+  assert.equal(data.backups[0].id, 'bp-1');
+});

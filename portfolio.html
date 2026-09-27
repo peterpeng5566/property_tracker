@@ -1839,12 +1839,14 @@
       </div>
     </div>
 
-    <!-- Backups page (v1.3 — ADR 0012 / v1.23 — ADR 0029, ticket #03 / #01).
+    <!-- Backups page (v1.3 — ADR 0012 / v1.23 — ADR 0029, ticket #03 / #02).
          Single-layer: Cloud backups (Layer 2 from Drive, fetched on page mount).
          Each row shows timestamp + device-id + source badge + Restore button.
          Source of truth for the restore algorithm: lib/backup.js
-         (Backup.restoreFromSnapshot). Source of truth for the Layer 2 fetch:
-         Backup.listPortfolioBackupFiles / readPortfolioBackupFile. -->
+         (Backup.restoreFromSnapshot — simplified in v1.23 per ADR 0029).
+         Source of truth for the Layer 2 fetch: Backup.listPortfolioBackupFiles
+         / readPortfolioBackupFile. The Local (Layer 1) section is removed in
+         v1.23 — data.backups is always [] on the wire (ADR 0029 §1). -->
 
     <!-- Snapshots page (v1.5 — tickets 02–05).
          Nav-row entry added after Holdings (live data + history reading
@@ -2438,9 +2440,11 @@
       <h2 class="text-lg font-semibold mb-2" x-text="t('backups.title')"></h2>
       <p class="text-xs text-slate-500 mb-6 max-w-3xl" x-text="t('backups.subtitle')"></p>
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div class="max-w-xl">
 
-        <!-- Cloud (Layer 2) -->
+        <!-- Cloud (Layer 2) — only backup layer after v1.23 (ADR 0029).
+             Driven by Backup.listPortfolioBackupFiles → _cloudBackups;
+             restore via Backup.readPortfolioBackupFile → restoreFromSnapshot. -->
         <div class="bg-white rounded-2xl border border-slate-200 p-5">
           <h3 class="text-sm font-semibold text-slate-700 mb-4"
               x-text="t('backups.cloudHeading')"></h3>
@@ -2472,35 +2476,6 @@
           </ul>
 
           <p x-show="syncAccessToken && !_cloudBackupsLoading && _cloudBackups.length === 0"
-             class="text-xs text-slate-400 py-4" x-text="t('backups.empty')"></p>
-        </div>
-
-        <!-- Local (Layer 1) -->
-        <div class="bg-white rounded-2xl border border-slate-200 p-5">
-          <h3 class="text-sm font-semibold text-slate-700 mb-4"
-              x-text="t('backups.localHeading')"></h3>
-
-          <ul data-testid="local-backups" class="space-y-2">
-            <template x-for="(b, index) in data.backups" :key="b.id ?? index">
-              <li data-testid="backup-row"
-                  class="flex items-center justify-between gap-3 border border-slate-100 rounded-lg px-3 py-2 hover:bg-slate-50">
-                <div class="flex items-center gap-2 flex-wrap min-w-0">
-                  <span data-testid="backup-timestamp" class="text-xs font-medium text-slate-700 tabular"
-                        x-text="formatBackupTime(b.saved_at)"></span>
-                  <span data-testid="backup-device" class="text-xs px-1.5 py-0.5 rounded bg-slate-100 text-slate-600"
-                        x-text="b.data?.meta?.device_id || data.meta?.device_id || '—'"></span>
-                  <span data-testid="backup-source" class="text-xs px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700"
-                        x-text="t('backups.sourceLocal')"></span>
-                </div>
-                <button data-testid="backup-restore-btn"
-                        @click="restoreFromBackup({ id: b.id, source: 'local', saved_at: b.saved_at, device_id: b.data?.meta?.device_id || data.meta?.device_id })"
-                        class="text-xs px-2 py-1 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded transition-colors"
-                        x-text="t('backups.restore')"></button>
-              </li>
-            </template>
-          </ul>
-
-          <p x-show="data.backups.length === 0"
              class="text-xs text-slate-400 py-4" x-text="t('backups.empty')"></p>
         </div>
       </div>
@@ -2987,11 +2962,11 @@
      (ADR 0029, supersedes ADR 0012 in v1.23). Layer 2 (Drive file):
      writePortfolioBackupFile, readPortfolioBackupFile,
      listPortfolioBackupFiles, cleanupOldBackups, parseBackupFilename,
-     createCloudBackupsCache, buildMultipartBody. Pure functions used by
-     tests/backup.test.js. The Drive API functions take fetchFn via
-     injection so the tests are hermetic. Loaded AFTER lib/records.js
-     because the Backups page UI calls restoreFromSnapshot which composes
-     over the deletion log. -->
+     createCloudBackupsCache, buildMultipartBody, restoreFromSnapshot.
+     Pure functions used by tests/backup.test.js. The Drive API
+     functions take fetchFn via injection so the tests are hermetic.
+     Loaded AFTER lib/records.js because the Backups page UI calls
+     restoreFromSnapshot which composes over the deletion log. -->
 <script src="lib/backup.js"></script>
 
 <!-- Serialize helpers (lib/serialize.js) — strips in-memory fields before JSON output -->
@@ -4352,17 +4327,21 @@
       },
 
       async writePortfolioFile(fileId, data) {
-        // v1.3: Layer 2 backup (ADR 0012, ticket #02). Before overwriting
-        // portfolio.json, snapshot the existing Drive file into a new
-        // `portfolio-backup-{deviceId}-{ISO}.json` file. Order per spec:
+        // v1.3: Layer 2 backup (ADR 0012 / v1.23 — ADR 0029). Before
+        // overwriting portfolio.json, snapshot the existing Drive file
+        // into a new `portfolio-backup-{deviceId}-{ISO}.json` file.
+        // Order per spec:
         //   snapshot existing → cleanup oldest → write new backup → overwrite.
         // If the backup write fails, the overwrite is aborted (the existing
         // portfolio.json is preserved). Source of truth: lib/backup.js.
+        // v1.23 — the snapshot's `backups` field is always `[]` on the
+        // wire, so the snapshot is the existing data serialized as-is
+        // (no need to convert `backups: [...]` to a metadata block —
+        // the field is already empty).
         const fetchFn = (url, opts) => this.driveFetch(url, opts);
         try {
           const existingData = await this.readPortfolioFile(fileId);
-          const snapshot = Backup.buildBackupSnapshot(existingData);
-          const content = JSON.stringify(snapshot);
+          const content = JSON.stringify(existingData);
           const timestamp = new Date().toISOString();
           await Backup.cleanupOldBackups(5, { fetchFn });
           await Backup.writePortfolioBackupFile(content, {
@@ -4503,7 +4482,11 @@
             // by lib/sync.js via mergeById — no version bump needed
             // because adding a missing array is additive (ADR 0009 §6).
             if (!this.data.deletions) this.data.deletions = [];
-            if (!this.data.backups) this.data.backups = [];
+            // v1.23 (ADR 0029) — data.backups is no longer lazy-init'd
+            // here. The wire-format field is hardcoded to [] by
+            // mergePortfolios (sync), set to [] by restoreFromSnapshot
+            // (restore), and cleared by Migration.removeLayer1Backups
+            // (load-time, when an older-than-migrated file is opened).
             // v1.4 additive fields: lazy-init the Plan list and the
             // active-plan pointer. Both are merged by lib/sync.js via
             // mergeById (plans) / last-writer-wins scalar (active_plan_id)
@@ -4526,6 +4509,13 @@
             // (mergeByIdWithDeletions / mergeSettings) on the first sync
             // forward. Idempotent — existing fields are preserved.
             Migration.migrateAdditiveFields(this.data);
+            // v1.23 (ADR 0029 §4) — clear pre-existing Layer 1
+            // in-portfolio backups so the wire-format field becomes
+            // `backups: []`. Subtractive step; idempotent. Kept as a
+            // separate migration (sibling, not folded into
+            // migrateAdditiveFields) so the "additive" invariant
+            // above holds.
+            Migration.removeLayer1Backups(this.data);
             // v1.21 additive field: lazy-seed the Default Exposure
             // category (idempotent — no-op if already present). Must
             // run before any code reads data.categories so the Home
@@ -4569,35 +4559,16 @@
         this.data.settings.display_currency = this.displayCurrency;
         this.data.settings.language = this.language;
         this.data.settings.cost_format = 'per_share';
-        // v1.3: Layer 1 backup (ADR 0012, ticket #02). Push a snapshot
-        // of the current state BEFORE persisting to localStorage. The
-        // snapshot is of the pre-save state (which is the same as the
-        // just-modified state — save() does not mutate data, only
-        // persists it). FIFO 5 truncation applies via Backup.pushBackup.
-        // The backups survive the serializeData step because
-        // lib/serialize.js only strips in-memory flags (_* prefixed) on
-        // holdings. Source of truth: lib/backup.js.
-        //
-        // Push dedup: the deep watcher on `data` fires after save() and
-        // calls save() again. Without a guard, this would push on every
-        // recursive call. We track the hash of the user-mutable state
-        // and skip the push when the hash matches the last push (the
-        // recursive call sees the same state). data.deletions is excluded
-        // from the hash because it is the side-effect of the deletion
-        // log itself.
+        // v1.23 (ADR 0029) — Layer 1 in-portfolio backups are removed.
+        // save() does NOT push to data.backups[] anymore; the only
+        // backup mechanism is Layer 2 (Drive file, via
+        // Backup.writePortfolioBackupFile inside writePortfolioFile()).
+        // The dedup-hash machinery below is preserved as a no-op so the
+        // deep watcher's recursive save() calls stay a no-op too; the
+        // _lastBackupHash seed in load() keeps the first watcher fire
+        // from doing extra work.
         const stateHash = this._stateHash();
         if (stateHash !== this._lastBackupHash) {
-          // Build a properly-formed backup ENTRY (id + saved_at + data
-          // envelope); raw snapshots lack the envelope so the Backups
-          // page row (timestamp + device badge, :key="b.id") would
-          // render as dashes, and restoreFromBackup's id lookup would
-          // miss. Mirrors the self-protection push at line ~2107.
-          const entry = {
-            id: genId('bp'),
-            saved_at: new Date().toISOString(),
-            data: Backup.buildBackupSnapshot(this.data),
-          };
-          Backup.pushBackup(this.data, entry);
           this._lastBackupHash = stateHash;
         }
         localStorage.setItem(STORAGE_KEY, this.serializeData(this.data));
@@ -4618,11 +4589,12 @@
         });
       },
 
-      // ---- Backups page (v1.3 — ticket #03, ADR 0012) ----
+      // ---- Backups page (v1.3 — ticket #03 / v1.23 — ADR 0029 ticket #02) ----
       // The page is purely Alpine — no DOM-creep. The lib owns the
       // restore algorithm + the Layer 2 Drive fetch; the shim wires
-      // them to user input. Self-protection is implemented INSIDE
-      // Backup.restoreFromBackup / restoreFromSnapshot (see lib/backup.js).
+      // them to user input. v1.23 — restoreFromSnapshot is simplified
+      // per ADR 0029 §3 (no pre-restore snapshot push; the Drive
+      // list still offers undo-restore via a different Layer 2 entry).
       async fetchCloudBackups() {
         // Re-fetch from Drive only when the page is mounted and the
         // user is signed in. The result is cached so re-renders don't
@@ -4687,10 +4659,12 @@
       },
 
       // The Restore button handler. Triggers a window.confirm; on
-      // accept, runs the self-protection flow + save + writePortfolioFile.
-      // On reject, does nothing (data is unchanged). On Drive failure,
-      // surfaces an error toast and rolls back the in-memory change.
-      // backup shape: { id, source: 'local' | 'cloud', saved_at, device_id }
+      // accept, fetches the cloud backup's content and applies it via
+      // Backup.restoreFromSnapshot. On reject, does nothing (data is
+      // unchanged). On Drive failure, surfaces an error toast and rolls
+      // back the in-memory change.
+      // backup shape: { id, source: 'cloud', saved_at, device_id }
+      // (v1.23 — source is always 'cloud'; the Local path is removed.)
       async restoreFromBackup(backup) {
         const timeStr = this.formatBackupTime(backup.saved_at);
         const devStr = backup.device_id || '—';
@@ -4699,41 +4673,20 @@
         }
         // Snapshot the original data so we can roll back on Drive failure.
         const originalDataJson = JSON.stringify(this.data);
-        // Keep the self-protection entry as a local var so the catch
-        // block can re-attach it on rollback even when step 5 (Drive
-        // write) fails. Without this, a Drive failure would discard the
-        // pre-restore snapshot the user just authorized — defeating the
-        // self-protection principle (ADR 0012 §3).
-        let selfProtectionEntry = null;
         try {
-          // 1. Self-protection push (pre-restore snapshot). FIFO 5
-          //    applies via Backup.pushBackup. Build a properly-formed
-          //    backup ENTRY (id + saved_at + data envelope); raw
-          //    snapshots lack the envelope so the Backups page row
-          //    (timestamp + device) would render as dashes.
-          selfProtectionEntry = {
-            id: genId('bp'),
-            saved_at: new Date().toISOString(),
-            data: Backup.buildBackupSnapshot(this.data),
-          };
-          Backup.pushBackup(this.data, selfProtectionEntry);
-          // 2. Compute restored data. Two paths:
-          //    - local: lookup by id (handled by Backup.restoreFromBackup)
-          //    - cloud: fetch the file content, pass to restoreFromSnapshot
-          let result;
-          if (backup.source === 'cloud') {
-            const fetchFn = (url, opts) => this.driveFetch(url, opts);
-            let cloudContent;
-            try {
-              cloudContent = await Backup.readPortfolioBackupFile(backup.id, { fetchFn });
-            } catch (e) {
-              throw new Error('cloud backup fetch failed: ' + (e?.message || e));
-            }
-            result = Backup.restoreFromSnapshot(this.data, cloudContent);
-          } else {
-            result = Backup.restoreFromBackup(this.data, backup.id);
-            if (!result) throw new Error('local backup not found: ' + backup.id);
+          // 1. Fetch the cloud backup's content (v1.23 — Cloud-only path).
+          //    The Layer 1 lookup-by-id path is removed; restore always
+          //    reads the Drive file via readPortfolioBackupFile.
+          const fetchFn = (url, opts) => this.driveFetch(url, opts);
+          let cloudContent;
+          try {
+            cloudContent = await Backup.readPortfolioBackupFile(backup.id, { fetchFn });
+          } catch (e) {
+            throw new Error('cloud backup fetch failed: ' + (e?.message || e));
           }
+          // 2. Compute restored data (snapshot wins; `backups: []` is
+          //    hardcoded by restoreFromSnapshot per ADR 0029 §1).
+          const result = Backup.restoreFromSnapshot(this.data, cloudContent);
           // Defensive: result.data is derived from the snapshot (which may
           // be a partial shape from an older backup or a Cloud backup file).
           // Backfill the standard additive fields the rest of the page reads
@@ -4765,6 +4718,15 @@
           // the deep watcher's save() afterward sees a fully
           // merge-eligible state. Idempotent.
           Migration.migrateAdditiveFields(result.data);
+          // v1.23 (ADR 0029 §4) — same as in load(): clear any
+          // pre-existing Layer 1 entries captured by older backups.
+          // Subtractive; idempotent.
+          Migration.removeLayer1Backups(result.data);
+          // v1.23 (ADR 0029 §4) — removeLayer1Backups clears any
+          // pre-existing Layer 1 entries that may have been captured
+          // into the cloud backup file by a pre-v1.23 save. Subtractive
+          // step; idempotent on the post-migrate shape.
+          Migration.removeLayer1Backups(result.data);
           // v1.21 additive field: lazy-seed the Default Exposure
           // category (idempotent). See load() for the same call.
           Exposure.ensureDefaultCategories(result.data);
@@ -4787,56 +4749,32 @@
           //    run). writePortfolioFile snapshots the existing Drive
           //    file BEFORE overwriting, per ticket #02.
           //
-          // For LOCAL restore, Drive sync is best-effort cross-device
-          // propagation, not part of the user's restore intent. If
-          // Drive push fails (no token, network, 5xx), keep the
-          // in-memory restore — the pre-restore snapshot already
-          // satisfies ADR 0012 §3 (self-protection). Surface a soft
-          // warning toast instead of rolling back.
-          //
           // For CLOUD restore, Drive push is required for consistency
           // (the user just fetched a backup from Drive; we must
-          // propagate the new state back). Failure rolls back.
-          let driveSyncError = null;
-          try {
-            const file = await this.findPortfolioFile().catch(() => null);
-            if (file && file.id) {
-              await this.writePortfolioFile(file.id, this.data);
-            } else {
-              await this.createPortfolioFile(this.data);
-            }
-            // 6. Refresh the cloud backup list (the restore just added a
-            //    new Layer 2 backup). Clear the cache so the next
-            //    fetchCloudBackups() call actually fetches.
-            this._backupCache.clear();
-            await this.fetchCloudBackups();
-          } catch (driveErr) {
-            driveSyncError = driveErr;
+          // propagate the new state back). Failure rolls back the
+          // in-memory restore.
+          const file = await this.findPortfolioFile().catch(() => null);
+          if (file && file.id) {
+            await this.writePortfolioFile(file.id, this.data);
+          } else {
+            await this.createPortfolioFile(this.data);
           }
-          if (driveSyncError) {
-            if (backup.source === 'local') {
-              this._showToast(
-                this.t('backups.toastSyncSkipped', { reason: driveSyncError.message }),
-                'warning'
-              );
-              return; // success — local restore already applied
-            }
-            throw driveSyncError; // cloud restore: propagate to rollback
-          }
+          // 6. Refresh the cloud backup list (the restore just added a
+          //    new Layer 2 backup). Clear the cache so the next
+          //    fetchCloudBackups() call actually fetches.
+          this._backupCache.clear();
+          await this.fetchCloudBackups();
           // 7. Toast.
           this._showToast(this.t('backups.toastSuccess', { time: timeStr }), 'success');
         } catch (e) {
-          // Roll back the in-memory state to the original, but
-          // PRESERVE the self-protection entry from step 1 — it was
-          // a legitimate backup the user authorized, and the rollback
-          // is only here because Drive write failed. ADR 0012 §3
-          // ("self-protection makes restore undoable") would be
-          // violated if we silently discarded it.
+          // Roll back the in-memory state to the original snapshot.
+          // No data was committed — the Drive write failed, so the
+          // portfolio.json file in Drive is unchanged. v1.23 — there
+          // is no pre-restore snapshot to re-attach (ADR 0029 §3);
+          // the undo path is 'pick a different Layer 2 entry from
+          // the Drive list'.
           try {
             const original = JSON.parse(originalDataJson);
-            if (selfProtectionEntry) {
-              Backup.pushBackup(original, selfProtectionEntry);
-            }
             this.data = original;
             this.save();
           } catch (_) { /* no-op; will be overwritten by next save() */ }
@@ -6759,7 +6697,10 @@
         if (!this.data.debts) this.data.debts = [];
         // v1.3 additive fields: see load() for the same lazy-init.
         if (!this.data.deletions) this.data.deletions = [];
-        if (!this.data.backups) this.data.backups = [];
+        // v1.23 (ADR 0029) — data.backups is no longer lazy-init'd
+        // here either; see load() for the full rationale. The
+        // Migration.removeLayer1Backups call below clears any
+        // pre-existing Layer 1 entries from imported files.
         // v1.4 additive fields: see load() for the same lazy-init.
         if (!this.data.plans) this.data.plans = [];
         if (this.data.active_plan_id === undefined) this.data.active_plan_id = null;
@@ -6770,6 +6711,8 @@
         // v1.7 additive fields (ADR 0016 §2 — load-time backfill).
         // See load() for the same comment.
         Migration.migrateAdditiveFields(this.data);
+        // v1.23 (ADR 0029 §4) — see load() for the same rationale.
+        Migration.removeLayer1Backups(this.data);
         // v1.21 additive field: lazy-seed the Default Exposure
         // category (idempotent). See load() for the same call.
         Exposure.ensureDefaultCategories(this.data);
