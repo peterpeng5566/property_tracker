@@ -246,11 +246,9 @@ The difference between a snapshot and the previous one, computed at snapshot tim
 _Avoid_: Diff, change (too generic)
 
 **Backup**:
-A point-in-time snapshot of the full portfolio used as a recovery target for the *Deletion log*. Two layers, both FIFO 5, both automatic:
-- **Layer 1** — stored inside `data.backups[]` as snapshot entries with `{id, saved_at, device_id, data, deletions}`. Captures every `save()`. Syncs across devices via `mergeById` (global 5 newest across all devices).
-- **Layer 2** — stored as a Drive file named `portfolio-backup-{device-id}-{ISO-timestamp}.json` in the same folder as `portfolio.json`. Captures every `writePortfolioFile()`. List refreshed on Backups page mount.
-Restoring a backup is full-state and self-protected: the current state becomes a new backup before the restore applies, so the user can restore-restore to undo. See `docs/adr/0012-backup-architecture.md`.
-_Critical_: a **Backup** is rollback (automatic, full-state, writeable, double-buffered). A **Snapshot** is history (manual, selective, read-only, bounded by *Snapshot cap*). The two live in different fields (`data.backups[]` vs `data.snapshots[]`) and are governed by different ADRs (0012 vs 0014); do NOT conflate.
+A point-in-time snapshot of the full portfolio used as a recovery target for the *Deletion log*. One layer only: **Layer 2 — Drive file `portfolio-backup-{device-id}-{ISO-timestamp}.json` in the same Drive folder as `portfolio.json`. FIFO 5 per Drive folder.** Captures every `writePortfolioFile()`. The wire-format `data.backups` field is always written as `[]` for backward compatibility with older clients (see [ADR 0029](docs/adr/0029-remove-layer1-backups.md)); new clients never read or write non-empty `data.backups`.
+Restoring a backup is full-state: the data is the backup, not a diff. After [ADR 0029](docs/adr/0029-remove-layer1-backups.md), restore has no self-protection step — undoing a restore means restoring a different Layer 2 entry from the Drive list. See `docs/adr/0029-remove-layer1-backups.md` (which supersedes [ADR 0012](docs/adr/0012-backup-architecture.md)).
+_Critical_: a **Backup** is rollback (automatic, full-state, writeable). A **Snapshot** is history (manual, selective, read-only, bounded by *Snapshot cap*). The two live in different fields (`data.backups: []` vs `data.snapshots[]`) and are governed by different ADRs (0029 vs 0014); do NOT conflate.
 _Avoid_: snapshot (overloaded — see the backup-vs-snapshot caveat in *Snapshot*), checkpoint (technical), version (overloaded)
 
 ## Sync

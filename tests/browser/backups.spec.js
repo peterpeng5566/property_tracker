@@ -463,7 +463,11 @@ test.describe('portfolio.html backups page (ticket #03)', () => {
     const toast = page.locator('[data-testid="restore-toast"]');
     await expect(toast).toBeVisible({ timeout: 10_000 });
     await expect(toast).toContainText(/Restored from/i);
-    await expect(toast).toContainText(/current state was saved as a new backup/i);
+    // v1.23 (ADR 0029): toast no longer mentions "current state was saved
+    // as a new backup" — Layer 1 self-protection is removed. The new
+    // `backups.toastSuccess` is "Restored from {time}." (en/zh), which
+    // is fully covered by the /Restored from/i assertion above.
+    await expect(toast).not.toContainText(/current state was saved as a new backup/i);
 
     // Navigate to Holdings and confirm the holding's shares are now 5 (the backup's state).
     await page.locator('button:has-text("Holdings")').click();

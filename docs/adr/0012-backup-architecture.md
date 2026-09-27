@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (v1.3)
+Superseded by [ADR 0029](0029-remove-layer1-backups.md) (v1.23). The two-layer architecture is replaced by a single-layer (Layer 2 / Drive file) architecture; Layer 1 (`data.backups[]`) is removed and `data.backups` is always written as `[]` for wire-format compat. See [ADR 0029](0029-remove-layer1-backups.md) for current behaviour. Body content below is preserved as historical record — readers should consult ADR 0029 for the current architecture.
 
 ## Context
 

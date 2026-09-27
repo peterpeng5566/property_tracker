@@ -323,7 +323,7 @@
       <button @click="currentPage = 'backups'; fetchCloudBackups().catch(() => {})"
               :class="currentPage === 'backups' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
               class="hidden md:inline-block px-4 py-3 text-sm font-medium border-b-2 transition-colors"
-              x-text="t('nav.backups')"></button>
+              x-text="t('nav.cloudBackups')"></button>
       <!-- Rebalance tab (v1.8 — ADR 0017, ticket 02). Reads the active plan
            and renders per-rule × per-matched-record candidate actions. -->
       <button @click="currentPage = 'rebalance'"
@@ -1839,13 +1839,11 @@
       </div>
     </div>
 
-    <!-- Backups page (v1.3 — ADR 0012, ticket #03).
-         Two sub-lists: Cloud (Layer 2 from Drive, fetched on page mount)
-         and Local (Layer 1 from this.data.backups). Each row shows
-         timestamp + device-id + source badge + Restore button. Empty
-         state when neither layer has anything yet. Source of truth for
-         the restore algorithm: lib/backup.js (Backup.restoreFromBackup
-         / restoreFromSnapshot). Source of truth for the Layer 2 fetch:
+    <!-- Backups page (v1.3 — ADR 0012 / v1.23 — ADR 0029, ticket #03 / #01).
+         Single-layer: Cloud backups (Layer 2 from Drive, fetched on page mount).
+         Each row shows timestamp + device-id + source badge + Restore button.
+         Source of truth for the restore algorithm: lib/backup.js
+         (Backup.restoreFromSnapshot). Source of truth for the Layer 2 fetch:
          Backup.listPortfolioBackupFiles / readPortfolioBackupFile. -->
 
     <!-- Snapshots page (v1.5 — tickets 02–05).
@@ -2592,7 +2590,7 @@
                 :class="currentPage === 'backups' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'"
                 class="w-full text-left min-h-[44px] px-4 py-3 rounded-md text-sm font-medium transition-colors"
                 data-testid="mobile-nav-backups"
-                x-text="t('nav.backups')"></button>
+                x-text="t('nav.cloudBackups')"></button>
         <button @click="currentPage = 'rebalance'; mobileNavOpen = false"
                 :class="currentPage === 'rebalance' ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'"
                 class="w-full text-left min-h-[44px] px-4 py-3 rounded-md text-sm font-medium transition-colors"
@@ -2985,15 +2983,15 @@
      → exposure.js. -->
 <script src="lib/exposure.js"></script>
 
-<!-- Backup helpers (lib/backup.js) — two-layer backup safety net for true
-     delete (ADR 0012 + ticket #02). Layer 1 (in-portfolio data.backups[]):
-     buildBackupSnapshot, pushBackup, restoreFromBackup. Layer 2 (Drive
-     file): writePortfolioBackupFile, listPortfolioBackupFiles,
-     cleanupOldBackups. Pure functions used by tests/backup.test.js. The
-     Drive API functions take fetchFn via injection so the tests are
-     hermetic. GenId / now are injected for restoreFromBackup. Loaded
-     AFTER lib/records.js because the Backups page UI (ticket #03) calls
-     restoreFromBackup which composes over the deletion log. -->
+<!-- Backup helpers (lib/backup.js) — single-layer Drive backup safety net
+     (ADR 0029, supersedes ADR 0012 in v1.23). Layer 2 (Drive file):
+     writePortfolioBackupFile, readPortfolioBackupFile,
+     listPortfolioBackupFiles, cleanupOldBackups, parseBackupFilename,
+     createCloudBackupsCache, buildMultipartBody. Pure functions used by
+     tests/backup.test.js. The Drive API functions take fetchFn via
+     injection so the tests are hermetic. Loaded AFTER lib/records.js
+     because the Backups page UI calls restoreFromSnapshot which composes
+     over the deletion log. -->
 <script src="lib/backup.js"></script>
 
 <!-- Serialize helpers (lib/serialize.js) — strips in-memory fields before JSON output -->
@@ -3037,7 +3035,7 @@
       'nav.holdings': 'Holdings',
       'nav.cashDebt': 'Cash & Debts',
       'nav.categories': 'Categories',
-      'nav.backups': 'Backups',
+      'nav.cloudBackups': 'Cloud backups',
       'nav.rebalance': 'Rebalance',
       'nav.settings': 'Settings',
       'nav.language': 'Language',
@@ -3304,17 +3302,15 @@
       // here. The locale-only strings; the data-shape wiring lives in
       // the Backups page section (template x-if=currentPage === 'backups').
       'backups.title': 'Backups',
-      'backups.subtitle': 'Two-layer backup: every save() and every Drive write is preserved. Layer 1 (in-portfolio, max 5) survives offline; Layer 2 (Drive file, max 5) survives localStorage wipe. Restore with self-protection: the current state becomes a new backup before applying.',
+      'backups.subtitle': 'Every change is preserved as a Drive file backup. Restore from any point in the last 5 saves.',
       'backups.cloudHeading': 'Cloud backups (5)',
-      'backups.localHeading': 'Local backups (5)',
       'backups.empty': 'No backups yet. Backups are saved automatically on every change.',
-      'backups.sourceLocal': 'Local',
       'backups.sourceCloud': 'Cloud',
       'backups.restore': 'Restore',
-      'backups.confirmRestore': "This will replace your current portfolio with the snapshot from {time} by {device}. The current state will be saved as a new backup. Continue?",
-      'backups.toastSuccess': "Restored from {time}. Your current state was saved as a new backup.",
+      'backups.confirmRestore': "This will replace your current portfolio with the snapshot from {time} by {device}. Continue?",
+      'backups.toastSuccess': "Restored from {time}.",
       'backups.toastError': 'Restore failed: {reason}',
-      'backups.toastSyncSkipped': 'Cloud sync skipped (restored locally): {reason}',
+      'backups.toastSyncSkipped': 'Cloud sync skipped: {reason}',
       'backups.loading': 'Loading cloud backups…',
       'backups.cloudUnavailable': 'Connect to Google Drive to see cloud backups.',
 
@@ -3424,7 +3420,7 @@
       'nav.holdings': 'Holdings',
       'nav.cashDebt': '現金與負債',
       'nav.categories': 'Categories',
-      'nav.backups': '備份與還原',
+      'nav.cloudBackups': '雲端備份',
       'nav.rebalance': '再平衡',
       'nav.settings': '設定',
       'nav.language': '語言',
@@ -3741,17 +3737,15 @@
 
       // v1.3 — Backups page (ticket #03, ADR 0012).
       'backups.title': '備份與還原',
-      'backups.subtitle': '兩層備份:save() 與每次 Drive 上寫都保留。Layer 1 (本機,最多 5) 離線可用;Layer 2 (Drive 檔案,最多 5) 可從 localStorage 清空後回復。回復時有自我保護:套用前先將目前狀態儲存為新備份。',
+      'backups.subtitle': '每次儲存都會保留一份雲端硬碟備份檔案，可從最近 5 次儲存還原。',
       'backups.cloudHeading': '雲端備份 (5)',
-      'backups.localHeading': '本機備份 (5)',
       'backups.empty': '目前沒有備份,資料修改後會自動儲存。',
-      'backups.sourceLocal': '本機',
       'backups.sourceCloud': '雲端',
       'backups.restore': '還原',
-      'backups.confirmRestore': "即將把目前的投資組合替換為 {time} 在 {device} 的快照。目前的狀態會先被儲存為一個新備份。是否繼續?",
-      'backups.toastSuccess': "已還原至 {time}。原本的狀態已儲存為新備份。",
+      'backups.confirmRestore': "即將把目前的投資組合替換為 {time} 在 {device} 的快照。是否繼續?",
+      'backups.toastSuccess': "已還原至 {time}。",
       'backups.toastError': '還原失敗:{reason}',
-      'backups.toastSyncSkipped': '雲端同步略過（本機已成功還原）：{reason}',
+      'backups.toastSyncSkipped': '雲端同步略過：{reason}',
       'backups.loading': '讀取雲端備份中…',
       'backups.cloudUnavailable': '請連結 Google Drive 以查看雲端備份。',
     },
@@ -4560,9 +4554,8 @@
             // hash so the deep watcher's post-load save() (which fires
             // 1-3 times during Alpine init as the reactive system
             // re-evaluates the freshly-loaded data) does NOT push a
-            // redundant backup of state we just loaded. Without this,
-            // every page load adds one entry to data.backups[] — we
-            // only want backups for *user-initiated* state changes.
+            // redundant backup of state we just loaded. We only want
+            // backups for *user-initiated* state changes.
             this._lastBackupHash = this._stateHash();
           } catch (e) {
             console.error('Failed to load portfolio', e);
@@ -4577,22 +4570,21 @@
         this.data.settings.language = this.language;
         this.data.settings.cost_format = 'per_share';
         // v1.3: Layer 1 backup (ADR 0012, ticket #02). Push a snapshot
-        // of the current state into data.backups[] BEFORE persisting to
-        // localStorage. The snapshot is of the pre-save state (which is
-        // the same as the just-modified state — save() does not mutate
-        // data, only persists it). FIFO 5 truncation applies via
-        // Backup.pushBackup. The backups survive the serializeData step
-        // because lib/serialize.js only strips in-memory flags (_*
-        // prefixed) on holdings, not on data.backups[]. Source of truth:
-        // lib/backup.js.
+        // of the current state BEFORE persisting to localStorage. The
+        // snapshot is of the pre-save state (which is the same as the
+        // just-modified state — save() does not mutate data, only
+        // persists it). FIFO 5 truncation applies via Backup.pushBackup.
+        // The backups survive the serializeData step because
+        // lib/serialize.js only strips in-memory flags (_* prefixed) on
+        // holdings. Source of truth: lib/backup.js.
         //
         // Push dedup: the deep watcher on `data` fires after save() and
         // calls save() again. Without a guard, this would push on every
-        // recursive call and grow data.backups unboundedly. We track the
-        // hash of the user-mutable state and skip the push when the hash
-        // matches the last push (the recursive call sees the same state).
-        // data.backups and data.deletions are excluded from the hash
-        // because they are the side-effect of the push itself.
+        // recursive call. We track the hash of the user-mutable state
+        // and skip the push when the hash matches the last push (the
+        // recursive call sees the same state). data.deletions is excluded
+        // from the hash because it is the side-effect of the deletion
+        // log itself.
         const stateHash = this._stateHash();
         if (stateHash !== this._lastBackupHash) {
           // Build a properly-formed backup ENTRY (id + saved_at + data
@@ -4612,10 +4604,9 @@
       },
 
       _stateHash() {
-        // Hash the user-mutable fields of data. Excludes data.backups
-        // (which pushBackup grows) and data.deletions (which the
-        // deletion log grows) so the hash is stable across the very
-        // mutations we are trying to dedupe.
+        // Hash the user-mutable fields of data. Excludes data.deletions
+        // (which the deletion log grows) so the hash is stable across
+        // the very mutations we are trying to dedupe.
         return JSON.stringify({
           h: this.data.holdings,
           c: this.data.cash_accounts,
@@ -4709,10 +4700,10 @@
         // Snapshot the original data so we can roll back on Drive failure.
         const originalDataJson = JSON.stringify(this.data);
         // Keep the self-protection entry as a local var so the catch
-        // block can re-attach it to data.backups even when step 5
-        // (Drive write) fails. Without this, a Drive failure would
-        // discard the pre-restore snapshot the user just authorized
-        // — defeating the self-protection principle (ADR 0012 §3).
+        // block can re-attach it on rollback even when step 5 (Drive
+        // write) fails. Without this, a Drive failure would discard the
+        // pre-restore snapshot the user just authorized — defeating the
+        // self-protection principle (ADR 0012 §3).
         let selfProtectionEntry = null;
         try {
           // 1. Self-protection push (pre-restore snapshot). FIFO 5
@@ -4727,7 +4718,7 @@
           };
           Backup.pushBackup(this.data, selfProtectionEntry);
           // 2. Compute restored data. Two paths:
-          //    - local: lookup by id in data.backups (already there)
+          //    - local: lookup by id (handled by Backup.restoreFromBackup)
           //    - cloud: fetch the file content, pass to restoreFromSnapshot
           let result;
           if (backup.source === 'cloud') {
@@ -4799,10 +4790,9 @@
           // For LOCAL restore, Drive sync is best-effort cross-device
           // propagation, not part of the user's restore intent. If
           // Drive push fails (no token, network, 5xx), keep the
-          // in-memory restore — the localStorage + the pre-restore
-          // snapshot in data.backups[] already satisfy ADR 0012 §3
-          // (self-protection). Surface a soft warning toast instead
-          // of rolling back.
+          // in-memory restore — the pre-restore snapshot already
+          // satisfies ADR 0012 §3 (self-protection). Surface a soft
+          // warning toast instead of rolling back.
           //
           // For CLOUD restore, Drive push is required for consistency
           // (the user just fetched a backup from Drive; we must
