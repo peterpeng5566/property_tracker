@@ -1686,7 +1686,7 @@
                 </div>
                 <div class="text-xs text-slate-500 flex items-center gap-4"
                      x-data="{
-                       summary: getRebalanceSummaryText(ruleCandidate)
+                       get summary() { return getRebalanceSummaryText(ruleCandidate); }
                      }">
                   <span>
                     <span x-text="t('rebalance.ruleSection.currentValue')"></span>:
@@ -3790,6 +3790,32 @@
   }
 
   // ===== Main factory =====
+
+  // ---- Alpine reactivity rule (read before adding inline `x-data`) ----
+  //
+  // `x-data="{ foo: someFn(parentState) }"` is NOT reactive to
+  // parentState — Alpine evaluates the object literal ONCE at mount
+  // and never re-runs it, so `foo` becomes a frozen snapshot of
+  // parentState at first render. Symptom: per-row `x-text="…"` keeps
+  // updating but a section-header computed in `x-data` stays stale
+  // after edits / deletes (caught by tests/browser/repro-cash-rebalance.spec.js
+  // on the Rebalance section header at line 1688).
+  //
+  // Two correct shapes, in order of preference:
+  //
+  //   1. Move the call to the `x-text` site (no `x-data` at all):
+  //        <span x-text="someFn(parentState).label"></span>
+  //
+  //   2. Use a getter in `x-data` so each access recomputes:
+  //        <div x-data="{ get summary() { return someFn(parentState); } }">
+  //          <span x-text="summary.label"></span>
+  //        </div>
+  //
+  // Same rule applies to `<template x-for>` getters, computed
+  // `get foo()` properties on the portfolio factory, and any helper
+  // that reads reactive parent state. If you find yourself writing
+  // `x-data="{ …: someFn(reactiveThing) …}"`, stop and use shape 1 or 2.
+
   function portfolio() {
     return {
       // ---- State ----
